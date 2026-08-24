@@ -1,0 +1,1 @@
+{"id":"example-character","name":"Sample Hero","className":"Fighter","level":5,"armorClass":18,"hitPoints":{"current":44,"maximum":44},"proficiencyBonus":3,"abilities":{"strength":18,"dexterity":12,"constitution":16,"intelligence":10,"wisdom":13,"charisma":8},"resources":[]}
