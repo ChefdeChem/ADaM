@@ -2,7 +2,7 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import type { Character } from "../src/domain/character";
-import type { CombatAction, ExperienceMode } from "../src/domain/combat";
+import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, availableActions, consumeAction, findActionFromText, validateAction } from "../src/engine/actions";
 import { createEncounter, endTurn } from "../src/engine/encounter";
 import { moveActiveCombatant } from "../src/engine/movement";
@@ -14,6 +14,13 @@ import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } fro
 import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
+type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
+
+const actionCategoryCopy: Array<{ id: ActionCategory; label: string; detail: string }> = [
+  { id: "action", label: "Action", detail: "Attacks, magic, and core actions" },
+  { id: "bonus-action", label: "Bonus Action", detail: "Features with a bonus-action cost" },
+  { id: "movement", label: "Movement", detail: "Positioning on the tactical grid" },
+];
 
 const setupModeCopy: Record<ScenarioSetupMode, { label: string; detail: string }> = {
   describe: { label: "Describe", detail: "Write the encounter in your own words." },
@@ -53,6 +60,7 @@ export default function Home() {
   const [command, setCommand] = useState("");
   const [feedback, setFeedback] = useState("Choose an action or describe what you want to do.");
   const [lastRoll, setLastRoll] = useState<ReturnType<typeof rollD20> | null>(null);
+  const [actionCategory, setActionCategory] = useState<ActionCategory>("action");
 
   const activeRuleset = rulesets.find((ruleset) => ruleset.id === rulesetId)!;
   const sheetActions = useMemo(() => availableActions(character, rulesetId), [character, rulesetId]);
@@ -61,6 +69,7 @@ export default function Home() {
     if (experienceMode !== "beginner") return rulesetActions;
     return sheetActions.filter((action) => validateAction(action, encounter).legal);
   }, [encounter, experienceMode, rulesetId, sheetActions]);
+  const categorizedActions = useMemo(() => visibleActions.filter((action) => action.cost === actionCategory), [actionCategory, visibleActions]);
   const activeCombatant = encounter.combatants[encounter.activeIndex];
   const targetAnalysis = useMemo(() => encounter.selectedTargetId ? analyzeTarget(encounter, encounter.selectedTargetId) : null, [encounter]);
 
@@ -92,7 +101,7 @@ export default function Home() {
     if (action.id === "move") { setFeedback("Choose a highlighted adjacent square on the tactical map. Difficult terrain costs 10 feet."); return; }
     setEncounter((state) => consumeAction(action, state));
     const roll = rollD20({ mode: "normal", modifier: character.proficiencyBonus }); setLastRoll(roll);
-    const targetCopy = action.requiresTarget && targetAnalysis ? ` against ${targetAnalysis.target.name}` : "";
+    const targetCopy = action.targeting?.mode === "single" && targetAnalysis ? ` against ${targetAnalysis.target.name}` : "";
     setFeedback(`${action.name}${targetCopy} accepted. Resolution roll: ${roll.total} (${roll.kept} + ${roll.modifier}).`);
   }
 
@@ -213,7 +222,18 @@ export default function Home() {
 
         <section className="action-console">
           <div className="console-heading"><div><span className="eyebrow">{modeCopy[experienceMode].label} mode</span><h3>{targetAnalysis ? `Actions against ${targetAnalysis.target.name}` : "Choose your action"}</h3></div>{lastRoll && <div className="mini-roll"><span>Last roll</span><strong>{lastRoll.total}</strong></div>}</div>
-          <div className="action-grid">{visibleActions.map((action) => { const validation = validateAction(action, encounter); return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{action.cost.replace("-", " ")}</span>{experienceMode !== "advanced" && <small>{action.description}</small>}</button>; })}</div>
+          <div className="action-category-tabs" aria-label="Action economy categories">{actionCategoryCopy.map((category) => {
+            const actions = visibleActions.filter((action) => action.cost === category.id);
+            const legalCount = actions.filter((action) => validateAction(action, encounter).legal).length;
+            return <button type="button" key={category.id} className={actionCategory === category.id ? "active" : ""} onClick={() => setActionCategory(category.id)}><span>{category.label}</span><strong>{legalCount}</strong><small>{category.detail}</small></button>;
+          })}</div>
+          <div className="action-grid">{categorizedActions.length ? categorizedActions.map((action) => {
+            const validation = validateAction(action, encounter);
+            const targetingLabel = action.targeting?.mode === "single" ? `${action.targeting.rangeFeet} ft.` : action.targeting?.mode === "area" ? `${action.targeting.shape} · ${action.targeting.sizeFeet} ft.` : action.cost.replace("-", " ");
+            return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{targetingLabel}</span>{experienceMode !== "advanced" && <small>{validation.legal || experienceMode === "beginner" ? action.description : validation.reason}</small>}</button>;
+          }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
+          <div className="area-effect-note"><span>Area-effect foundation</span><p>Future actions can define cones, cubes, cylinders, lines, spheres, or emanations and specify whether they affect every creature, only hostiles, or chosen creatures.</p></div>
+          <div className="turn-controls"><div><span>Turn control</span><p>End the current combatant&apos;s turn and advance initiative.</p></div><button type="button" onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>End turn</button></div>
           <form className="command-bar" onSubmit={submitCommand}><label htmlFor="command">Or describe your action</label><div><input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Example: I cast a spell at the scout" /><button>Submit</button></div></form>
           <div className="feedback" aria-live="polite"><span>ADaM</span><p>{feedback}</p></div>
         </section>

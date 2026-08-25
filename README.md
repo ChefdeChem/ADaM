@@ -15,6 +15,8 @@ Initial local-first scaffold for a D&D combat training application.
 - Initiative order, round tracking, action economy, movement, and combat log state
 - Interactive 5-foot square tactical grid with legal adjacent movement, blocking terrain, occupied squares, and difficult-terrain costs
 - Target-first combat flow with selected-target state, grid distance, blocked line of sight, basic cover detection, and range-aware action legality
+- Action, Bonus Action, and Movement category navigation with legal-option counts and a persistent End Turn control
+- Extensible area-effect targeting schema for shapes, size, origin, affected creatures, and per-target resolution
 
 ## Run locally
 
@@ -36,5 +38,13 @@ src/rulesets/        Versioned game rules
 src/scenarios/       Scripted scenario components and generator
 src/data/            Sample import data
 ```
+
+## Rules content updates
+
+- Rules mechanics are separated from the interface and tracked by edition in `src/rulesets/content-manifest.ts`.
+- Individual weapons, spells, and features should use stable action IDs and declarative targeting profiles rather than interface-specific logic.
+- Area effects record shape, size, origin, range, line-of-sight needs, affected-creature policy, and whether attacks or saves resolve per target.
+- Friendly fire is never inferred: each action explicitly declares whether it affects all creatures, hostile creatures, or chosen creatures.
+- A rules-content change should update the appropriate edition revision and receive regression coverage before release.
 
 Next: schema validation, import review, weapon and spell-specific ranges, enemy turns, opportunity attacks, conditions, concentration, and resource tracking.
