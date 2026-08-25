@@ -11,6 +11,8 @@ export type CombatAction = {
   description: string;
   rulesets: RulesetId[];
   requiresTarget?: boolean;
+  rangeFeet?: number;
+  requiresLineOfSight?: boolean;
 };
 
 export type TurnResources = {
@@ -33,6 +35,7 @@ export type Combatant = {
 export type EncounterState = {
   round: number;
   activeIndex: number;
+  selectedTargetId: string | null;
   combatants: Combatant[];
   map: ScenarioGrid;
   turn: TurnResources;

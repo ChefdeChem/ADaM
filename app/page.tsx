@@ -6,6 +6,7 @@ import type { CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, availableActions, consumeAction, findActionFromText, validateAction } from "../src/engine/actions";
 import { createEncounter, endTurn } from "../src/engine/encounter";
 import { moveActiveCombatant } from "../src/engine/movement";
+import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20 } from "../src/engine/dice";
 import { importCharacterFile } from "../src/importers";
 import { rulesets, type RulesetId } from "../src/rulesets";
@@ -61,6 +62,7 @@ export default function Home() {
     return sheetActions.filter((action) => validateAction(action, encounter).legal);
   }, [encounter, experienceMode, rulesetId, sheetActions]);
   const activeCombatant = encounter.combatants[encounter.activeIndex];
+  const targetAnalysis = useMemo(() => encounter.selectedTargetId ? analyzeTarget(encounter, encounter.selectedTargetId) : null, [encounter]);
 
   useEffect(() => {
     try {
@@ -83,14 +85,15 @@ export default function Home() {
 
   function runAction(action: CombatAction) {
     if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setFeedback("Turn ended. Initiative advanced."); return; }
-    if (action.id === "move") { setFeedback("Choose a highlighted adjacent square on the tactical map. Difficult terrain costs 10 feet."); return; }
     const validation = validateAction(action, encounter);
     if (!validation.legal) {
       setFeedback(experienceMode === "training" ? validation.reason ?? "That action is not currently legal." : "Action disallowed."); return;
     }
+    if (action.id === "move") { setFeedback("Choose a highlighted adjacent square on the tactical map. Difficult terrain costs 10 feet."); return; }
     setEncounter((state) => consumeAction(action, state));
     const roll = rollD20({ mode: "normal", modifier: character.proficiencyBonus }); setLastRoll(roll);
-    setFeedback(`${action.name} accepted. Resolution roll: ${roll.total} (${roll.kept} + ${roll.modifier}).`);
+    const targetCopy = action.requiresTarget && targetAnalysis ? ` against ${targetAnalysis.target.name}` : "";
+    setFeedback(`${action.name}${targetCopy} accepted. Resolution roll: ${roll.total} (${roll.kept} + ${roll.modifier}).`);
   }
 
   function submitCommand(event: FormEvent) {
@@ -135,6 +138,19 @@ export default function Home() {
     setFeedback(result.reason);
   }
 
+  function handleGridInteraction(x: number, y: number, occupantId?: string) {
+    if (!occupantId) { handleGridMove(x, y); return; }
+    if (occupantId === activeCombatant.id) {
+      setEncounter((state) => selectTarget(state, null));
+      setFeedback("Target cleared. Select another creature before choosing a targeted action.");
+      return;
+    }
+    const analysis = analyzeTarget(encounter, occupantId);
+    if (!analysis) return;
+    setEncounter((state) => selectTarget(state, occupantId));
+    setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Line of sight: ${analysis.lineOfSight ? "clear" : "blocked"}. Cover: ${analysis.cover}.`);
+  }
+
   return <main className="app-shell">
     <header className="topbar"><div><span className="eyebrow">ADaM · Automated Dungeon & Mechanics</span><h1>Combat Trainer</h1></div><div className="status"><span />Rules engine active</div></header>
     <section className="workspace">
@@ -164,6 +180,9 @@ export default function Home() {
 
         <section className="tactical-map-panel">
           <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span></div></div>
+          <div className={`target-panel ${targetAnalysis ? "has-target" : ""}`}>
+            {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} · AC {targetAnalysis.target.armorClass} · {targetAnalysis.target.hitPoints.current}/{targetAnalysis.target.hitPoints.maximum} HP</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" onClick={() => { setEncounter((state) => selectTarget(state, null)); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>Step 1 · Target first</span><strong>Select another creature on the map</strong><small>ADaM will use distance and line of sight to determine which actions are legal.</small></div>}
+          </div>
           <div className="map-scroll" role="region" aria-label="Tactical combat map">
             <div className="battle-grid" style={{ gridTemplateColumns: `repeat(${encounter.map.width}, 46px)` }}>
               {Array.from({ length: encounter.map.width * encounter.map.height }, (_, index) => {
@@ -176,15 +195,16 @@ export default function Home() {
                 const cost = terrain?.kind === "difficult" ? 10 : 5;
                 const reachable = activeCombatant.side === "player" && Math.max(dx, dy) === 1 && terrain?.kind !== "wall" && !occupant && encounter.turn.movementRemaining >= cost;
                 const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
-                return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""}`} onClick={() => handleGridMove(x, y)} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${occupant ? `. Occupied by ${occupant.name}` : ""}`} title={`${coordinate} · ${terrain?.label ?? "Open ground"}`}>
+                const targeted = occupant?.id === encounter.selectedTargetId;
+                return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""} ${targeted ? "targeted" : ""}`} onClick={() => handleGridInteraction(x, y, occupant?.id)} aria-pressed={targeted} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${occupant ? `. Occupied by ${occupant.name}. Select as target.` : ""}`} title={`${coordinate} · ${occupant ? `Select ${occupant.name}` : terrain?.label ?? "Open ground"}`}>
                   <small>{coordinate}</small>
                   {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : "◆"}</span>}
-                  {occupant && <span className={`token ${occupant.side}`} title={occupant.name}>{occupant.name.slice(0, 2).toUpperCase()}</span>}
+                  {occupant && <span className={`token ${occupant.side} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.name.slice(0, 2).toUpperCase()}</span>}
                 </button>;
               })}
             </div>
           </div>
-          <div className="map-help"><span>Select an adjacent highlighted square to move.</span><span>Horizontal, vertical, and diagonal squares cost 5 ft.</span><span>Difficult terrain costs 10 ft.</span></div>
+          <div className="map-help"><span>Creature token: select target</span><span>Highlighted empty square: move</span><span>Diagonal squares cost 5 ft.; difficult terrain costs 10 ft.</span></div>
         </section>
 
         <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${index === encounter.activeIndex ? "active" : ""}`}><span>{combatant.initiative}</span><div><strong>{combatant.name}</strong><small>{combatant.side} · {combatant.hitPoints.current}/{combatant.hitPoints.maximum} HP</small></div></div>)}</div>
@@ -192,7 +212,7 @@ export default function Home() {
         <div className="turn-dashboard"><div><span>Current turn</span><strong>{activeCombatant.name}</strong></div><div><span>Action</span><strong>{encounter.turn.action ? "Ready" : "Used"}</strong></div><div><span>Bonus action</span><strong>{encounter.turn.bonusAction ? "Ready" : "Used"}</strong></div><div><span>Movement</span><strong>{encounter.turn.movementRemaining} ft.</strong></div><div><span>Reaction</span><strong>{encounter.turn.reaction ? "Ready" : "Used"}</strong></div></div>
 
         <section className="action-console">
-          <div className="console-heading"><div><span className="eyebrow">{modeCopy[experienceMode].label} mode</span><h3>Choose your action</h3></div>{lastRoll && <div className="mini-roll"><span>Last roll</span><strong>{lastRoll.total}</strong></div>}</div>
+          <div className="console-heading"><div><span className="eyebrow">{modeCopy[experienceMode].label} mode</span><h3>{targetAnalysis ? `Actions against ${targetAnalysis.target.name}` : "Choose your action"}</h3></div>{lastRoll && <div className="mini-roll"><span>Last roll</span><strong>{lastRoll.total}</strong></div>}</div>
           <div className="action-grid">{visibleActions.map((action) => { const validation = validateAction(action, encounter); return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{action.cost.replace("-", " ")}</span>{experienceMode !== "advanced" && <small>{action.description}</small>}</button>; })}</div>
           <form className="command-bar" onSubmit={submitCommand}><label htmlFor="command">Or describe your action</label><div><input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Example: I cast a spell at the scout" /><button>Submit</button></div></form>
           <div className="feedback" aria-live="polite"><span>ADaM</span><p>{feedback}</p></div>

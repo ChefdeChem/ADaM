@@ -12,6 +12,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
   return {
     round: 1,
     activeIndex: 0,
+    selectedTargetId: null,
     combatants: [
       { id: character.id, name: character.name, side: "player", armorClass: character.armorClass, hitPoints: character.hitPoints, initiative: 16, position: { x: 1, y: 6 } },
       ...enemies.slice(0, enemyCount),
@@ -29,6 +30,7 @@ export function endTurn(encounter: EncounterState): EncounterState {
     ...encounter,
     round,
     activeIndex: nextIndex,
+    selectedTargetId: null,
     turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 },
     log: [`Turn passed to ${encounter.combatants[nextIndex].name}.`, ...encounter.log],
   };

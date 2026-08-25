@@ -14,6 +14,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Natural-language, guided, combined, and reusable-template scenario setup
 - Initiative order, round tracking, action economy, movement, and combat log state
 - Interactive 5-foot square tactical grid with legal adjacent movement, blocking terrain, occupied squares, and difficult-terrain costs
+- Target-first combat flow with selected-target state, grid distance, blocked line of sight, basic cover detection, and range-aware action legality
 
 ## Run locally
 
@@ -36,4 +37,4 @@ src/scenarios/       Scripted scenario components and generator
 src/data/            Sample import data
 ```
 
-Next: schema validation, import review, target selection, enemy turns, opportunity attacks, conditions, concentration, and resource tracking.
+Next: schema validation, import review, weapon and spell-specific ranges, enemy turns, opportunity attacks, conditions, concentration, and resource tracking.
