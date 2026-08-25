@@ -11,7 +11,9 @@ Initial local-first scaffold for a D&D combat training application.
 - Framework-independent domain, importer, engine, and ruleset modules
 - Beginner, training, and advanced action-selection modes
 - Scripted scenario generation from modular environments and objectives
+- Natural-language, guided, combined, and reusable-template scenario setup
 - Initiative order, round tracking, action economy, movement, and combat log state
+- Interactive 5-foot square tactical grid with legal adjacent movement, blocking terrain, occupied squares, and difficult-terrain costs
 
 ## Run locally
 
@@ -34,4 +36,4 @@ src/scenarios/       Scripted scenario components and generator
 src/data/            Sample import data
 ```
 
-Next: schema validation, import review, target selection, enemy turns, conditions, concentration, resource tracking, and grid movement.
+Next: schema validation, import review, target selection, enemy turns, opportunity attacks, conditions, concentration, and resource tracking.

@@ -1,14 +1,25 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import type { Character } from "../src/domain/character";
 import type { CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, availableActions, consumeAction, findActionFromText, validateAction } from "../src/engine/actions";
 import { createEncounter, endTurn } from "../src/engine/encounter";
+import { moveActiveCombatant } from "../src/engine/movement";
 import { rollD20 } from "../src/engine/dice";
 import { importCharacterFile } from "../src/importers";
 import { rulesets, type RulesetId } from "../src/rulesets";
-import { generateScriptedScenario } from "../src/scenarios/scripted-generator";
+import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } from "../src/scenarios/scripted-generator";
+import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
+
+type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
+
+const setupModeCopy: Record<ScenarioSetupMode, { label: string; detail: string }> = {
+  describe: { label: "Describe", detail: "Write the encounter in your own words." },
+  guided: { label: "Guided", detail: "Choose environment, objective, and difficulty." },
+  combined: { label: "Combined", detail: "Use controls, then add custom details." },
+  templates: { label: "Templates", detail: "Start from a saved scenario setup." },
+};
 
 const sample: Character = {
   id: "sample-hinnom", name: "Hinnom", className: "Sorcerer", level: 4, armorClass: 15,
@@ -30,9 +41,14 @@ export default function Home() {
   const [rulesetId, setRulesetId] = useState<RulesetId>("dnd-2024");
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>("beginner");
   const [message, setMessage] = useState("Using the built-in sample character. Import a fillable PDF or ADaM JSON anytime.");
-  const [scenarioPrompt, setScenarioPrompt] = useState("A ruined crypt where I must rescue a trapped scholar");
-  const [scenario, setScenario] = useState(() => generateScriptedScenario("ruined crypt rescue"));
-  const [encounter, setEncounter] = useState(() => createEncounter(sample));
+  const [setupMode, setSetupMode] = useState<ScenarioSetupMode>("combined");
+  const [scenarioPrompt, setScenarioPrompt] = useState(defaultScenarioSetup.prompt);
+  const [environment, setEnvironment] = useState<ScenarioEnvironment>(defaultScenarioSetup.environment);
+  const [objective, setObjective] = useState<ScenarioObjective>(defaultScenarioSetup.objective);
+  const [difficulty, setDifficulty] = useState<ScenarioDifficulty>(defaultScenarioSetup.difficulty);
+  const [scenario, setScenario] = useState(() => generateScriptedScenario(defaultScenarioSetup));
+  const [savedTemplates, setSavedTemplates] = useState<ScenarioTemplate[]>([]);
+  const [encounter, setEncounter] = useState(() => createEncounter(sample, scenario));
   const [command, setCommand] = useState("");
   const [feedback, setFeedback] = useState("Choose an action or describe what you want to do.");
   const [lastRoll, setLastRoll] = useState<ReturnType<typeof rollD20> | null>(null);
@@ -46,11 +62,20 @@ export default function Home() {
   }, [encounter, experienceMode, rulesetId, sheetActions]);
   const activeCombatant = encounter.combatants[encounter.activeIndex];
 
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("adam-scenario-templates");
+      if (stored) setSavedTemplates(JSON.parse(stored) as ScenarioTemplate[]);
+    } catch {
+      setSavedTemplates([]);
+    }
+  }, []);
+
   async function handleImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]; if (!file) return;
     try {
       const imported = await importCharacterFile(file);
-      setCharacter(imported.character); setEncounter(createEncounter(imported.character));
+      setCharacter(imported.character); setEncounter(createEncounter(imported.character, scenario));
       setMessage(`${imported.character.name} imported. ${imported.warnings.join(" ") || "Ready for combat."}`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "The sheet could not be imported."); }
     finally { event.target.value = ""; }
@@ -58,6 +83,7 @@ export default function Home() {
 
   function runAction(action: CombatAction) {
     if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setFeedback("Turn ended. Initiative advanced."); return; }
+    if (action.id === "move") { setFeedback("Choose a highlighted adjacent square on the tactical map. Difficult terrain costs 10 feet."); return; }
     const validation = validateAction(action, encounter);
     if (!validation.legal) {
       setFeedback(experienceMode === "training" ? validation.reason ?? "That action is not currently legal." : "Action disallowed."); return;
@@ -75,8 +101,38 @@ export default function Home() {
   }
 
   function buildScenario(event: FormEvent) {
-    event.preventDefault(); const next = generateScriptedScenario(scenarioPrompt);
-    setScenario(next); setEncounter(createEncounter(character)); setFeedback(next.opening);
+    event.preventDefault();
+    const setup: ScenarioSetup = { prompt: setupMode === "guided" ? "" : scenarioPrompt, environment, objective, difficulty };
+    const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
+    setScenario(next); setEncounter(createEncounter(character, next)); setFeedback(next.opening);
+  }
+
+  function loadTemplate(template: ScenarioTemplate) {
+    setScenarioPrompt(template.setup.prompt);
+    setEnvironment(template.setup.environment);
+    setObjective(template.setup.objective);
+    setDifficulty(template.setup.difficulty);
+    const next = generateScriptedScenario(template.setup);
+    setScenario(next); setEncounter(createEncounter(character, next)); setFeedback(`${template.name} loaded. ${next.opening}`);
+  }
+
+  function saveTemplate() {
+    const template: ScenarioTemplate = {
+      id: `saved-${Date.now()}`,
+      name: `${scenario.title} · ${scenario.difficulty}`,
+      description: scenarioPrompt || `${scenario.objective} in ${scenario.environment}`,
+      setup: { prompt: scenarioPrompt, environment, objective, difficulty },
+    };
+    const next = [...savedTemplates, template];
+    setSavedTemplates(next);
+    localStorage.setItem("adam-scenario-templates", JSON.stringify(next));
+    setFeedback("Scenario setup saved on this device.");
+  }
+
+  function handleGridMove(x: number, y: number) {
+    const result = moveActiveCombatant(encounter, x, y);
+    if (result.legal) setEncounter(result.encounter);
+    setFeedback(result.reason);
   }
 
   return <main className="app-shell">
@@ -92,8 +148,44 @@ export default function Home() {
 
       <section className="combat-area">
         <div className="combat-heading"><div><span className="eyebrow">Scripted scenario engine</span><h2>{scenario.title}</h2></div><div className="rules-badge">{activeRuleset.label}</div></div>
-        <form className="scenario-builder" onSubmit={buildScenario}><label>Describe the encounter you want<input value={scenarioPrompt} onChange={(event) => setScenarioPrompt(event.target.value)} /></label><button>Generate scenario</button></form>
-        <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div></div>
+        <section className="scenario-studio">
+          <div className="setup-tabs" aria-label="Scenario setup method">{(Object.keys(setupModeCopy) as ScenarioSetupMode[]).map((mode) => <button key={mode} type="button" className={setupMode === mode ? "active" : ""} onClick={() => setSetupMode(mode)}><strong>{setupModeCopy[mode].label}</strong><small>{setupModeCopy[mode].detail}</small></button>)}</div>
+          {setupMode === "templates" ? <div className="template-grid">{[...scenarioTemplates, ...savedTemplates].map((template) => <button type="button" key={template.id} onClick={() => loadTemplate(template)}><span>{template.setup.difficulty}</span><strong>{template.name}</strong><small>{template.description}</small></button>)}</div> : <form className="scenario-builder" onSubmit={buildScenario}>
+            {(setupMode === "describe" || setupMode === "combined") && <label className="prompt-field">Describe the encounter you want<input value={scenarioPrompt} onChange={(event) => setScenarioPrompt(event.target.value)} placeholder="A ruined crypt where I must rescue a trapped scholar" /></label>}
+            {(setupMode === "guided" || setupMode === "combined") && <div className="guided-controls">
+              <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as ScenarioEnvironment)}><option value="crypt">Ruined crypt</option><option value="forest">Dense forest</option><option value="market">Abandoned market</option></select></label>
+              <label>Objective<select value={objective} onChange={(event) => setObjective(event.target.value as ScenarioObjective)}><option value="defeat">Defeat enemies</option><option value="rescue">Rescue a civilian</option><option value="escape">Reach the exit</option><option value="hold">Hold a position</option></select></label>
+              <label>Difficulty<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as ScenarioDifficulty)}><option value="easy">Easy</option><option value="standard">Standard</option><option value="hard">Hard</option></select></label>
+            </div>}
+            <div className="scenario-actions"><button className="generate-button">Build encounter</button><button type="button" className="save-button" onClick={saveTemplate}>Save setup</button></div>
+          </form>}
+        </section>
+        <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div><div><span>Difficulty</span><strong>{scenario.difficulty}</strong></div></div>
+
+        <section className="tactical-map-panel">
+          <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span></div></div>
+          <div className="map-scroll" role="region" aria-label="Tactical combat map">
+            <div className="battle-grid" style={{ gridTemplateColumns: `repeat(${encounter.map.width}, 46px)` }}>
+              {Array.from({ length: encounter.map.width * encounter.map.height }, (_, index) => {
+                const x = index % encounter.map.width;
+                const y = Math.floor(index / encounter.map.width);
+                const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
+                const occupant = encounter.combatants.find((combatant) => combatant.position.x === x && combatant.position.y === y);
+                const dx = Math.abs(activeCombatant.position.x - x);
+                const dy = Math.abs(activeCombatant.position.y - y);
+                const cost = terrain?.kind === "difficult" ? 10 : 5;
+                const reachable = activeCombatant.side === "player" && Math.max(dx, dy) === 1 && terrain?.kind !== "wall" && !occupant && encounter.turn.movementRemaining >= cost;
+                const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
+                return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""}`} onClick={() => handleGridMove(x, y)} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${occupant ? `. Occupied by ${occupant.name}` : ""}`} title={`${coordinate} · ${terrain?.label ?? "Open ground"}`}>
+                  <small>{coordinate}</small>
+                  {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : "◆"}</span>}
+                  {occupant && <span className={`token ${occupant.side}`} title={occupant.name}>{occupant.name.slice(0, 2).toUpperCase()}</span>}
+                </button>;
+              })}
+            </div>
+          </div>
+          <div className="map-help"><span>Select an adjacent highlighted square to move.</span><span>Horizontal, vertical, and diagonal squares cost 5 ft.</span><span>Difficult terrain costs 10 ft.</span></div>
+        </section>
 
         <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${index === encounter.activeIndex ? "active" : ""}`}><span>{combatant.initiative}</span><div><strong>{combatant.name}</strong><small>{combatant.side} · {combatant.hitPoints.current}/{combatant.hitPoints.maximum} HP</small></div></div>)}</div>
 

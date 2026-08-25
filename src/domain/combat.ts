@@ -1,4 +1,5 @@
 import type { RulesetId } from "../rulesets";
+import type { ScenarioGrid } from "../scenarios/types";
 
 export type ExperienceMode = "beginner" | "training" | "advanced";
 export type ActionCost = "action" | "bonus-action" | "reaction" | "movement" | "free";
@@ -26,12 +27,14 @@ export type Combatant = {
   armorClass: number;
   hitPoints: { current: number; maximum: number };
   initiative: number;
+  position: { x: number; y: number };
 };
 
 export type EncounterState = {
   round: number;
   activeIndex: number;
   combatants: Combatant[];
+  map: ScenarioGrid;
   turn: TurnResources;
   log: string[];
 };
