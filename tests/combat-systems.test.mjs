@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { executeAttackChoice, executeSpellChoice, validateAttackChoice } from "../src/engine/combat-options.ts";
 import { applyEffect, effectiveArmorClass, expireEffectsAtTurnStart, minutesToRounds } from "../src/engine/effects.ts";
+import { visibleActionsForMode } from "../src/engine/actions.ts";
 
 const map = { width: 12, height: 8, terrain: [] };
 
@@ -58,6 +59,19 @@ test("ranged attacks beyond normal range remain legal with disadvantage", () => 
   assert.equal(result.roll.mode, "disadvantage");
   assert.deepEqual(result.roll.rolls, [20, 1]);
   assert.equal(result.roll.total, 4);
+});
+
+test("beginner mode keeps imported weapon attacks discoverable before target selection", () => {
+  const state = { ...encounter(), selectedTargetId: null };
+  const character = {
+    id: "hero", name: "Hero", className: "Ranger", level: 4, armorClass: 15, proficiencyBonus: 2,
+    hitPoints: { current: 20, maximum: 20 }, abilities: { strength: 10, dexterity: 16, constitution: 12, intelligence: 10, wisdom: 14, charisma: 8 },
+    resources: [], attacks: [{ id: "shortbow", name: "Shortbow", kind: "ranged", attackBonus: 5, damage: "1d6+3 piercing", normalRangeFeet: 80, longRangeFeet: 320 }],
+    source: { format: "flattened-pdf", importedAt: "2026-08-27T00:00:00.000Z" },
+  };
+  const actions = visibleActionsForMode(character, "dnd-2024", "beginner", state);
+  assert.equal(actions.some((action) => action.id === "attack"), true);
+  assert.equal(validateAttackChoice(state, character.attacks[0]).legal, false);
 });
 
 test("leveled spells spend their matching slot and apply temporary hit points", () => {

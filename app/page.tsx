@@ -3,7 +3,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import type { AbilityName, Character, CharacterAttack, CharacterSpell } from "../src/domain/character";
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
-import { actionCatalog, availableActions, consumeAction, findActionFromText, validateAction } from "../src/engine/actions";
+import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
 import { executeAttackChoice, executeSpellChoice, validateAttackChoice, validateSpellChoice } from "../src/engine/combat-options";
 import { applyEffect, effectiveArmorClass, effectsForCombatant, remainingEffectRounds } from "../src/engine/effects";
 import { createEncounter, endTurn } from "../src/engine/encounter";
@@ -120,12 +120,10 @@ export default function Home() {
   const [choiceMode, setChoiceMode] = useState<ChoiceMode>(null);
 
   const activeRuleset = rulesets.find((ruleset) => ruleset.id === rulesetId)!;
-  const sheetActions = useMemo(() => availableActions(character, rulesetId), [character, rulesetId]);
-  const visibleActions = useMemo(() => {
-    const rulesetActions = actionCatalog.filter((action) => action.rulesets.includes(rulesetId));
-    if (experienceMode !== "beginner") return rulesetActions;
-    return sheetActions.filter((action) => validateAction(action, encounter, character).legal);
-  }, [character, encounter, experienceMode, rulesetId, sheetActions]);
+  const visibleActions = useMemo(
+    () => visibleActionsForMode(character, rulesetId, experienceMode, encounter),
+    [character, encounter, experienceMode, rulesetId],
+  );
   const categorizedActions = useMemo(() => visibleActions.filter((action) => action.cost === actionCategory), [actionCategory, visibleActions]);
   const activeCombatant = encounter.combatants[encounter.activeIndex];
   const playerCombatant = encounter.combatants.find((combatant) => combatant.id === character.id) ?? encounter.combatants[0];
@@ -191,6 +189,11 @@ export default function Home() {
 
   function runAction(action: CombatAction) {
     if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setChoiceMode(null); setFeedback("Turn ended. Initiative advanced."); return; }
+    if (action.id === "attack" && !encounter.selectedTargetId) {
+      setChoiceMode("attack");
+      setFeedback(`${character.attacks?.length ?? 0} weapon attacks are ready. Select an enemy token on the tactical map to check range and use one.`);
+      return;
+    }
     const validation = validateAction(action, encounter, character);
     if (!validation.legal) {
       setFeedback(experienceMode === "training" ? validation.reason ?? "That action is not currently legal." : "Action disallowed."); return;
@@ -309,6 +312,7 @@ export default function Home() {
         <div className="panel"><div className="panel-heading"><span>01</span><h2>Character</h2></div><label className="file-button">Import character sheet<input type="file" accept="application/pdf,application/json,.json,.pdf" onChange={handleImport} /></label><p className="helper">{message}</p></div>
         <div className="character-card"><div className="portrait">{character.name[0]?.toUpperCase()}</div><div><p className="character-name">{character.name}</p><p>{character.className} · Level {character.level}</p></div></div>
         <div className="stats"><div><span>AC</span><strong>{playerArmorClass}</strong>{playerArmorClass !== character.armorClass && <small>base {character.armorClass}</small>}</div><div><span>HP</span><strong>{playerCombatant.hitPoints.current}/{playerCombatant.hitPoints.maximum}</strong>{playerCombatant.temporaryHitPoints > 0 && <small>+{playerCombatant.temporaryHitPoints} temp</small>}</div><div><span>PROF</span><strong>+{character.proficiencyBonus}</strong></div></div>
+        <div className="weapon-summary"><span>Weapon attacks</span><strong>{character.attacks?.length ?? 0} ready</strong><p>{character.attacks?.map((attack) => attack.name).join(" · ") || "No weapon attacks imported."}</p></div>
         <div className="panel"><div className="panel-heading"><span>02</span><h2>Experience</h2></div><div className="mode-list">{(Object.keys(modeCopy) as ExperienceMode[]).map((mode) => <button key={mode} className={experienceMode === mode ? "selected" : ""} onClick={() => { setExperienceMode(mode); setFeedback(modeCopy[mode].detail); }}><strong>{modeCopy[mode].label}</strong><small>{modeCopy[mode].detail}</small></button>)}</div></div>
         <div className="panel"><div className="panel-heading"><span>03</span><h2>Ruleset</h2></div><div className="ruleset-list">{rulesets.map((ruleset) => <button key={ruleset.id} className={ruleset.id === rulesetId ? "selected" : ""} onClick={() => setRulesetId(ruleset.id)}><strong>{ruleset.name}</strong><small>{ruleset.description}</small></button>)}</div></div>
       </aside>
@@ -379,7 +383,7 @@ export default function Home() {
             const targetingLabel = action.targeting?.mode === "single" ? `${action.targeting.rangeFeet} ft.` : action.targeting?.mode === "area" ? `${action.targeting.shape} · ${action.targeting.sizeFeet} ft.` : action.cost.replace("-", " ");
             return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{targetingLabel}</span>{experienceMode !== "advanced" && <small>{validation.legal || experienceMode === "beginner" ? action.description : validation.reason}</small>}</button>;
           }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
-          {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 2 · Choose attack</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => setChoiceMode(null)}>Cancel</button></div><div className="choice-grid">{(character.attacks ?? []).map((attack) => { const validation = validateAttackChoice(encounter, attack); const longRange = validation.legal && validation.rollMode === "disadvantage"; return <button type="button" key={attack.id} className={!validation.legal ? "illegal" : longRange ? "warning" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{longRange ? "Long range: roll with disadvantage." : validation.legal ? attack.description : validation.reason}</p></button>; })}</div></div>}
+          {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>{targetAnalysis ? "Step 2 · Choose attack" : "Weapons ready · Target required"}</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => setChoiceMode(null)}>Cancel</button></div><div className="choice-grid">{(character.attacks ?? []).map((attack) => { const validation = validateAttackChoice(encounter, attack); const longRange = validation.legal && validation.rollMode === "disadvantage"; return <button type="button" key={attack.id} className={!validation.legal ? "illegal" : longRange ? "warning" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{longRange ? "Long range: roll with disadvantage." : validation.legal ? attack.description : validation.reason}</p></button>; })}</div></div>}
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 2 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => setChoiceMode(null)}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellChoice(encounter, spell); return <button type="button" key={spell.id} className={!validation.legal ? "illegal" : ""} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : `Level ${spell.level} · 1 slot`}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{validation.legal ? spell.damage ?? spell.effect?.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           <div className="area-effect-note"><span>Area-effect foundation</span><p>Future actions can define cones, cubes, cylinders, lines, spheres, or emanations and specify whether they affect every creature, only hostiles, or chosen creatures.</p></div>
           <div className="turn-controls"><div><span>Turn control</span><p>End the current combatant&apos;s turn and advance initiative.</p></div><button type="button" onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>End turn</button></div>

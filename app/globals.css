@@ -29,6 +29,10 @@ button{cursor:pointer}
 .stats span,.stats small{display:block;color:#aaa;font-size:9px;letter-spacing:.12em}
 .stats strong{font-family:Georgia,serif;font-size:20px}
 .stats small{margin-top:2px;letter-spacing:.02em}
+.weapon-summary{margin:-24px 0 28px;padding:13px 14px;border:1px solid var(--line);border-top:0;background:#f8f3e8}
+.weapon-summary span{display:block;color:var(--red);font-size:8px;font-weight:900;letter-spacing:.11em;text-transform:uppercase}
+.weapon-summary strong{display:block;margin-top:3px;font:500 16px Georgia,serif}
+.weapon-summary p{margin:5px 0 0;color:var(--muted);font-size:9px;line-height:1.5}
 .ruleset-list{display:grid;gap:8px}
 .ruleset-list button{text-align:left;padding:12px 14px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 .ruleset-list button.selected{border-color:var(--red);box-shadow:inset 3px 0 var(--red)}

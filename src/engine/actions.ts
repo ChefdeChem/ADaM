@@ -1,5 +1,5 @@
 import type { Character } from "../domain/character";
-import type { CombatAction, EncounterState } from "../domain/combat";
+import type { CombatAction, EncounterState, ExperienceMode } from "../domain/combat";
 import type { RulesetId } from "../rulesets";
 import { validateAttackChoice } from "./combat-options";
 import { spendNamedResource, validateNamedResource } from "./resources";
@@ -62,6 +62,23 @@ export function availableActions(character: Character, ruleset: RulesetId): Comb
   return actionCatalog.filter((action) => action.rulesets.includes(ruleset) && (
     action.cost === "free" || action.cost === "movement" || !character.actions?.length || allowedNames.has(action.name.toLowerCase())
   ));
+}
+
+export function visibleActionsForMode(character: Character, ruleset: RulesetId, mode: ExperienceMode, encounter: EncounterState): CombatAction[] {
+  const candidates = mode === "beginner"
+    ? availableActions(character, ruleset)
+    : actionCatalog.filter((action) => action.rulesets.includes(ruleset));
+  if (mode !== "beginner") return candidates;
+
+  return candidates.filter((action) => {
+    if (validateAction(action, encounter, character).legal) return true;
+    const active = encounter.combatants[encounter.activeIndex];
+    return action.id === "attack"
+      && Boolean(character.attacks?.length)
+      && active?.side === "player"
+      && encounter.turn.action
+      && !encounter.selectedTargetId;
+  });
 }
 
 export function findActionFromText(text: string, ruleset: RulesetId): CombatAction | undefined {
