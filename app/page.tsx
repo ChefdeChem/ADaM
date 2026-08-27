@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import type { Character, CharacterAttack, CharacterSpell } from "../src/domain/character";
+import type { AbilityName, Character, CharacterAttack, CharacterSpell } from "../src/domain/character";
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, availableActions, consumeAction, findActionFromText, validateAction } from "../src/engine/actions";
 import { executeAttackChoice, executeSpellChoice, validateAttackChoice, validateSpellChoice } from "../src/engine/combat-options";
@@ -10,7 +10,7 @@ import { createEncounter, endTurn } from "../src/engine/encounter";
 import { moveActiveCombatant } from "../src/engine/movement";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20 } from "../src/engine/dice";
-import { importCharacterFile } from "../src/importers";
+import { importCharacterFile, type ImportResult } from "../src/importers";
 import { rulesets, type RulesetId } from "../src/rulesets";
 import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } from "../src/scenarios/scripted-generator";
 import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
@@ -31,6 +31,15 @@ const setupModeCopy: Record<ScenarioSetupMode, { label: string; detail: string }
   combined: { label: "Combined", detail: "Use controls, then add custom details." },
   templates: { label: "Templates", detail: "Start from a saved scenario setup." },
 };
+
+const abilityLabels: Array<{ id: AbilityName; label: string }> = [
+  { id: "strength", label: "Strength" },
+  { id: "dexterity", label: "Dexterity" },
+  { id: "constitution", label: "Constitution" },
+  { id: "intelligence", label: "Intelligence" },
+  { id: "wisdom", label: "Wisdom" },
+  { id: "charisma", label: "Charisma" },
+];
 
 const sample: Character = {
   id: "sample-hinnom", name: "Hinnom", className: "Sorcerer", level: 4, armorClass: 15,
@@ -93,7 +102,9 @@ export default function Home() {
   const [character, setCharacter] = useState(sample);
   const [rulesetId, setRulesetId] = useState<RulesetId>("dnd-2024");
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>("beginner");
-  const [message, setMessage] = useState("Using the built-in sample character. Import a fillable PDF or ADaM JSON anytime.");
+  const [message, setMessage] = useState("Using the built-in sample character. Import a PDF or ADaM JSON anytime.");
+  const [pendingImport, setPendingImport] = useState<ImportResult | null>(null);
+  const [reviewCharacter, setReviewCharacter] = useState<Character | null>(null);
   const [setupMode, setSetupMode] = useState<ScenarioSetupMode>("combined");
   const [scenarioPrompt, setScenarioPrompt] = useState(defaultScenarioSetup.prompt);
   const [environment, setEnvironment] = useState<ScenarioEnvironment>(defaultScenarioSetup.environment);
@@ -136,14 +147,46 @@ export default function Home() {
 
   async function handleImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]; if (!file) return;
+    setMessage(`Reading ${file.name}...`);
     try {
       const imported = await importCharacterFile(file);
-      const normalized = withCombatDefaults(imported.character);
-      setCharacter(normalized); setEncounter(createEncounter(normalized, scenario));
-      setChoiceMode(null);
-      setMessage(`${normalized.name} imported. ${imported.warnings.join(" ") || "Ready for combat."}`);
+      if (imported.requiresReview) {
+        setPendingImport(imported);
+        setReviewCharacter(imported.character);
+        setMessage(`${file.name} read. Review the extracted values before using this character.`);
+      } else {
+        applyImportedCharacter(imported.character, imported.warnings);
+      }
     } catch (error) { setMessage(error instanceof Error ? error.message : "The sheet could not be imported."); }
     finally { event.target.value = ""; }
+  }
+
+  function applyImportedCharacter(importedCharacter: Character, warnings: string[]) {
+    const normalized = withCombatDefaults(importedCharacter);
+    setCharacter(normalized);
+    setEncounter(createEncounter(normalized, scenario));
+    setChoiceMode(null);
+    setMessage(`${normalized.name} imported. ${warnings.join(" ") || "Ready for combat."}`);
+  }
+
+  function updateReviewNumber(field: "level" | "armorClass" | "proficiencyBonus" | "speedFeet", value: string) {
+    setReviewCharacter((current) => current ? { ...current, [field]: Number(value) } : current);
+  }
+
+  function updateReviewHitPoints(field: "current" | "maximum", value: string) {
+    setReviewCharacter((current) => current ? { ...current, hitPoints: { ...current.hitPoints, [field]: Number(value) } } : current);
+  }
+
+  function updateReviewAbility(ability: AbilityName, value: string) {
+    setReviewCharacter((current) => current ? { ...current, abilities: { ...current.abilities, [ability]: Number(value) } } : current);
+  }
+
+  function confirmReviewedImport(event: FormEvent) {
+    event.preventDefault();
+    if (!reviewCharacter) return;
+    applyImportedCharacter(reviewCharacter, pendingImport?.warnings ?? []);
+    setPendingImport(null);
+    setReviewCharacter(null);
   }
 
   function runAction(action: CombatAction) {
@@ -242,6 +285,25 @@ export default function Home() {
 
   return <main className="app-shell">
     <header className="topbar"><div><span className="eyebrow">ADaM · Automated Dungeon & Mechanics</span><h1>Combat Trainer</h1></div><div className="status"><span />Rules engine active</div></header>
+    {pendingImport && reviewCharacter && <div className="import-review-backdrop">
+      <form className="import-review" onSubmit={confirmReviewedImport} role="dialog" aria-modal="true" aria-labelledby="import-review-title">
+        <div className="import-review-heading"><div><span className="eyebrow">Flattened PDF detected</span><h2 id="import-review-title">Review imported character</h2></div><span className="import-count">{reviewCharacter.attacks?.length ?? 0} attacks found</span></div>
+        <p className="import-review-note">{pendingImport.warnings.join(" ")} Correct anything that does not match the PDF, then load the character into combat.</p>
+        <div className="import-core-grid">
+          <label>Character name<input required value={reviewCharacter.name} onChange={(event) => setReviewCharacter({ ...reviewCharacter, name: event.target.value })} /></label>
+          <label>Class<input required value={reviewCharacter.className} onChange={(event) => setReviewCharacter({ ...reviewCharacter, className: event.target.value })} /></label>
+          <label>Level<input required min="1" max="20" type="number" value={reviewCharacter.level} onChange={(event) => updateReviewNumber("level", event.target.value)} /></label>
+          <label>Armor class<input required min="1" type="number" value={reviewCharacter.armorClass} onChange={(event) => updateReviewNumber("armorClass", event.target.value)} /></label>
+          <label>Current HP<input required min="0" type="number" value={reviewCharacter.hitPoints.current} onChange={(event) => updateReviewHitPoints("current", event.target.value)} /></label>
+          <label>Maximum HP<input required min="1" type="number" value={reviewCharacter.hitPoints.maximum} onChange={(event) => updateReviewHitPoints("maximum", event.target.value)} /></label>
+          <label>Proficiency bonus<input required min="0" type="number" value={reviewCharacter.proficiencyBonus} onChange={(event) => updateReviewNumber("proficiencyBonus", event.target.value)} /></label>
+          <label>Walking speed<input required min="0" step="5" type="number" value={reviewCharacter.speedFeet ?? 30} onChange={(event) => updateReviewNumber("speedFeet", event.target.value)} /></label>
+        </div>
+        <div className="import-ability-grid">{abilityLabels.map((ability) => <label key={ability.id}>{ability.label}<input required min="1" max="30" type="number" value={reviewCharacter.abilities[ability.id]} onChange={(event) => updateReviewAbility(ability.id, event.target.value)} /></label>)}</div>
+        {(reviewCharacter.attacks?.length ?? 0) > 0 && <div className="import-attacks"><span>Imported attacks</span><p>{reviewCharacter.attacks?.map((attack) => `${attack.name} (${attack.attackBonus >= 0 ? "+" : ""}${attack.attackBonus}, ${attack.damage}, ${attack.normalRangeFeet}${attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.)`).join(" · ")}</p></div>}
+        <div className="import-review-actions"><button type="button" onClick={() => { setPendingImport(null); setReviewCharacter(null); setMessage("Import canceled; the previous character remains active."); }}>Cancel</button><button type="submit">Use this character</button></div>
+      </form>
+    </div>}
     <section className="workspace">
       <aside className="sidebar">
         <div className="panel"><div className="panel-heading"><span>01</span><h2>Character</h2></div><label className="file-button">Import character sheet<input type="file" accept="application/pdf,application/json,.json,.pdf" onChange={handleImport} /></label><p className="helper">{message}</p></div>

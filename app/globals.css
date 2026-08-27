@@ -16,9 +16,9 @@ button{cursor:pointer}
 .panel-heading{display:flex;align-items:center;gap:10px;margin-bottom:14px}
 .panel-heading span{display:grid;place-items:center;width:25px;height:25px;background:var(--ink);color:#fff;font-size:10px;border-radius:50%}
 .panel-heading h2{font-family:Georgia,serif;font-size:20px;margin:0}
-.file-button{display:block;padding:14px;border:1px dashed #8d867a;background:#f9f6ee;text-align:center;font-weight:750;font-size:13px}
+.file-button{position:relative;display:block;padding:14px;border:1px dashed #8d867a;background:#f9f6ee;text-align:center;font-weight:750;font-size:13px;overflow:hidden}
 .file-button:hover{border-color:var(--red);color:var(--red)}
-.file-button input{display:none}
+.file-button input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
 .helper{font-size:11px;line-height:1.5;color:var(--muted);margin:8px 0 0}
 .character-card{display:flex;gap:13px;align-items:center;padding:17px;background:var(--panel);border:1px solid var(--line);border-bottom:0}
 .portrait{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:var(--red);color:#fff;font-family:Georgia,serif;font-size:25px}
@@ -209,3 +209,23 @@ button{cursor:pointer}
 .choice-grid p{margin:8px 0 0;color:var(--muted);font-size:9px;line-height:1.4}
 @media(max-width:850px){.state-tray{grid-template-columns:1fr}.choice-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px){.choice-grid{grid-template-columns:1fr}}
+
+.import-review-backdrop{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;background:#111512d9;overflow-y:auto}
+.import-review{width:min(860px,100%);max-height:calc(100vh - 48px);overflow-y:auto;padding:26px;border:1px solid #81745e;border-top:4px solid var(--gold);background:var(--panel);box-shadow:0 28px 80px #0008}
+.import-review-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.import-review-heading h2{margin:5px 0 0;font:500 29px Georgia,serif}
+.import-count{padding:7px 9px;background:#e8dfcf;color:var(--red);font-size:9px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}
+.import-review-note{margin:16px 0;padding:11px 13px;border-left:3px solid var(--gold);background:#eee7d9;color:#565750;font-size:11px;line-height:1.55}
+.import-core-grid{display:grid;grid-template-columns:2fr 1.4fr repeat(2,.7fr);gap:10px}
+.import-core-grid label,.import-ability-grid label{font-size:8px;font-weight:900;letter-spacing:.09em;text-transform:uppercase;color:#66665f}
+.import-core-grid input,.import-ability-grid input{display:block;width:100%;margin-top:6px;padding:10px 11px;border:1px solid var(--line);background:#faf8f2;color:var(--ink);font-size:13px;font-weight:600}
+.import-core-grid input:focus,.import-ability-grid input:focus{outline:2px solid #c4934566;border-color:var(--gold)}
+.import-ability-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.import-attacks{margin-top:16px;padding:12px 14px;border:1px solid var(--line);background:#f3eee3}
+.import-attacks span{color:var(--red);font-size:8px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+.import-attacks p{margin:6px 0 0;color:var(--muted);font-size:10px;line-height:1.55}
+.import-review-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.import-review-actions button{padding:11px 16px;border:1px solid var(--red);background:transparent;color:var(--red);font-size:9px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}
+.import-review-actions button[type="submit"]{background:var(--red);color:#fff}
+@media(max-width:760px){.import-review-backdrop{padding:12px}.import-review{max-height:calc(100vh - 24px);padding:20px}.import-core-grid{grid-template-columns:1fr 1fr}.import-ability-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:460px){.import-review-heading{display:block}.import-count{display:inline-block;margin-top:12px}.import-core-grid{grid-template-columns:1fr}.import-ability-grid{grid-template-columns:repeat(2,1fr)}.import-review-actions{flex-direction:column-reverse}.import-review-actions button{width:100%}}

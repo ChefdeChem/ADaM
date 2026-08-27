@@ -57,7 +57,7 @@ export type Character = {
   attacks?: CharacterAttack[];
   spells?: CharacterSpell[];
   actions?: string[];
-  source: { format: "json" | "fillable-pdf" | "sample"; fileName?: string; importedAt: string };
+  source: { format: "json" | "fillable-pdf" | "flattened-pdf" | "sample"; fileName?: string; importedAt: string };
 };
 
 export const abilityModifier = (score: number) => Math.floor((score - 10) / 2);
