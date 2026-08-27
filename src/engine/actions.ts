@@ -76,8 +76,7 @@ export function visibleActionsForMode(character: Character, ruleset: RulesetId, 
     return action.id === "attack"
       && Boolean(character.attacks?.length)
       && active?.side === "player"
-      && encounter.turn.action
-      && !encounter.selectedTargetId;
+      && encounter.turn.action;
   });
 }
 

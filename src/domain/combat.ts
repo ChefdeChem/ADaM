@@ -78,6 +78,8 @@ export type Combatant = {
   temporaryHitPointsSourceEffectId?: string;
   resources: CombatResource[];
   initiative: number;
+  initiativeModifier: number;
+  initiativeRolled: boolean;
   position: { x: number; y: number };
 };
 

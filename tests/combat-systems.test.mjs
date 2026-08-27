@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { executeAttackChoice, executeSpellChoice, validateAttackChoice } from "../src/engine/combat-options.ts";
+import { executeAttackChoice, executeSpellChoice, resolveAttackDamage, resolveAttackRoll, validateAttackChoice, validateAttackTarget } from "../src/engine/combat-options.ts";
 import { applyEffect, effectiveArmorClass, expireEffectsAtTurnStart, minutesToRounds } from "../src/engine/effects.ts";
 import { visibleActionsForMode } from "../src/engine/actions.ts";
+import { rollCombatantInitiative } from "../src/engine/encounter.ts";
 
 const map = { width: 12, height: 8, terrain: [] };
 
@@ -17,12 +18,12 @@ function encounter() {
         id: "hero", name: "Hero", side: "player", baseArmorClass: 15, baseSpeedFeet: 30,
         hitPoints: { current: 20, maximum: 20 }, temporaryHitPoints: 0,
         resources: [{ id: "slot-1", name: "Level 1 Spell Slots", kind: "spell-slot", level: 1, current: 1, maximum: 1 }],
-        initiative: 15, position: { x: 1, y: 1 },
+        initiative: 15, initiativeModifier: 3, initiativeRolled: true, position: { x: 1, y: 1 },
       },
       {
         id: "enemy", name: "Enemy", side: "enemy", baseArmorClass: 13, baseSpeedFeet: 30,
         hitPoints: { current: 10, maximum: 10 }, temporaryHitPoints: 0, resources: [],
-        initiative: 10, position: { x: 7, y: 1 },
+        initiative: 10, initiativeModifier: 0, initiativeRolled: true, position: { x: 7, y: 1 },
       },
     ],
     effects: [],
@@ -61,6 +62,45 @@ test("ranged attacks beyond normal range remain legal with disadvantage", () => 
   assert.equal(result.roll.total, 4);
 });
 
+test("weapon-first targeting finds ranged targets before one is selected", () => {
+  const state = { ...encounter(), selectedTargetId: null };
+  const shortbow = { id: "shortbow", name: "Shortbow", kind: "ranged", attackBonus: 5, damage: "1d6+3 piercing", normalRangeFeet: 80, longRangeFeet: 320 };
+  const validation = validateAttackTarget(state, shortbow, "enemy");
+  assert.equal(validation.legal, true);
+  assert.equal(validation.rollMode, "normal");
+  assert.equal(validation.distanceFeet, 30);
+});
+
+test("attack and damage require separate rolls before target HP changes", () => {
+  const attack = { id: "shortbow", name: "Shortbow", kind: "ranged", attackBonus: 5, damage: "1d6+3 piercing", normalRangeFeet: 80, longRangeFeet: 320 };
+  const attackResult = resolveAttackRoll(encounter(), attack, () => 0.7);
+  assert.equal(attackResult.legal, true);
+  assert.equal(attackResult.hit, true);
+  assert.equal(attackResult.encounter.combatants[1].hitPoints.current, 10);
+  const damageResult = resolveAttackDamage(attackResult.encounter, attack, "enemy", false, () => 0.5);
+  assert.equal(damageResult.legal, true);
+  assert.equal(damageResult.roll.total, 7);
+  assert.equal(damageResult.encounter.combatants[1].hitPoints.current, 3);
+});
+
+test("critical damage doubles dice without doubling the modifier", () => {
+  const attack = { id: "shortbow", name: "Shortbow", kind: "ranged", attackBonus: 5, damage: "1d6+3 piercing", normalRangeFeet: 80, longRangeFeet: 320 };
+  const result = resolveAttackDamage(encounter(), attack, "enemy", true, () => 0);
+  assert.equal(result.legal, true);
+  assert.deepEqual(result.roll.rolls, [1, 1]);
+  assert.equal(result.roll.total, 5);
+  assert.equal(result.encounter.combatants[1].hitPoints.current, 5);
+});
+
+test("initiative is rolled one combatant at a time and then sorted", () => {
+  const state = { ...encounter(), combatants: encounter().combatants.map((combatant) => ({ ...combatant, initiative: 0, initiativeRolled: false })) };
+  const heroRoll = rollCombatantInitiative(state, "hero", () => 0.45);
+  assert.equal(heroRoll.roll.total, 13);
+  assert.equal(heroRoll.encounter.combatants[0].id, "hero");
+  const enemyRoll = rollCombatantInitiative(heroRoll.encounter, "enemy", () => 0.95);
+  assert.equal(enemyRoll.roll.total, 20);
+  assert.equal(enemyRoll.encounter.combatants[0].id, "enemy");
+});
 test("beginner mode keeps imported weapon attacks discoverable before target selection", () => {
   const state = { ...encounter(), selectedTargetId: null };
   const character = {

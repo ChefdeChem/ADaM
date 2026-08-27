@@ -1,7 +1,7 @@
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
-import { rollD20, type D20Result, type RollMode } from "./dice";
-import { applyEffect, effectiveAttackModifier } from "./effects";
+import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
+import { applyEffect, effectiveArmorClass, effectiveAttackModifier } from "./effects";
 import { spendSpellSlot, validateSpellSlot } from "./resources";
 import { analyzeTarget } from "./targeting";
 
@@ -26,6 +26,46 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   if (analysis.distanceFeet > maximumRange) return { legal: false, reason: `${analysis.target.name} is ${analysis.distanceFeet} feet away; ${attack.name} reaches ${maximumRange} feet.` };
   const longRange = attack.kind === "ranged" && analysis.distanceFeet > attack.normalRangeFeet;
   return { legal: true, rollMode: longRange ? "disadvantage" : "normal", distanceFeet: analysis.distanceFeet };
+}
+
+export function validateAttackTarget(encounter:EncounterState,attack:CharacterAttack,targetId:string):OptionValidation{
+  return validateAttackChoice({...encounter,selectedTargetId:targetId},attack);
+}
+
+export type AttackRollResolution=
+  |{legal:false;reason:string;encounter:EncounterState}
+  |{legal:true;encounter:EncounterState;roll:D20Result;hit:boolean;critical:boolean;targetArmorClass:number;summary:string};
+
+export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttack,random=Math.random):AttackRollResolution{
+  const validation=validateAttackChoice(encounter,attack);
+  if(!validation.legal)return{legal:false,reason:validation.reason??"That attack is not legal.",encounter};
+  const active=encounter.combatants[encounter.activeIndex];
+  const target=analyzeTarget(encounter,encounter.selectedTargetId!)!;
+  const roll=rollD20({mode:validation.rollMode??"normal",modifier:attack.attackBonus+effectiveAttackModifier(encounter,active.id),random});
+  const targetArmorClass=effectiveArmorClass(encounter,target.target.id)+(target.cover==="half"?2:0);
+  const critical=roll.natural===20;
+  const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
+  const rangeNote=validation.rollMode==="disadvantage"?" with disadvantage":"";
+  const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
+  return{legal:true,roll,hit,critical,targetArmorClass,summary,encounter:{...encounter,turn:{...encounter.turn,action:false},log:[`${active.name} attacks ${target.target.name}. ${summary}`,...encounter.log]}};
+}
+
+export type DamageResolution=
+  |{legal:false;reason:string;encounter:EncounterState}
+  |{legal:true;encounter:EncounterState;roll:DamageRoll;damageApplied:number;summary:string};
+
+export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAttack,targetId:string,critical=false,random=Math.random):DamageResolution{
+  const roll=rollDamage(attack.damage,{critical,random});
+  if(!roll)return{legal:false,reason:`ADaM could not read the damage formula “${attack.damage}”.`,encounter};
+  const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
+  if(!target)return{legal:false,reason:"The target is no longer available.",encounter};
+  const absorbed=Math.min(target.temporaryHitPoints,roll.total);
+  const hitPointDamage=roll.total-absorbed;
+  const combatants=encounter.combatants.map((combatant)=>combatant.id===targetId?{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,hitPoints:{...combatant.hitPoints,current:Math.max(0,combatant.hitPoints.current-hitPointDamage)}}:combatant);
+  const updatedTarget=combatants.find((combatant)=>combatant.id===targetId)!;
+  const dice=`${roll.rolls.join(" + ")}${roll.modifier===0?"":` ${roll.modifier>0?"+":"−"} ${Math.abs(roll.modifier)}`}`;
+  const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType}. ${target.name} has ${updatedTarget.hitPoints.current} HP remaining.`;
+  return{legal:true,roll,damageApplied:roll.total,summary,encounter:{...encounter,combatants,log:[summary,...encounter.log]}};
 }
 
 export function executeAttackChoice(encounter: EncounterState, attack: CharacterAttack, random = Math.random): OptionResolution {
