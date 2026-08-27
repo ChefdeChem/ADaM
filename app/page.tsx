@@ -265,4 +265,68 @@ export default function Home() {
             <div className="scenario-actions"><button className="generate-button">Build encounter</button><button type="button" className="save-button" onClick={saveTemplate}>Save setup</button></div>
           </form>}
         </section>
-        <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div><div><span>Difficulty</span><stro
+        <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div><div><span>Difficulty</span><strong>{scenario.difficulty}</strong></div></div>
+
+        <section className="tactical-map-panel">
+          <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span></div></div>
+          <div className={`target-panel ${targetAnalysis ? "has-target" : ""}`}>
+            {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} · AC {effectiveArmorClass(encounter, targetAnalysis.target.id)} · {targetAnalysis.target.hitPoints.current}/{targetAnalysis.target.hitPoints.maximum} HP</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" onClick={() => { setEncounter((state) => selectTarget(state, null)); setChoiceMode(null); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>Step 1 · Target first</span><strong>Select another creature on the map</strong><small>ADaM will use distance and line of sight to determine which actions are legal.</small></div>}
+          </div>
+          <div className="map-scroll" role="region" aria-label="Tactical combat map">
+            <div className="battle-grid" style={{ gridTemplateColumns: `repeat(${encounter.map.width}, 46px)` }}>
+              {Array.from({ length: encounter.map.width * encounter.map.height }, (_, index) => {
+                const x = index % encounter.map.width;
+                const y = Math.floor(index / encounter.map.width);
+                const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
+                const occupant = encounter.combatants.find((combatant) => combatant.position.x === x && combatant.position.y === y);
+                const dx = Math.abs(activeCombatant.position.x - x);
+                const dy = Math.abs(activeCombatant.position.y - y);
+                const cost = terrain?.kind === "difficult" ? 10 : 5;
+                const reachable = activeCombatant.side === "player" && Math.max(dx, dy) === 1 && terrain?.kind !== "wall" && !occupant && encounter.turn.movementRemaining >= cost;
+                const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
+                const targeted = occupant?.id === encounter.selectedTargetId;
+                return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""} ${targeted ? "targeted" : ""}`} onClick={() => handleGridInteraction(x, y, occupant?.id)} aria-pressed={targeted} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${occupant ? `. Occupied by ${occupant.name}. Select as target.` : ""}`} title={`${coordinate} · ${occupant ? `Select ${occupant.name}` : terrain?.label ?? "Open ground"}`}>
+                  <small>{coordinate}</small>
+                  {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : "◆"}</span>}
+                  {occupant && <span className={`token ${occupant.side} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.name.slice(0, 2).toUpperCase()}</span>}
+                </button>;
+              })}
+            </div>
+          </div>
+          <div className="map-help"><span>Creature token: select target</span><span>Highlighted empty square: move</span><span>Diagonal squares cost 5 ft.; difficult terrain costs 10 ft.</span></div>
+        </section>
+
+        <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${index === encounter.activeIndex ? "active" : ""}`}><span>{combatant.initiative}</span><div><strong>{combatant.name}</strong><small>{combatant.side} · {combatant.hitPoints.current}/{combatant.hitPoints.maximum} HP</small></div></div>)}</div>
+
+        <div className="turn-dashboard"><div><span>Current turn</span><strong>{activeCombatant.name}</strong></div><div><span>Action</span><strong>{encounter.turn.action ? "Ready" : "Used"}</strong></div><div><span>Bonus action</span><strong>{encounter.turn.bonusAction ? "Ready" : "Used"}</strong></div><div><span>Movement</span><strong>{encounter.turn.movementRemaining} ft.</strong></div><div><span>Reaction</span><strong>{encounter.turn.reaction ? "Ready" : "Used"}</strong></div></div>
+
+        <section className="state-tray" aria-label="Character resources and temporary effects">
+          <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses remaining</h3></div><div className="resource-pills">{playerCombatant.resources.length ? playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>) : <p>No tracked resources imported.</p>}</div></div>
+          <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3></div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.description}</small></div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
+        </section>
+
+        <section className="action-console">
+          <div className="console-heading"><div><span className="eyebrow">{modeCopy[experienceMode].label} mode</span><h3>{targetAnalysis ? `Actions against ${targetAnalysis.target.name}` : "Choose your action"}</h3></div>{lastRoll && <div className="mini-roll"><span>Last roll</span><strong>{lastRoll.total}</strong></div>}</div>
+          <div className="action-category-tabs" aria-label="Action economy categories">{actionCategoryCopy.map((category) => {
+            const actions = visibleActions.filter((action) => action.cost === category.id);
+            const legalCount = actions.filter((action) => validateAction(action, encounter, character).legal).length;
+            return <button type="button" key={category.id} className={actionCategory === category.id ? "active" : ""} onClick={() => setActionCategory(category.id)}><span>{category.label}</span><strong>{legalCount}</strong><small>{category.detail}</small></button>;
+          })}</div>
+          <div className="action-grid">{categorizedActions.length ? categorizedActions.map((action) => {
+            const validation = validateAction(action, encounter, character);
+            const targetingLabel = action.targeting?.mode === "single" ? `${action.targeting.rangeFeet} ft.` : action.targeting?.mode === "area" ? `${action.targeting.shape} · ${action.targeting.sizeFeet} ft.` : action.cost.replace("-", " ");
+            return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{targetingLabel}</span>{experienceMode !== "advanced" && <small>{validation.legal || experienceMode === "beginner" ? action.description : validation.reason}</small>}</button>;
+          }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
+          {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 2 · Choose attack</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => setChoiceMode(null)}>Cancel</button></div><div className="choice-grid">{(character.attacks ?? []).map((attack) => { const validation = validateAttackChoice(encounter, attack); const longRange = validation.legal && validation.rollMode === "disadvantage"; return <button type="button" key={attack.id} className={!validation.legal ? "illegal" : longRange ? "warning" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{longRange ? "Long range: roll with disadvantage." : validation.legal ? attack.description : validation.reason}</p></button>; })}</div></div>}
+          {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 2 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => setChoiceMode(null)}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellChoice(encounter, spell); return <button type="button" key={spell.id} className={!validation.legal ? "illegal" : ""} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : `Level ${spell.level} · 1 slot`}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{validation.legal ? spell.damage ?? spell.effect?.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
+          <div className="area-effect-note"><span>Area-effect foundation</span><p>Future actions can define cones, cubes, cylinders, lines, spheres, or emanations and specify whether they affect every creature, only hostiles, or chosen creatures.</p></div>
+          <div className="turn-controls"><div><span>Turn control</span><p>End the current combatant&apos;s turn and advance initiative.</p></div><button type="button" onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>End turn</button></div>
+          <form className="command-bar" onSubmit={submitCommand}><label htmlFor="command">Or describe your action</label><div><input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Example: I cast a spell at the scout" /><button>Submit</button></div></form>
+          <div className="feedback" aria-live="polite"><span>ADaM</span><p>{feedback}</p></div>
+        </section>
+
+        <section className="encounter-log"><div><span className="eyebrow">Combat log</span><h3>Encounter state</h3></div><ol>{encounter.log.slice(0, 5).map((entry, index) => <li key={`${entry}-${index}`}>{entry}</li>)}</ol></section>
+      </section>
+    </section>
+  </main>;
+}
