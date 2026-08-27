@@ -83,6 +83,11 @@ export function generateScriptedScenario(input: string | ScenarioSetup): Scenari
   const environment = environments[environmentId];
   const objective = objectiveCopy[objectiveId];
   const enemyCount = difficulty === "easy" ? "One hostile figure moves" : difficulty === "hard" ? "Three hostile figures move" : "Two hostile figures move";
+  const enemyProfileIds = difficulty === "easy"
+    ? ["ashen-scout"]
+    : difficulty === "hard"
+      ? ["ashen-scout", "ruined-guardian", "cinder-skirmisher"]
+      : ["ashen-scout", "ruined-guardian"];
   return {
     id: crypto.randomUUID(),
     title: environment.name,
@@ -94,5 +99,6 @@ export function generateScriptedScenario(input: string | ScenarioSetup): Scenari
     opening: `You enter ${environment.name}. ${enemyCount} to block your path. Your objective: ${objective.toLowerCase()}.`,
     features: environment.features,
     grid: createGrid(environmentId, objectiveId),
+    enemyProfileIds,
   };
 }

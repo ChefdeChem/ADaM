@@ -31,7 +31,7 @@ export type ActionValidation = { legal: boolean; reason?: string };
 
 export function validateAction(action: CombatAction, encounter: EncounterState, character?: Character): ActionValidation {
   const active = encounter.combatants[encounter.activeIndex];
-  if (active?.side !== "player" && action.id !== "end-turn") return { legal: false, reason: "Player actions are unavailable during an enemy turn." };
+  if (active?.side !== "player") return { legal: false, reason: "ADaM controls and advances enemy turns automatically." };
   if (action.cost === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (action.cost === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
   if (action.cost === "reaction" && !encounter.turn.reaction) return { legal: false, reason: "Your Reaction is unavailable." };

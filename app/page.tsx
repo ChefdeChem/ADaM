@@ -6,7 +6,8 @@ import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/com
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
 import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, validateAttackChoice, validateAttackTarget, validateSpellChoice } from "../src/engine/combat-options";
 import { applyEffect, effectiveArmorClass, effectsForCombatant, remainingEffectRounds } from "../src/engine/effects";
-import { createEncounter, endTurn, rollCombatantInitiative } from "../src/engine/encounter";
+import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
+import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
 import { moveActiveCombatant } from "../src/engine/movement";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
@@ -73,9 +74,9 @@ const sample: Character = {
 };
 
 const modeCopy: Record<ExperienceMode, { label: string; detail: string }> = {
-  beginner: { label: "Beginner", detail: "Only currently legal character actions are shown." },
-  training: { label: "Training", detail: "All actions are shown; illegal choices explain why." },
-  advanced: { label: "Advanced", detail: "All actions remain available; illegal choices are simply disallowed." },
+  beginner: { label: "Beginner", detail: "Legal actions, full rules guidance, and exact enemy health are shown." },
+  training: { label: "Training", detail: "Illegal choices are explained and enemy health uses condition descriptions." },
+  advanced: { label: "Advanced", detail: "Illegal choices are disallowed without guidance and enemy health is concealed." },
 };
 
 function withCombatDefaults(character: Character): Character {
@@ -120,11 +121,12 @@ export default function Home() {
   const [savedTemplates, setSavedTemplates] = useState<ScenarioTemplate[]>([]);
   const [encounter, setEncounter] = useState(() => createEncounter(sample, scenario));
   const [command, setCommand] = useState("");
-  const [feedback, setFeedback] = useState("Roll initiative for each combatant to begin the encounter.");
+  const [feedback, setFeedback] = useState("Roll your initiative to begin. ADaM will roll privately for the enemies.");
   const [lastRoll, setLastRoll] = useState<ReturnType<typeof rollD20> | DamageRoll | null>(null);
   const [actionCategory, setActionCategory] = useState<ActionCategory>("action");
   const [choiceMode, setChoiceMode] = useState<ChoiceMode>(null);
   const [attackFlow, setAttackFlow] = useState<AttackFlow>(null);
+  const [enemyTurnPhase, setEnemyTurnPhase] = useState<"idle" | "resolving" | "showing">("idle");
 
   const activeRuleset = rulesets.find((ruleset) => ruleset.id === rulesetId)!;
   const visibleActions = useMemo(
@@ -138,10 +140,11 @@ export default function Home() {
   const playerEffects = effectsForCombatant(encounter, playerCombatant.id);
   const targetAnalysis = useMemo(() => encounter.selectedTargetId ? analyzeTarget(encounter, encounter.selectedTargetId) : null, [encounter]);
   const initiativeReady = encounter.combatants.every((combatant) => combatant.initiativeRolled);
-  const nextInitiativeCombatant = encounter.combatants.find((combatant) => !combatant.initiativeRolled);
+  const playerNeedsInitiative = encounter.combatants.find((combatant) => combatant.side === "player" && !combatant.initiativeRolled);
+  const outcome = combatOutcome(encounter);
   const legalAttackTargetIds = useMemo(() => new Set(
     attackFlow?.phase === "target"
-      ? encounter.combatants.filter((combatant) => combatant.side !== activeCombatant.side && validateAttackTarget(encounter, attackFlow.attack, combatant.id).legal).map((combatant) => combatant.id)
+      ? encounter.combatants.filter((combatant) => combatant.side !== activeCombatant.side && combatant.hitPoints.current > 0 && validateAttackTarget(encounter, attackFlow.attack, combatant.id).legal).map((combatant) => combatant.id)
       : [],
   ), [activeCombatant.side, attackFlow, encounter]);
 
@@ -156,6 +159,30 @@ export default function Home() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!initiativeReady || activeCombatant?.side !== "enemy" || outcome !== "active") return;
+    const delay = enemyTurnPhase === "idle" ? 350 : enemyTurnPhase === "resolving" ? 700 : 1800;
+    const timer = window.setTimeout(() => {
+      if (enemyTurnPhase === "idle") {
+        setFeedback(`${activeCombatant.name}'s turn. ADaM is choosing movement, target, and action.`);
+        setEnemyTurnPhase("resolving");
+        return;
+      }
+      if (enemyTurnPhase === "resolving") {
+        const result = resolveEnemyTurn(encounter);
+        setEncounter(result.encounter);
+        setLastRoll(result.damageRoll ?? result.attackRoll);
+        setFeedback(result.steps.map((step) => step.summary).join(" "));
+        setEnemyTurnPhase("showing");
+        return;
+      }
+      setEncounter((state) => endTurn(state));
+      setEnemyTurnPhase("idle");
+      setFeedback("Enemy turn complete. Initiative advances to the next living combatant.");
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [activeCombatant?.id, activeCombatant?.name, activeCombatant?.side, encounter, enemyTurnPhase, initiativeReady, outcome]);
 
   async function handleImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]; if (!file) return;
@@ -179,7 +206,8 @@ export default function Home() {
     setEncounter(createEncounter(normalized, scenario));
     setChoiceMode(null);
     setAttackFlow(null);
-    setMessage(`${normalized.name} imported. ${warnings.join(" ") || "Ready for combat."} Roll initiative to begin.`);
+    setEnemyTurnPhase("idle");
+    setMessage(`${normalized.name} imported. ${warnings.join(" ") || "Ready for combat."} Roll your initiative to begin.`);
   }
 
   function updateReviewNumber(field: "level" | "armorClass" | "proficiencyBonus" | "speedFeet", value: string) {
@@ -203,7 +231,9 @@ export default function Home() {
   }
 
   function runAction(action: CombatAction) {
-    if (!initiativeReady) { setFeedback("Roll initiative for every combatant before taking actions."); return; }
+    if (!initiativeReady) { setFeedback("Roll your initiative before taking actions. ADaM rolls for the enemies automatically."); return; }
+    if (outcome !== "active") { setFeedback("This encounter is complete. Build a new encounter to continue training."); return; }
+    if (activeCombatant.side !== "player") { setFeedback("ADaM is resolving the enemy turn."); return; }
     if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setChoiceMode(null); setAttackFlow(null); setFeedback("Turn ended. Initiative advanced."); return; }
     if (action.id === "attack") {
       setChoiceMode("attack");
@@ -242,12 +272,11 @@ export default function Home() {
   }
 
   function rollInitiative() {
-    if (!nextInitiativeCombatant) return;
-    const result = rollCombatantInitiative(encounter, nextInitiativeCombatant.id);
+    if (!playerNeedsInitiative) return;
+    const result = rollPlayerAndEnemyInitiative(encounter, playerNeedsInitiative.id);
     setEncounter(result.encounter);
-    setLastRoll(result.roll);
-    const remaining = result.encounter.combatants.filter((combatant) => !combatant.initiativeRolled).length;
-    setFeedback(remaining ? `${nextInitiativeCombatant.name} rolled ${result.roll.total}. Roll for the next combatant.` : `Initiative complete. ${result.encounter.combatants[0].name} acts first.`);
+    setLastRoll(result.playerRoll);
+    setFeedback(`You rolled ${result.playerRoll.total}. ADaM rolled initiative for ${result.enemyRolls.length} ${result.enemyRolls.length === 1 ? "enemy" : "enemies"}. ${result.encounter.combatants[0].name} acts first.`);
   }
 
   function rollSelectedAttack() {
@@ -256,7 +285,9 @@ export default function Home() {
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
-    setFeedback(result.summary);
+    const updatedTarget = result.encounter.combatants.find((combatant) => combatant.id === attackFlow.targetId);
+    const healthCopy = updatedTarget?.side === "enemy" && experienceMode !== "advanced" ? ` ${updatedTarget.name}: ${enemyHealthLabel(updatedTarget, experienceMode)}.` : "";
+    setFeedback(`${result.summary}${healthCopy}`);
     if (result.hit) setAttackFlow({ ...attackFlow, phase: "damage-roll", critical: result.critical });
     else { setAttackFlow(null); setChoiceMode(null); }
   }
@@ -289,7 +320,7 @@ export default function Home() {
     event.preventDefault();
     const setup: ScenarioSetup = { prompt: setupMode === "guided" ? "" : scenarioPrompt, environment, objective, difficulty };
     const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
-    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setChoiceMode(null); setFeedback(`${next.opening} Roll initiative to begin.`);
+    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
   }
 
   function loadTemplate(template: ScenarioTemplate) {
@@ -298,7 +329,7 @@ export default function Home() {
     setObjective(template.setup.objective);
     setDifficulty(template.setup.difficulty);
     const next = generateScriptedScenario(template.setup);
-    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setChoiceMode(null); setFeedback(`${template.name} loaded. ${next.opening} Roll initiative to begin.`);
+    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
   }
 
   function saveTemplate() {
@@ -322,6 +353,7 @@ export default function Home() {
 
   function handleGridInteraction(x: number, y: number, occupantId?: string) {
     if (!initiativeReady) { setFeedback("Finish rolling initiative before interacting with the map."); return; }
+    if (activeCombatant.side !== "player") { setFeedback("ADaM controls targeting and movement during enemy turns."); return; }
     if (attackFlow?.phase === "target") {
       if (!occupantId) { setFeedback(`Choose a highlighted creature for ${attackFlow.attack.name}.`); return; }
       const validation = validateAttackTarget(encounter, attackFlow.attack, occupantId);
@@ -391,10 +423,15 @@ export default function Home() {
         </section>
         <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div><div><span>Difficulty</span><strong>{scenario.difficulty}</strong></div></div>
 
-        {!initiativeReady && nextInitiativeCombatant && <section className="roll-coach initiative-coach" aria-live="polite">
-          <div><span>Initiative · Click to roll</span><h3>{nextInitiativeCombatant.name}</h3><p>Roll a <strong>d20</strong> and add the initiative modifier ({nextInitiativeCombatant.initiativeModifier >= 0 ? "+" : "−"}{Math.abs(nextInitiativeCombatant.initiativeModifier)}). Initiative determines turn order.</p></div>
-          <button type="button" onClick={rollInitiative}><small>Roll</small><strong>d20 {nextInitiativeCombatant.initiativeModifier >= 0 ? "+" : "−"} {Math.abs(nextInitiativeCombatant.initiativeModifier)}</strong></button>
+        {!initiativeReady && playerNeedsInitiative && <section className="roll-coach initiative-coach" aria-live="polite">
+          <div><span>Your initiative · Click to roll</span><h3>{playerNeedsInitiative.name}</h3><p>Roll a <strong>d20</strong> and add your initiative modifier ({playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "−"}{Math.abs(playerNeedsInitiative.initiativeModifier)}). ADaM rolls enemy initiative privately and then reveals turn order.</p></div>
+          <button type="button" onClick={rollInitiative}><small>Roll your initiative</small><strong>d20 {playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "−"} {Math.abs(playerNeedsInitiative.initiativeModifier)}</strong></button>
         </section>}
+        {initiativeReady && activeCombatant.side === "enemy" && outcome === "active" && <section className="roll-coach enemy-coach" aria-live="polite">
+          <div><span>DM-controlled turn · {enemyTurnPhase}</span><h3>{activeCombatant.name}</h3><p>ADaM controls this creature&apos;s movement, targeting, action selection, attack roll, and damage roll. Watch the combat log for the rules breakdown.</p></div>
+          <div className="dm-turn-badge"><strong>ADaM</strong><small>resolving enemy</small></div>
+        </section>}
+        {outcome !== "active" && <section className={`combat-outcome ${outcome}`} aria-live="assertive"><span>Encounter complete</span><h3>{outcome === "victory" ? "Victory" : "Your character is defeated"}</h3><p>{outcome === "victory" ? "All hostile creatures have been defeated." : "Build a new encounter or import another character to try again."}</p></section>}
         {initiativeReady && attackFlow?.phase === "target" && <section className="roll-coach target-coach" aria-live="polite">
           <div><span>Weapon selected · Choose target</span><h3>{attackFlow.attack.name}</h3><p>Targets highlighted in gold are within range and line of sight. Long-range targets remain legal and will roll with disadvantage.</p></div>
           <div className="target-count"><strong>{legalAttackTargetIds.size}</strong><small>legal targets</small></div>
@@ -411,7 +448,7 @@ export default function Home() {
         <section className="tactical-map-panel">
           <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span></div></div>
           <div className={`target-panel ${targetAnalysis ? "has-target" : ""}`}>
-            {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} · AC {effectiveArmorClass(encounter, targetAnalysis.target.id)} · {targetAnalysis.target.hitPoints.current}/{targetAnalysis.target.hitPoints.maximum} HP</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" onClick={() => { setEncounter((state) => selectTarget(state, null)); setAttackFlow(attackFlow ? { ...attackFlow, phase: "target", targetId: undefined } : null); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>{attackFlow?.phase === "target" ? `Targeting · ${attackFlow.attack.name}` : "Choose an action"}</span><strong>{attackFlow?.phase === "target" ? "Select a highlighted enemy" : "Choose Attack, then select a weapon"}</strong><small>{attackFlow?.phase === "target" ? "Gold rings indicate targets within this weapon’s range and line of sight." : "Weapon range determines which targets ADaM highlights."}</small></div>}
+            {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} · AC {effectiveArmorClass(encounter, targetAnalysis.target.id)} · {targetAnalysis.target.side === "enemy" ? enemyHealthLabel(targetAnalysis.target, experienceMode) : `${targetAnalysis.target.hitPoints.current}/${targetAnalysis.target.hitPoints.maximum} HP`}</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" disabled={activeCombatant.side !== "player"} onClick={() => { setEncounter((state) => selectTarget(state, null)); setAttackFlow(attackFlow ? { ...attackFlow, phase: "target", targetId: undefined } : null); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>{attackFlow?.phase === "target" ? `Targeting · ${attackFlow.attack.name}` : "Choose an action"}</span><strong>{attackFlow?.phase === "target" ? "Select a highlighted enemy" : "Choose Attack, then select a weapon"}</strong><small>{attackFlow?.phase === "target" ? "Gold rings indicate targets within this weapon’s range and line of sight." : "Weapon range determines which targets ADaM highlights."}</small></div>}
           </div>
           <div className="map-scroll" role="region" aria-label="Tactical combat map">
             <div className="battle-grid" style={{ gridTemplateColumns: `repeat(${encounter.map.width}, 46px)` }}>
@@ -432,7 +469,7 @@ export default function Home() {
                 return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""} ${targeted ? "targeted" : ""} ${legalAttackTarget ? "legal-target" : attackCandidate ? "illegal-target" : ""}`} onClick={() => handleGridInteraction(x, y, occupant?.id)} aria-pressed={targeted} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${occupant ? `. Occupied by ${occupant.name}. ${legalAttackTarget ? `Legal target for ${attackFlow?.attack.name}.` : "Select as target."}` : ""}`} title={`${coordinate} · ${occupant ? legalAttackTarget ? `${occupant.name}: legal target` : attackValidation?.reason ?? `Select ${occupant.name}` : terrain?.label ?? "Open ground"}`}>
                   <small>{coordinate}</small>
                   {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : "◆"}</span>}
-                  {occupant && <span className={`token ${occupant.side} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.name.slice(0, 2).toUpperCase()}</span>}
+                  {occupant && <span className={`token ${occupant.side} ${occupant.hitPoints.current <= 0 ? "defeated" : ""} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.hitPoints.current <= 0 ? "×" : occupant.name.slice(0, 2).toUpperCase()}</span>}
                 </button>;
               })}
             </div>
@@ -440,7 +477,7 @@ export default function Home() {
           <div className="map-help"><span>{attackFlow?.phase === "target" ? "Gold ring: legal weapon target" : "Creature token: select target"}</span><span>Highlighted empty square: move</span><span>Diagonal squares cost 5 ft.; difficult terrain costs 10 ft.</span></div>
         </section>
 
-        <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${initiativeReady && index === encounter.activeIndex ? "active" : ""}`}><span>{combatant.initiativeRolled ? combatant.initiative : "—"}</span><div><strong>{combatant.name}</strong><small>{combatant.initiativeRolled ? `initiative · ${combatant.side}` : `d20 ${combatant.initiativeModifier >= 0 ? "+" : "−"}${Math.abs(combatant.initiativeModifier)} · not rolled`}</small></div></div>)}</div>
+        <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${initiativeReady && index === encounter.activeIndex ? "active" : ""} ${combatant.hitPoints.current <= 0 ? "defeated" : ""}`}><span>{combatant.initiativeRolled ? combatant.initiative : "—"}</span><div><strong>{combatant.name}</strong><small>{combatant.hitPoints.current <= 0 ? "defeated" : combatant.initiativeRolled ? `initiative · ${combatant.side}` : combatant.side === "player" ? `d20 ${combatant.initiativeModifier >= 0 ? "+" : "−"}${Math.abs(combatant.initiativeModifier)} · your roll` : "ADaM rolls privately"}</small></div></div>)}</div>
 
         <div className="turn-dashboard"><div><span>Current turn</span><strong>{activeCombatant.name}</strong></div><div><span>Action</span><strong>{encounter.turn.action ? "Ready" : "Used"}</strong></div><div><span>Bonus action</span><strong>{encounter.turn.bonusAction ? "Ready" : "Used"}</strong></div><div><span>Movement</span><strong>{encounter.turn.movementRemaining} ft.</strong></div><div><span>Reaction</span><strong>{encounter.turn.reaction ? "Ready" : "Used"}</strong></div></div>
 
@@ -464,7 +501,7 @@ export default function Home() {
           {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose weapon</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.attacks ?? []).map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 2 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => setChoiceMode(null)}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellChoice(encounter, spell); return <button type="button" key={spell.id} className={!validation.legal ? "illegal" : ""} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : `Level ${spell.level} · 1 slot`}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{validation.legal ? spell.damage ?? spell.effect?.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           <div className="area-effect-note"><span>Area-effect foundation</span><p>Future actions can define cones, cubes, cylinders, lines, spheres, or emanations and specify whether they affect every creature, only hostiles, or chosen creatures.</p></div>
-          <div className="turn-controls"><div><span>Turn control</span><p>End the current combatant&apos;s turn and advance initiative.</p></div><button type="button" onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>End turn</button></div>
+          <div className="turn-controls"><div><span>Turn control</span><p>{activeCombatant.side === "player" ? "End your turn and let ADaM advance initiative." : "ADaM controls and advances enemy turns automatically."}</p></div><button type="button" disabled={activeCombatant.side !== "player" || outcome !== "active"} onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>{activeCombatant.side === "player" ? "End turn" : "Enemy acting"}</button></div>
           <form className="command-bar" onSubmit={submitCommand}><label htmlFor="command">Or describe your action</label><div><input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Example: I cast a spell at the scout" /><button>Submit</button></div></form>
           <div className="feedback" aria-live="polite"><span>ADaM</span><p>{feedback}</p></div>
         </section>

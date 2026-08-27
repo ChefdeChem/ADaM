@@ -21,6 +21,7 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   if (!encounter.selectedTargetId) return { legal: false, reason: "Select a target on the tactical map first." };
   const analysis = analyzeTarget(encounter, encounter.selectedTargetId);
   if (!analysis) return { legal: false, reason: "The selected target is no longer available." };
+  if (analysis.target.hitPoints.current <= 0) return { legal: false, reason: `${analysis.target.name} is already defeated.` };
   if (!analysis.lineOfSight) return { legal: false, reason: `${analysis.target.name} is outside your line of sight.` };
   const maximumRange = attack.longRangeFeet ?? attack.normalRangeFeet;
   if (analysis.distanceFeet > maximumRange) return { legal: false, reason: `${analysis.target.name} is ${analysis.distanceFeet} feet away; ${attack.name} reaches ${maximumRange} feet.` };
@@ -62,9 +63,8 @@ export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAtt
   const absorbed=Math.min(target.temporaryHitPoints,roll.total);
   const hitPointDamage=roll.total-absorbed;
   const combatants=encounter.combatants.map((combatant)=>combatant.id===targetId?{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,hitPoints:{...combatant.hitPoints,current:Math.max(0,combatant.hitPoints.current-hitPointDamage)}}:combatant);
-  const updatedTarget=combatants.find((combatant)=>combatant.id===targetId)!;
   const dice=`${roll.rolls.join(" + ")}${roll.modifier===0?"":` ${roll.modifier>0?"+":"−"} ${Math.abs(roll.modifier)}`}`;
-  const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType}. ${target.name} has ${updatedTarget.hitPoints.current} HP remaining.`;
+  const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType} to ${target.name}.`;
   return{legal:true,roll,damageApplied:roll.total,summary,encounter:{...encounter,combatants,log:[summary,...encounter.log]}};
 }
 

@@ -35,6 +35,7 @@ export type Scenario = {
   opening: string;
   features: string[];
   grid: ScenarioGrid;
+  enemyProfileIds: string[];
 };
 
 export type ScenarioTemplate = {

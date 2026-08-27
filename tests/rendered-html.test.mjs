@@ -30,5 +30,7 @@ test("renders the combat trainer shell and current state trackers", async () => 
   assert.match(html, /<title>ADaM Combat Trainer<\/title>/i);
   assert.match(html, /Combat resources/i);
   assert.match(html, /Active effects/i);
+  assert.match(html, /ADaM will roll privately for the enemies/i);
+  assert.match(html, /exact enemy health/i);
   assert.doesNotMatch(html, /codex-preview/i);
 });

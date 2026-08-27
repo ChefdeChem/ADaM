@@ -1,5 +1,6 @@
 import type { RulesetId } from "../rulesets";
 import type { ScenarioGrid } from "../scenarios/types";
+import type { CharacterAttack } from "./character";
 
 export type ExperienceMode = "beginner" | "training" | "advanced";
 export type ActionCost = "action" | "bonus-action" | "reaction" | "movement" | "free";
@@ -81,6 +82,8 @@ export type Combatant = {
   initiativeModifier: number;
   initiativeRolled: boolean;
   position: { x: number; y: number };
+  attacks: CharacterAttack[];
+  tacticId?: "ranged-skirmisher" | "melee-brute" | "mobile-harrier";
 };
 
 export type EncounterState = {

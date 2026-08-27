@@ -4,7 +4,8 @@ import test from "node:test";
 import { executeAttackChoice, executeSpellChoice, resolveAttackDamage, resolveAttackRoll, validateAttackChoice, validateAttackTarget } from "../src/engine/combat-options.ts";
 import { applyEffect, effectiveArmorClass, expireEffectsAtTurnStart, minutesToRounds } from "../src/engine/effects.ts";
 import { visibleActionsForMode } from "../src/engine/actions.ts";
-import { rollCombatantInitiative } from "../src/engine/encounter.ts";
+import { rollCombatantInitiative, rollPlayerAndEnemyInitiative } from "../src/engine/encounter.ts";
+import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns.ts";
 
 const map = { width: 12, height: 8, terrain: [] };
 
@@ -19,11 +20,14 @@ function encounter() {
         hitPoints: { current: 20, maximum: 20 }, temporaryHitPoints: 0,
         resources: [{ id: "slot-1", name: "Level 1 Spell Slots", kind: "spell-slot", level: 1, current: 1, maximum: 1 }],
         initiative: 15, initiativeModifier: 3, initiativeRolled: true, position: { x: 1, y: 1 },
+        attacks: [],
       },
       {
         id: "enemy", name: "Enemy", side: "enemy", baseArmorClass: 13, baseSpeedFeet: 30,
         hitPoints: { current: 10, maximum: 10 }, temporaryHitPoints: 0, resources: [],
         initiative: 10, initiativeModifier: 0, initiativeRolled: true, position: { x: 7, y: 1 },
+        attacks: [{ id: "shortbow", name: "Shortbow", kind: "ranged", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 80, longRangeFeet: 320 }],
+        tacticId: "ranged-skirmisher",
       },
     ],
     effects: [],
@@ -100,6 +104,53 @@ test("initiative is rolled one combatant at a time and then sorted", () => {
   const enemyRoll = rollCombatantInitiative(heroRoll.encounter, "enemy", () => 0.95);
   assert.equal(enemyRoll.roll.total, 20);
   assert.equal(enemyRoll.encounter.combatants[0].id, "enemy");
+});
+
+test("the player rolls once while ADaM automatically rolls enemy initiative", () => {
+  const state = { ...encounter(), combatants: encounter().combatants.map((combatant) => ({ ...combatant, initiative: 0, initiativeRolled: false })) };
+  const values = [0.45, 0.95];
+  const result = rollPlayerAndEnemyInitiative(state, "hero", () => values.shift());
+  assert.equal(result.playerRoll.total, 13);
+  assert.equal(result.enemyRolls.length, 1);
+  assert.equal(result.enemyRolls[0].roll.total, 20);
+  assert.equal(result.encounter.combatants.every((combatant) => combatant.initiativeRolled), true);
+  assert.equal(result.encounter.combatants[0].id, "enemy");
+});
+
+test("ADaM resolves an enemy attack and damage without player roll prompts", () => {
+  const state = { ...encounter(), activeIndex: 1, selectedTargetId: null, turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 } };
+  const values = [0.7, 0];
+  const result = resolveEnemyTurn(state, () => values.shift());
+  assert.equal(result.attackRoll.total, 19);
+  assert.equal(result.damageRoll.total, 3);
+  assert.equal(result.encounter.combatants[0].hitPoints.current, 17);
+  assert.deepEqual(result.steps.map((step) => step.kind), ["attack", "damage"]);
+});
+
+test("a melee enemy moves into range before ADaM resolves its attack", () => {
+  const state = encounter();
+  const meleeEnemy = {
+    ...state.combatants[1],
+    attacks: [{ id: "maul", name: "Stone Maul", kind: "melee", attackBonus: 5, damage: "1d8 + 3 bludgeoning", normalRangeFeet: 5 }],
+    tacticId: "melee-brute",
+  };
+  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [state.combatants[0], meleeEnemy], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 } };
+  const values = [0.7, 0];
+  const result = resolveEnemyTurn(enemyTurn, () => values.shift());
+  assert.equal(result.steps[0].kind, "move");
+  assert.equal(result.steps.some((step) => step.kind === "attack"), true);
+  assert.equal(result.steps.some((step) => step.kind === "damage"), true);
+  assert.equal(result.encounter.turn.movementRemaining, 5);
+  assert.equal(Math.max(Math.abs(result.encounter.combatants[1].position.x - 1), Math.abs(result.encounter.combatants[1].position.y - 1)), 1);
+  assert.equal(result.encounter.combatants[0].hitPoints.current, 16);
+});
+
+test("enemy health information scales with experience mode", () => {
+  const enemy = { ...encounter().combatants[1], hitPoints: { current: 4, maximum: 10 } };
+  assert.equal(enemyHealthLabel(enemy, "beginner"), "4/10 HP");
+  assert.equal(enemyHealthLabel(enemy, "training"), "Bloodied");
+  assert.equal(enemyHealthLabel(enemy, "advanced"), "Health concealed");
+  assert.equal(combatOutcome({ ...encounter(), combatants: encounter().combatants.map((combatant) => combatant.side === "enemy" ? { ...combatant, hitPoints: { ...combatant.hitPoints, current: 0 } } : combatant) }), "victory");
 });
 test("beginner mode keeps imported weapon attacks discoverable before target selection", () => {
   const state = { ...encounter(), selectedTargetId: null };
