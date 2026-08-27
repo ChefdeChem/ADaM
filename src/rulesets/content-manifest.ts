@@ -10,14 +10,14 @@ export type RulesContentRevision = {
 export const rulesContentManifest: Record<RulesetId, RulesContentRevision> = {
   "dnd-2024": {
     rulesetId: "dnd-2024",
-    revision: "core-actions-2026.08",
-    reviewedOn: "2026-08-25",
-    scope: "Core action economy and current ADaM sample actions",
+    revision: "combat-resources-2026.08",
+    reviewedOn: "2026-08-27",
+    scope: "Core action economy, weapon ranges, spell slots, and temporary effects",
   },
   "dnd-2014": {
     rulesetId: "dnd-2014",
-    revision: "legacy-actions-2026.08",
-    reviewedOn: "2026-08-25",
-    scope: "Legacy core action economy and compatible ADaM sample actions",
+    revision: "legacy-combat-resources-2026.08",
+    reviewedOn: "2026-08-27",
+    scope: "Legacy action economy, weapon ranges, spell slots, and temporary effects",
   },
 };

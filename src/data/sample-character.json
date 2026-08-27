@@ -1,1 +1,17 @@
-{"id":"example-character","name":"Sample Hero","className":"Fighter","level":5,"armorClass":18,"hitPoints":{"current":44,"maximum":44},"proficiencyBonus":3,"abilities":{"strength":18,"dexterity":12,"constitution":16,"intelligence":10,"wisdom":13,"charisma":8},"resources":[]}
+{
+  "id": "example-character",
+  "name": "Sample Hero",
+  "className": "Fighter",
+  "level": 5,
+  "armorClass": 18,
+  "speedFeet": 30,
+  "hitPoints": { "current": 44, "maximum": 44 },
+  "proficiencyBonus": 3,
+  "abilities": { "strength": 18, "dexterity": 12, "constitution": 16, "intelligence": 10, "wisdom": 13, "charisma": 8 },
+  "resources": [{ "id": "second-wind", "name": "Second Wind", "kind": "generic", "current": 1, "maximum": 1, "recovery": "short-rest" }],
+  "attacks": [
+    { "id": "longsword", "name": "Longsword", "kind": "melee", "attackBonus": 7, "damage": "1d8 + 4 slashing", "normalRangeFeet": 5 },
+    { "id": "longbow", "name": "Longbow", "kind": "ranged", "attackBonus": 4, "damage": "1d8 + 1 piercing", "normalRangeFeet": 150, "longRangeFeet": 600 }
+  ],
+  "spells": []
+}

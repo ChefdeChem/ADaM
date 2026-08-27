@@ -17,6 +17,11 @@ Initial local-first scaffold for a D&D combat training application.
 - Target-first combat flow with selected-target state, grid distance, blocked line of sight, basic cover detection, and range-aware action legality
 - Action, Bonus Action, and Movement category navigation with legal-option counts and a persistent End Turn control
 - Extensible area-effect targeting schema for shapes, size, origin, affected creatures, and per-target resolution
+- Character-sheet attack picker with melee, normal-range, and long-range validation
+- Automatic disadvantage on ranged attacks beyond normal range and within long range
+- Spell picker with spell-level costs, tracked slot pools, cantrips, and per-cast resource spending
+- Base combat statistics separated from derived values and temporary modifiers
+- Round-based effect expiration, concentration replacement, and temporary hit-point ownership
 
 ## Run locally
 
@@ -43,8 +48,11 @@ src/data/            Sample import data
 
 - Rules mechanics are separated from the interface and tracked by edition in `src/rulesets/content-manifest.ts`.
 - Individual weapons, spells, and features should use stable action IDs and declarative targeting profiles rather than interface-specific logic.
+- One combat round represents 6 seconds: 1 minute is 10 rounds and 10 minutes is 100 rounds.
+- Base character values remain unchanged during combat; active effects produce derived AC, attack, saving-throw, and speed modifiers.
+- Spell slots are tracked by level. Casting a leveled spell spends one slot from its level; cantrips spend no slot.
 - Area effects record shape, size, origin, range, line-of-sight needs, affected-creature policy, and whether attacks or saves resolve per target.
 - Friendly fire is never inferred: each action explicitly declares whether it affects all creatures, hostile creatures, or chosen creatures.
 - A rules-content change should update the appropriate edition revision and receive regression coverage before release.
 
-Next: schema validation, import review, weapon and spell-specific ranges, enemy turns, opportunity attacks, conditions, concentration, and resource tracking.
+Next: schema validation, expanded import mapping, enemy turns, opportunity attacks, damage resolution, saving throws, concentration checks, and broader conditions.

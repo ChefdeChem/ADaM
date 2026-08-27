@@ -28,6 +28,7 @@ export type CombatAction = {
   description: string;
   rulesets: RulesetId[];
   targeting?: TargetingProfile;
+  resourceCost?: { resourceName: string; amount: number };
 };
 
 export type TurnResources = {
@@ -37,12 +38,45 @@ export type TurnResources = {
   movementRemaining: number;
 };
 
+export type CombatResource = {
+  id: string;
+  name: string;
+  kind: "generic" | "spell-slot";
+  level?: number;
+  current: number;
+  maximum: number;
+};
+
+export type EffectModifiers = {
+  armorClass?: number;
+  attackRolls?: number;
+  savingThrows?: number;
+  speedFeet?: number;
+  incomingAttacks?: "disadvantage";
+};
+
+export type ActiveEffect = {
+  id: string;
+  name: string;
+  description: string;
+  sourceCombatantId: string;
+  targetCombatantId: string;
+  concentration: boolean;
+  modifiers: EffectModifiers;
+  expiresAt?: { round: number; combatantId: string; phase: "start" };
+  temporaryHitPointsGranted?: number;
+};
+
 export type Combatant = {
   id: string;
   name: string;
   side: "player" | "enemy";
-  armorClass: number;
+  baseArmorClass: number;
+  baseSpeedFeet: number;
   hitPoints: { current: number; maximum: number };
+  temporaryHitPoints: number;
+  temporaryHitPointsSourceEffectId?: string;
+  resources: CombatResource[];
   initiative: number;
   position: { x: number; y: number };
 };
@@ -52,6 +86,7 @@ export type EncounterState = {
   activeIndex: number;
   selectedTargetId: string | null;
   combatants: Combatant[];
+  effects: ActiveEffect[];
   map: ScenarioGrid;
   turn: TurnResources;
   log: string[];

@@ -1,12 +1,14 @@
 import type { Character } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
 import type { RulesetId } from "../rulesets";
+import { validateAttackChoice } from "./combat-options";
+import { spendNamedResource, validateNamedResource } from "./resources";
 import { analyzeTarget } from "./targeting";
 
 const both: RulesetId[] = ["dnd-2014", "dnd-2024"];
 
 export const actionCatalog: CombatAction[] = [
-  { id: "attack", name: "Attack", cost: "action", description: "Make a melee attack against the selected creature. Weapon-specific ranges will come from the imported sheet.", rulesets: both, targeting: { mode: "single", rangeFeet: 5, requiresLineOfSight: true } },
+  { id: "attack", name: "Attack", cost: "action", description: "Choose a weapon or attack from the character sheet, then resolve its specific range and modifiers.", rulesets: both },
   { id: "magic", name: "Magic", cost: "action", description: "Cast a spell, use a magic item, or activate a magical feature that uses the Magic action.", rulesets: ["dnd-2024"] },
   { id: "cast-spell", name: "Cast a Spell", cost: "action", description: "Cast a spell with a casting time of one action.", rulesets: ["dnd-2014"] },
   { id: "dash", name: "Dash", cost: "action", description: "Gain extra movement equal to your Speed for this turn.", rulesets: both },
@@ -20,20 +22,30 @@ export const actionCatalog: CombatAction[] = [
   { id: "use-object", name: "Use an Object", cost: "action", description: "Interact with an object when doing so requires an action.", rulesets: ["dnd-2014"] },
   { id: "study", name: "Study", cost: "action", description: "Recall or analyze information using an Intelligence check.", rulesets: ["dnd-2024"] },
   { id: "influence", name: "Influence", cost: "action", description: "Attempt to influence a selected creature you can communicate with within 30 feet.", rulesets: ["dnd-2024"], targeting: { mode: "single", rangeFeet: 30, requiresLineOfSight: true } },
-  { id: "quickened-spell", name: "Quickened Spell", cost: "bonus-action", description: "Spend Sorcery Points to change an eligible spell's casting time to a Bonus Action.", rulesets: both },
+  { id: "quickened-spell", name: "Quickened Spell", cost: "bonus-action", description: "Spend 2 Sorcery Points to change an eligible spell's casting time to a Bonus Action.", rulesets: both, resourceCost: { resourceName: "Sorcery Points", amount: 2 } },
   { id: "move", name: "Move 5 ft.", cost: "movement", description: "Move one grid space, subject to terrain and opportunity attacks.", rulesets: both },
   { id: "end-turn", name: "End Turn", cost: "free", description: "End your current turn and advance initiative.", rulesets: both },
 ];
 
 export type ActionValidation = { legal: boolean; reason?: string };
 
-export function validateAction(action: CombatAction, encounter: EncounterState): ActionValidation {
+export function validateAction(action: CombatAction, encounter: EncounterState, character?: Character): ActionValidation {
   const active = encounter.combatants[encounter.activeIndex];
   if (active?.side !== "player" && action.id !== "end-turn") return { legal: false, reason: "Player actions are unavailable during an enemy turn." };
   if (action.cost === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (action.cost === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
   if (action.cost === "reaction" && !encounter.turn.reaction) return { legal: false, reason: "Your Reaction is unavailable." };
   if (action.cost === "movement" && encounter.turn.movementRemaining < 5) return { legal: false, reason: "You do not have enough movement remaining." };
+  if (action.resourceCost && active) {
+    const resource = validateNamedResource(encounter, active.id, action.resourceCost.resourceName, action.resourceCost.amount);
+    if (!resource.legal) return resource;
+  }
+  if (action.id === "attack" && character?.attacks?.length) {
+    if (!encounter.selectedTargetId) return { legal: false, reason: "Select a target on the tactical map first." };
+    if (!character.attacks.some((attack) => validateAttackChoice(encounter, attack).legal)) {
+      return { legal: false, reason: "None of this character's attacks can legally reach the selected target." };
+    }
+  }
   if (action.targeting?.mode === "area") return { legal: false, reason: "This area effect needs the upcoming multi-target map selector." };
   if (action.targeting?.mode === "single") {
     if (!encounter.selectedTargetId) return { legal: false, reason: "Select a target on the tactical map first." };
@@ -65,5 +77,9 @@ export function consumeAction(action: CombatAction, encounter: EncounterState): 
   if (action.cost === "bonus-action") turn.bonusAction = false;
   if (action.cost === "reaction") turn.reaction = false;
   if (action.cost === "movement") turn.movementRemaining = Math.max(0, turn.movementRemaining - 5);
-  return { ...encounter, turn, log: [`${encounter.combatants[encounter.activeIndex]?.name ?? "Combatant"}: ${action.name}.`, ...encounter.log] };
+  const active = encounter.combatants[encounter.activeIndex];
+  const spent = action.resourceCost && active
+    ? spendNamedResource(encounter, active.id, action.resourceCost.resourceName, action.resourceCost.amount)
+    : encounter;
+  return { ...spent, turn, log: [`${active?.name ?? "Combatant"}: ${action.name}.`, ...spent.log] };
 }
