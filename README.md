@@ -5,6 +5,7 @@ Initial local-first scaffold for a D&D combat training application.
 ## Included
 
 - Fillable PDF and ADaM JSON character import adapters
+- Device-local roster for five uploaded characters, with one-tap encounter loading of each character's complete combat statistics
 - Normal, advantage, and disadvantage d20 engine
 - Selectable D&D 2024 and D&D 2014/legacy rulesets
 - Responsive training console

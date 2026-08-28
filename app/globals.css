@@ -20,6 +20,13 @@ button{cursor:pointer}
 .file-button:hover{border-color:var(--red);color:var(--red)}
 .file-button input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
 .helper{font-size:11px;line-height:1.5;color:var(--muted);margin:8px 0 0}
+.character-roster{margin:-12px 0 18px;border:1px solid var(--line);background:#f7f2e8}
+.roster-heading{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;border-bottom:1px solid var(--line);background:#e2dacb}
+.roster-heading span,.roster-heading strong{display:block}.roster-heading span{color:var(--red);font-size:8px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.roster-heading strong{margin-top:3px;font:500 16px Georgia,serif}.roster-heading em{display:grid;place-items:center;min-width:40px;height:28px;background:var(--ink);color:var(--gold);font-size:10px;font-style:normal;font-weight:900}
+.roster-list{display:grid}.roster-entry{display:grid;grid-template-columns:1fr auto;border-bottom:1px solid var(--line)}.roster-entry:last-child{border-bottom:0}.roster-entry.active{box-shadow:inset 3px 0 var(--red);background:#fffaf0}
+.roster-select{display:flex;align-items:center;gap:9px;min-width:0;padding:10px 9px 10px 12px;text-align:left;border:0;background:transparent;color:var(--ink)}.roster-select>span{display:grid;place-items:center;flex:0 0 30px;height:30px;border-radius:50%;background:#c8bda8;color:#4c4337;font:600 15px Georgia,serif}.roster-entry.active .roster-select>span{background:var(--red);color:#fff}.roster-select div{min-width:0}.roster-select strong,.roster-select small{display:block}.roster-select strong{font:500 14px Georgia,serif}.roster-select small{margin-top:3px;color:var(--muted);font-size:8px;line-height:1.4}
+.roster-remove{align-self:stretch;padding:0 9px;border:0;border-left:1px solid var(--line);background:transparent;color:#897d6c;font-size:7px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.roster-remove:hover{background:#f0ddd7;color:var(--red)}
+.roster-empty{padding:14px;text-align:center}.roster-empty strong{font:500 15px Georgia,serif}.roster-empty p{margin:5px 0 0;color:var(--muted);font-size:9px;line-height:1.5}
 .character-card{display:flex;gap:13px;align-items:center;padding:17px;background:var(--panel);border:1px solid var(--line);border-bottom:0}
 .portrait{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:var(--red);color:#fff;font-family:Georgia,serif;font-size:25px}
 .character-card p{margin:2px 0;color:var(--muted);font-size:12px}

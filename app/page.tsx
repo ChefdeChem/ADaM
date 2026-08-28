@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { AbilityName, Character, CharacterAttack, CharacterSpell } from "../src/domain/character";
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
@@ -16,6 +16,7 @@ import { importCharacterFile, type ImportResult } from "../src/importers";
 import { rulesets, type RulesetId } from "../src/rulesets";
 import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } from "../src/scenarios/scripted-generator";
 import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
+import { CHARACTER_ROSTER_LIMIT, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
 type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
@@ -116,6 +117,7 @@ function withCombatDefaults(character: Character): Character {
 
 export default function Home() {
   const [character, setCharacter] = useState(sample);
+  const [storedCharacters, setStoredCharacters] = useState<Character[]>([]);
   const [rulesetId, setRulesetId] = useState<RulesetId>("dnd-2024");
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>("beginner");
   const [message, setMessage] = useState("Using the built-in sample character. Import a PDF or ADaM JSON anytime.");
@@ -127,6 +129,7 @@ export default function Home() {
   const [objective, setObjective] = useState<ScenarioObjective>(defaultScenarioSetup.objective);
   const [difficulty, setDifficulty] = useState<ScenarioDifficulty>(defaultScenarioSetup.difficulty);
   const [scenario, setScenario] = useState(() => generateScriptedScenario(defaultScenarioSetup));
+  const initialScenario = useRef(scenario);
   const [savedTemplates, setSavedTemplates] = useState<ScenarioTemplate[]>([]);
   const [encounter, setEncounter] = useState(() => createEncounter(sample, scenario));
   const [command, setCommand] = useState("");
@@ -174,8 +177,19 @@ export default function Home() {
       try {
         const stored = localStorage.getItem("adam-scenario-templates");
         if (stored) setSavedTemplates(JSON.parse(stored) as ScenarioTemplate[]);
+        const rosterJson = localStorage.getItem("adam-character-roster");
+        const roster = rosterJson ? (JSON.parse(rosterJson) as Character[]) : [];
+        const validRoster = roster.filter((candidate) => candidate?.id && candidate?.name && candidate?.hitPoints && candidate?.abilities).slice(0, CHARACTER_ROSTER_LIMIT).map(withCombatDefaults);
+        const nextRoster = validRoster;
+        setStoredCharacters(nextRoster);
+        localStorage.setItem("adam-character-roster", JSON.stringify(nextRoster));
+        const activeId = localStorage.getItem("adam-active-character-id");
+        const activeCharacter = nextRoster.find((candidate) => candidate.id === activeId) ?? nextRoster[0] ?? sample;
+        setCharacter(activeCharacter);
+        setEncounter(createEncounter(activeCharacter, initialScenario.current));
       } catch {
         setSavedTemplates([]);
+        setStoredCharacters([]);
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -274,15 +288,48 @@ export default function Home() {
     finally { event.target.value = ""; }
   }
 
-  function applyImportedCharacter(importedCharacter: Character, warnings: string[]) {
-    const normalized = withCombatDefaults(importedCharacter);
-    setCharacter(normalized);
-    setEncounter(createEncounter(normalized, scenario));
+  function persistCharacterRoster(nextRoster: Character[]) {
+    setStoredCharacters(nextRoster);
+    localStorage.setItem("adam-character-roster", JSON.stringify(nextRoster));
+  }
+
+  function activateCharacter(nextCharacter: Character, announcement: string) {
+    setCharacter(nextCharacter);
+    setEncounter(createEncounter(nextCharacter, scenario));
     setChoiceMode(null);
     setAttackFlow(null);
     setSpellFlow(null);
     setEnemyTurnPhase("idle");
-    setMessage(`${normalized.name} imported. ${warnings.join(" ") || "Ready for combat."} Roll your initiative to begin.`);
+    localStorage.setItem("adam-active-character-id", nextCharacter.id);
+    setMessage(announcement);
+  }
+
+  function applyImportedCharacter(importedCharacter: Character, warnings: string[]): boolean {
+    const normalized = withCombatDefaults(importedCharacter);
+    const update = upsertRosterCharacter(storedCharacters, normalized);
+    if (!update.stored) {
+      setMessage(update.reason ?? "The character could not be stored.");
+      return false;
+    }
+    persistCharacterRoster(update.characters);
+    activateCharacter(normalized, `${normalized.name} imported and saved. ${warnings.join(" ") || "Ready for combat."} Roll your initiative to begin.`);
+    return true;
+  }
+
+  function selectStoredCharacter(characterId: string) {
+    const selected = storedCharacters.find((candidate) => candidate.id === characterId);
+    if (!selected) return;
+    activateCharacter(selected, `${selected.name}'s stored statistics are loaded into a fresh encounter. Roll initiative when ready.`);
+  }
+
+  function deleteStoredCharacter(characterId: string) {
+    const nextRoster = removeRosterCharacter(storedCharacters, characterId);
+    persistCharacterRoster(nextRoster);
+    if (character.id === characterId) {
+      const nextActive = nextRoster[0] ?? sample;
+      activateCharacter(nextActive, `${nextActive.name} is now active. The removed character is no longer stored on this device.`);
+    }
+    else setMessage("Character removed from the stored roster.");
   }
 
   function updateReviewNumber(field: "level" | "armorClass" | "proficiencyBonus" | "speedFeet", value: string) {
@@ -300,7 +347,7 @@ export default function Home() {
   function confirmReviewedImport(event: FormEvent) {
     event.preventDefault();
     if (!reviewCharacter) return;
-    applyImportedCharacter(reviewCharacter, pendingImport?.warnings ?? []);
+    if (!applyImportedCharacter(reviewCharacter, pendingImport?.warnings ?? [])) return;
     setPendingImport(null);
     setReviewCharacter(null);
   }
@@ -540,6 +587,15 @@ export default function Home() {
     <section className="workspace">
       <aside className="sidebar">
         <div className="panel"><div className="panel-heading"><span>01</span><h2>Character</h2></div><label className="file-button">Import character sheet<input type="file" accept="application/pdf,application/json,.json,.pdf" onChange={handleImport} /></label><p className="helper">{message}</p></div>
+        <section className="character-roster" aria-label="Stored character roster">
+          <div className="roster-heading"><div><span>Stored characters</span><strong>Encounter roster</strong></div><em>{storedCharacters.length}/{CHARACTER_ROSTER_LIMIT}</em></div>
+          {storedCharacters.length ? <div className="roster-list">{storedCharacters.map((storedCharacter) => <div key={storedCharacter.id} className={`roster-entry ${character.id === storedCharacter.id ? "active" : ""}`}>
+            <button type="button" className="roster-select" onClick={() => selectStoredCharacter(storedCharacter.id)} aria-label={`Load ${storedCharacter.name} into the encounter`}>
+              <span>{storedCharacter.name[0]?.toUpperCase()}</span><div><strong>{storedCharacter.name}</strong><small>{storedCharacter.className} {storedCharacter.level} · AC {storedCharacter.armorClass} · HP {storedCharacter.hitPoints.maximum} · {storedCharacter.attacks?.length ?? 0} attacks · {storedCharacter.spells?.length ?? 0} spells</small></div>
+            </button>
+            <button type="button" className="roster-remove" onClick={() => deleteStoredCharacter(storedCharacter.id)} aria-label={`Remove ${storedCharacter.name} from stored characters`}>Remove</button>
+          </div>)}</div> : <div className="roster-empty"><strong>Five upload slots available</strong><p>Import and review a character sheet to save it here for future encounters.</p></div>}
+        </section>
         <div className="character-card"><div className="portrait">{character.name[0]?.toUpperCase()}</div><div><p className="character-name">{character.name}</p><p>{character.className} · Level {character.level}</p></div></div>
         <div className="stats"><div><span>AC</span><strong>{playerArmorClass}</strong>{playerArmorClass !== character.armorClass && <small>base {character.armorClass}</small>}</div><div><span>HP</span><strong>{playerCombatant.hitPoints.current}/{playerCombatant.hitPoints.maximum}</strong>{playerCombatant.temporaryHitPoints > 0 && <small>+{playerCombatant.temporaryHitPoints} temp</small>}</div><div><span>PROF</span><strong>+{character.proficiencyBonus}</strong></div></div>
         <div className="weapon-summary"><span>Weapon attacks</span><strong>{character.attacks?.length ?? 0} ready</strong><p>{character.attacks?.map((attack) => attack.name).join(" · ") || "No weapon attacks imported."}</p></div>

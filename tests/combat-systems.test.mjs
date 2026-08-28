@@ -8,6 +8,7 @@ import { rollCombatantInitiative, rollPlayerAndEnemyInitiative } from "../src/en
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns.ts";
 import { chooseOpportunityAttack, queueConcentrationCheck, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses.ts";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement.ts";
+import { CHARACTER_ROSTER_LIMIT, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster.ts";
 
 const map = { width: 12, height: 8, terrain: [] };
 
@@ -45,6 +46,37 @@ function encounter() {
 
 test("ten minutes converts to one hundred six-second rounds", () => {
   assert.equal(minutesToRounds(10), 100);
+});
+
+test("the stored character roster accepts five characters and blocks a sixth", () => {
+  const base = {
+    name: "Hero", className: "Fighter", level: 1, armorClass: 15, hitPoints: { current: 10, maximum: 10 }, proficiencyBonus: 2,
+    abilities: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 }, resources: [],
+    source: { format: "json", importedAt: "2026-08-28T00:00:00.000Z" },
+  };
+  let roster = [];
+  for (let index = 0; index < CHARACTER_ROSTER_LIMIT; index += 1) {
+    const result = upsertRosterCharacter(roster, { ...base, id: `hero-${index}`, name: `Hero ${index + 1}` });
+    assert.equal(result.stored, true);
+    roster = result.characters;
+  }
+  const full = upsertRosterCharacter(roster, { ...base, id: "hero-6", name: "Hero 6" });
+  assert.equal(full.stored, false);
+  assert.equal(full.characters.length, 5);
+  assert.match(full.reason, /roster is full/i);
+});
+
+test("stored characters can be updated in place and removed", () => {
+  const character = {
+    id: "hero", name: "Hero", className: "Fighter", level: 1, armorClass: 15, hitPoints: { current: 10, maximum: 10 }, proficiencyBonus: 2,
+    abilities: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 }, resources: [],
+    source: { format: "json", importedAt: "2026-08-28T00:00:00.000Z" },
+  };
+  const updated = upsertRosterCharacter([character], { ...character, armorClass: 17 });
+  assert.equal(updated.replaced, true);
+  assert.equal(updated.characters.length, 1);
+  assert.equal(updated.characters[0].armorClass, 17);
+  assert.deepEqual(removeRosterCharacter(updated.characters, "hero"), []);
 });
 
 test("temporary modifiers derive AC without replacing the base value", () => {
