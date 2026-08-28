@@ -130,22 +130,78 @@ export function executeAttackChoice(encounter: EncounterState, attack: Character
   };
 }
 
-export function validateSpellChoice(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
+export function validateSpellAvailability(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const active = encounter.combatants[encounter.activeIndex];
   if (spell.castingTime === "reaction") return { legal: false, reason: `${spell.name} becomes available automatically when its reaction trigger occurs.` };
   if (spell.castingTime === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (spell.castingTime === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
   const slot = validateSpellSlot(encounter, active.id, spell.level);
   if (!slot.legal) return slot;
+  return { legal: true, rollMode: "normal", distanceFeet: 0 };
+}
+
+export function validateSpellChoice(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
+  const availability = validateSpellAvailability(encounter, spell);
+  if (!availability.legal) return availability;
   if (spell.target === "single") {
     if (!encounter.selectedTargetId) return { legal: false, reason: "Select a target on the tactical map first." };
     const analysis = analyzeTarget(encounter, encounter.selectedTargetId);
     if (!analysis) return { legal: false, reason: "The selected target is no longer available." };
+    if (analysis.target.hitPoints.current <= 0) return { legal: false, reason: `${analysis.target.name} is already defeated.` };
     if (spell.requiresLineOfSight && !analysis.lineOfSight) return { legal: false, reason: `${analysis.target.name} is outside your line of sight.` };
     if (analysis.distanceFeet > spell.rangeFeet) return { legal: false, reason: `${analysis.target.name} is ${analysis.distanceFeet} feet away; ${spell.name} reaches ${spell.rangeFeet} feet.` };
-    return { legal: true, rollMode: "normal", distanceFeet: analysis.distanceFeet };
+    const active = encounter.combatants[encounter.activeIndex];
+    const threatened = spell.attackBonus !== undefined && encounter.combatants.some((combatant) => combatant.side !== active.side
+      && combatant.hitPoints.current > 0
+      && gridDistanceFeet(active, combatant) <= 5);
+    return { legal: true, rollMode: threatened ? "disadvantage" : "normal", distanceFeet: analysis.distanceFeet };
   }
   return { legal: true, rollMode: "normal", distanceFeet: 0 };
+}
+
+export function validateSpellTarget(encounter: EncounterState, spell: CharacterSpell, targetId: string): OptionValidation {
+  return validateSpellChoice({ ...encounter, selectedTargetId: targetId }, spell);
+}
+
+export type SpellAttackRollResolution =
+  | { legal: false; reason: string; encounter: EncounterState }
+  | { legal: true; encounter: EncounterState; roll: D20Result; hit: boolean; critical: boolean; targetArmorClass: number; summary: string };
+
+export function resolveSpellAttackRoll(encounter: EncounterState, spell: CharacterSpell, random = Math.random): SpellAttackRollResolution {
+  const validation = validateSpellChoice(encounter, spell);
+  if (!validation.legal) return { legal: false, reason: validation.reason ?? "That spell attack is not legal.", encounter };
+  if (spell.attackBonus === undefined) return { legal: false, reason: `${spell.name} does not require an attack roll.`, encounter };
+  const active = encounter.combatants[encounter.activeIndex];
+  const target = analyzeTarget(encounter, encounter.selectedTargetId!)!;
+  const roll = rollD20({ mode: validation.rollMode ?? "normal", modifier: spell.attackBonus + effectiveAttackModifier(encounter, active.id), random });
+  const targetArmorClass = effectiveArmorClass(encounter, target.target.id) + (target.cover === "half" ? 2 : 0);
+  const critical = roll.natural === 20;
+  const hit = critical || (roll.natural !== 1 && roll.total >= targetArmorClass);
+  let next = spendSpellSlot(encounter, active.id, spell.level);
+  next = {
+    ...next,
+    turn: {
+      ...next.turn,
+      action: spell.castingTime === "action" ? false : next.turn.action,
+      bonusAction: spell.castingTime === "bonus-action" ? false : next.turn.bonusAction,
+      reaction: spell.castingTime === "reaction" ? false : next.turn.reaction,
+    },
+  };
+  const rangeNote = validation.rollMode === "disadvantage" ? " with disadvantage" : "";
+  const summary = `${spell.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier >= 0 ? "+" : "−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical ? "critical hit" : hit ? "hit" : "miss"}.`;
+  return { legal: true, roll, hit, critical, targetArmorClass, summary, encounter: { ...next, log: [`${active.name} casts ${spell.name} at ${target.target.name}. ${summary}`, ...next.log] } };
+}
+
+export function resolveSpellDamage(encounter: EncounterState, spell: CharacterSpell, targetId: string, critical = false, random = Math.random): DamageResolution {
+  if (!spell.damage) return { legal: false, reason: `${spell.name} does not have a damage roll.`, encounter };
+  return resolveAttackDamage(encounter, {
+    id: spell.id,
+    name: spell.name,
+    kind: "ranged",
+    attackBonus: spell.attackBonus ?? 0,
+    damage: spell.damage,
+    normalRangeFeet: spell.rangeFeet,
+  }, targetId, critical, random);
 }
 
 export function executeSpellChoice(encounter: EncounterState, spell: CharacterSpell, random = Math.random): OptionResolution {

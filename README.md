@@ -14,7 +14,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Natural-language, guided, combined, and reusable-template scenario setup
 - Initiative order, round tracking, action economy, movement, and combat log state
 - Interactive 5-foot square tactical grid with one-tap pathfinding to every reachable square, split movement, Dash, Disengage, blocking terrain, occupied squares, and difficult-terrain costs
-- Target-first combat flow with selected-target state, grid distance, blocked line of sight, basic cover detection, and range-aware action legality
+- Weapon-first and spell-first combat flows that highlight legal targets using grid distance, line of sight, cover, range, and target-type rules
 - Action, Bonus Action, and Movement category navigation with legal-option counts and a persistent End Turn control
 - Extensible area-effect targeting schema for shapes, size, origin, affected creatures, and per-target resolution
 - Character-sheet attack picker with melee, normal-range, and long-range validation
@@ -60,5 +60,12 @@ src/data/            Sample import data
 - Friendly fire is never inferred: each action explicitly declares whether it affects all creatures, hostile creatures, or chosen creatures.
 - A rules-content change should update the appropriate edition revision and receive regression coverage before release.
 - Enemy attacks and abilities use data profiles; player response rolls pause the DM turn until resolved.
+
+## Deferred interface notes
+
+- Show dice rolls prominently above the encounter.
+- Animate the relevant die values cycling or spinning before each result settles.
+- Keep the complete initiative order and values visible throughout combat, including enemy initiative.
+- Give every non-initiative roll a prominent teaching display so new players can see which dice and modifiers are being used.
 
 Next: schema validation, expanded import mapping, cover refinements, broader conditions, and additional class-specific reaction triggers.

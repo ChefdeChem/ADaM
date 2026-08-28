@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { executeAttackChoice, executeSpellChoice, resolveAttackDamage, resolveAttackRoll, validateAttackChoice, validateAttackTarget } from "../src/engine/combat-options.ts";
+import { executeAttackChoice, executeSpellChoice, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellTarget } from "../src/engine/combat-options.ts";
 import { applyEffect, effectiveArmorClass, expireEffectsAtTurnStart, minutesToRounds } from "../src/engine/effects.ts";
 import { actionCatalog, consumeAction, visibleActionsForMode } from "../src/engine/actions.ts";
 import { rollCombatantInitiative, rollPlayerAndEnemyInitiative } from "../src/engine/encounter.ts";
@@ -152,6 +152,28 @@ test("weapon-first targeting finds ranged targets before one is selected", () =>
   assert.equal(validation.legal, true);
   assert.equal(validation.rollMode, "normal");
   assert.equal(validation.distanceFeet, 30);
+});
+
+test("spell-first targeting finds legal targets before one is selected", () => {
+  const state = { ...encounter(), selectedTargetId: null };
+  const spell = { id: "arcane-bolt", name: "Arcane Bolt", level: 1, castingTime: "action", rangeFeet: 60, target: "single", requiresLineOfSight: true, attackBonus: 6, damage: "1d8 force" };
+  assert.equal(validateSpellAvailability(state, spell).legal, true);
+  assert.equal(validateSpellTarget(state, spell, "enemy").legal, true);
+  assert.equal(validateSpellTarget(state, spell, "enemy").distanceFeet, 30);
+});
+
+test("spell attacks spend resources and keep attack and damage as separate player rolls", () => {
+  const spell = { id: "arcane-bolt", name: "Arcane Bolt", level: 1, castingTime: "action", rangeFeet: 60, target: "single", requiresLineOfSight: true, attackBonus: 6, damage: "1d8 force" };
+  const attackResult = resolveSpellAttackRoll(encounter(), spell, () => 0.7);
+  assert.equal(attackResult.legal, true);
+  assert.equal(attackResult.hit, true);
+  assert.equal(attackResult.encounter.turn.action, false);
+  assert.equal(attackResult.encounter.combatants[0].resources[0].current, 0);
+  assert.equal(attackResult.encounter.combatants[1].hitPoints.current, 10);
+  const damageResult = resolveSpellDamage(attackResult.encounter, spell, "enemy", false, () => 0.5);
+  assert.equal(damageResult.legal, true);
+  assert.equal(damageResult.roll.total, 5);
+  assert.equal(damageResult.encounter.combatants[1].hitPoints.current, 5);
 });
 
 test("attack and damage require separate rolls before target HP changes", () => {
