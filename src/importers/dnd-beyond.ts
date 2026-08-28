@@ -1,4 +1,4 @@
-import type { CharacterAttack } from "../domain/character";
+import type { AbilityName, CharacterAttack } from "../domain/character";
 
 export type DndBeyondCharacterData = {
   name: string;
@@ -16,6 +16,7 @@ export type DndBeyondCharacterData = {
     wisdom: number;
     charisma: number;
   };
+  savingThrowModifiers: Record<AbilityName, number>;
   attacks: CharacterAttack[];
 };
 
@@ -111,6 +112,9 @@ export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterDat
   const maximumHitPoints = hpValues[0] ?? 1;
   const currentHitPoints = hpValues[1] ?? maximumHitPoints;
   const attacks = extractAttacks(tokens, hitDiceIndex + 1);
+  const saveOrder: AbilityName[] = ["charisma", "dexterity", "intelligence", "strength", "wisdom", "constitution"];
+  const saveValues = saveOrder.map((_, index) => integer(tokens[abilityStart + 12 + index]));
+  const savingThrowModifiers = Object.fromEntries(saveOrder.map((ability, index) => [ability, saveValues[index] ?? abilityModifier(abilityValues[["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].indexOf(ability)]!)])) as Record<AbilityName, number>;
 
   return {
     name: tokens[start] || "Unnamed Adventurer",
@@ -128,6 +132,11 @@ export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterDat
       wisdom: abilityValues[4]!,
       charisma: abilityValues[5]!,
     },
+    savingThrowModifiers,
     attacks,
   };
+}
+
+function abilityModifier(score: number): number {
+  return Math.floor((score - 10) / 2);
 }

@@ -101,7 +101,7 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
         character,
         format: "flattened-pdf",
         requiresReview: true,
-        warnings: [`Flattened D&D Beyond sheet detected. ${parsed.attacks.length} weapon attacks extracted; review the values before combat.`],
+        warnings: [`Flattened D&D Beyond sheet detected. ${parsed.attacks.length} weapon attacks and saving throw modifiers extracted; review the values before combat.`],
       };
     }
   } catch {

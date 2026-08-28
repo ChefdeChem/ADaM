@@ -10,14 +10,14 @@ export type RulesContentRevision = {
 export const rulesContentManifest: Record<RulesetId, RulesContentRevision> = {
   "dnd-2024": {
     rulesetId: "dnd-2024",
-    revision: "enemy-turns-2026.08",
+    revision: "defensive-responses-2026.08",
     reviewedOn: "2026-08-27",
-    scope: "Core action economy, weapon ranges, spell slots, temporary effects, and data-driven enemy profiles",
+    scope: "Core action economy, enemy turns, saving throws, reactions, concentration checks, death saves, and data-driven profiles",
   },
   "dnd-2014": {
     rulesetId: "dnd-2014",
-    revision: "legacy-enemy-turns-2026.08",
+    revision: "legacy-defensive-responses-2026.08",
     reviewedOn: "2026-08-27",
-    scope: "Legacy action economy, weapon ranges, spell slots, temporary effects, and data-driven enemy profiles",
+    scope: "Legacy action economy, enemy turns, saving throws, reactions, concentration checks, death saves, and data-driven profiles",
   },
 };

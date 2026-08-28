@@ -55,17 +55,32 @@ export type DamageResolution=
   |{legal:false;reason:string;encounter:EncounterState}
   |{legal:true;encounter:EncounterState;roll:DamageRoll;damageApplied:number;summary:string};
 
+export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false}:{critical?:boolean}={}):EncounterState{
+  const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
+  if(!target)return encounter;
+  const absorbed=Math.min(target.temporaryHitPoints,amount);
+  const hitPointDamage=amount-absorbed;
+  return{
+    ...encounter,
+    combatants:encounter.combatants.map((combatant)=>{
+      if(combatant.id!==targetId)return combatant;
+      if(combatant.side==="player"&&combatant.hitPoints.current===0&&hitPointDamage>0){
+        return{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,deathSaves:{...combatant.deathSaves,failures:Math.min(3,combatant.deathSaves.failures+(critical?2:1))}};
+      }
+      return{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,hitPoints:{...combatant.hitPoints,current:Math.max(0,combatant.hitPoints.current-hitPointDamage)},stabilized:false};
+    }),
+  };
+}
+
 export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAttack,targetId:string,critical=false,random=Math.random):DamageResolution{
   const roll=rollDamage(attack.damage,{critical,random});
   if(!roll)return{legal:false,reason:`ADaM could not read the damage formula “${attack.damage}”.`,encounter};
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return{legal:false,reason:"The target is no longer available.",encounter};
-  const absorbed=Math.min(target.temporaryHitPoints,roll.total);
-  const hitPointDamage=roll.total-absorbed;
-  const combatants=encounter.combatants.map((combatant)=>combatant.id===targetId?{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,hitPoints:{...combatant.hitPoints,current:Math.max(0,combatant.hitPoints.current-hitPointDamage)}}:combatant);
+  const damaged=applyDamageToCombatant(encounter,targetId,roll.total,{critical});
   const dice=`${roll.rolls.join(" + ")}${roll.modifier===0?"":` ${roll.modifier>0?"+":"−"} ${Math.abs(roll.modifier)}`}`;
   const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType} to ${target.name}.`;
-  return{legal:true,roll,damageApplied:roll.total,summary,encounter:{...encounter,combatants,log:[summary,...encounter.log]}};
+  return{legal:true,roll,damageApplied:roll.total,summary,encounter:{...damaged,log:[summary,...damaged.log]}};
 }
 
 export function executeAttackChoice(encounter: EncounterState, attack: CharacterAttack, random = Math.random): OptionResolution {
@@ -90,9 +105,9 @@ export function executeAttackChoice(encounter: EncounterState, attack: Character
 
 export function validateSpellChoice(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const active = encounter.combatants[encounter.activeIndex];
+  if (spell.castingTime === "reaction") return { legal: false, reason: `${spell.name} becomes available automatically when its reaction trigger occurs.` };
   if (spell.castingTime === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (spell.castingTime === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
-  if (spell.castingTime === "reaction" && !encounter.turn.reaction) return { legal: false, reason: "Your Reaction is unavailable." };
   const slot = validateSpellSlot(encounter, active.id, spell.level);
   if (!slot.legal) return slot;
   if (spell.target === "single") {

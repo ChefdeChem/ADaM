@@ -6,6 +6,7 @@ import { applyEffect, effectiveArmorClass, expireEffectsAtTurnStart, minutesToRo
 import { visibleActionsForMode } from "../src/engine/actions.ts";
 import { rollCombatantInitiative, rollPlayerAndEnemyInitiative } from "../src/engine/encounter.ts";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns.ts";
+import { queueConcentrationCheck, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave } from "../src/engine/responses.ts";
 
 const map = { width: 12, height: 8, terrain: [] };
 
@@ -20,19 +21,23 @@ function encounter() {
         hitPoints: { current: 20, maximum: 20 }, temporaryHitPoints: 0,
         resources: [{ id: "slot-1", name: "Level 1 Spell Slots", kind: "spell-slot", level: 1, current: 1, maximum: 1 }],
         initiative: 15, initiativeModifier: 3, initiativeRolled: true, position: { x: 1, y: 1 },
-        attacks: [],
+        attacks: [], savingThrowModifiers: { strength: 0, dexterity: 3, constitution: 2, intelligence: 0, wisdom: 1, charisma: 0 },
+        reactionAvailable: true, reactionOptions: [], abilities: [], usedAbilityIds: [], deathSaves: { successes: 0, failures: 0 }, stabilized: false,
       },
       {
         id: "enemy", name: "Enemy", side: "enemy", baseArmorClass: 13, baseSpeedFeet: 30,
         hitPoints: { current: 10, maximum: 10 }, temporaryHitPoints: 0, resources: [],
         initiative: 10, initiativeModifier: 0, initiativeRolled: true, position: { x: 7, y: 1 },
         attacks: [{ id: "shortbow", name: "Shortbow", kind: "ranged", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 80, longRangeFeet: 320 }],
+        savingThrowModifiers: { strength: 0, dexterity: 0, constitution: 0, intelligence: 0, wisdom: 0, charisma: 0 },
+        reactionAvailable: true, reactionOptions: [], abilities: [], usedAbilityIds: [], deathSaves: { successes: 0, failures: 0 }, stabilized: false,
         tacticId: "ranged-skirmisher",
       },
     ],
     effects: [],
     map,
     turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 },
+    pendingResponse: null,
     log: [],
   };
 }
@@ -125,6 +130,65 @@ test("ADaM resolves an enemy attack and damage without player roll prompts", () 
   assert.equal(result.damageRoll.total, 3);
   assert.equal(result.encounter.combatants[0].hitPoints.current, 17);
   assert.deepEqual(result.steps.map((step) => step.kind), ["attack", "damage"]);
+});
+
+test("enemy abilities pause the DM turn for a player saving throw", () => {
+  const state = encounter();
+  const ability = { id: "cinder-flask", name: "Cinder Flask", kind: "saving-throw", saveAbility: "dexterity", saveDc: 12, damage: "2d6 fire", damageOnSuccess: "half", rangeFeet: 60, requiresLineOfSight: true, uses: 1, description: "Dexterity save for half damage." };
+  const enemy = { ...state.combatants[1], abilities: [ability] };
+  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [state.combatants[0], enemy], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 } };
+  const result = resolveEnemyTurn(enemyTurn, () => 0.5);
+  assert.equal(result.encounter.pendingResponse.type, "saving-throw");
+  assert.equal(result.encounter.pendingResponse.ability.id, "cinder-flask");
+  assert.equal(result.damageRoll, null);
+  const values = [0.55, 0, 0];
+  const save = resolveSavingThrowResponse(result.encounter, () => values.shift());
+  assert.equal(save.playerRoll.total, 15);
+  assert.equal(save.damageRoll.total, 2);
+  assert.equal(save.encounter.combatants[0].hitPoints.current, 19);
+  assert.equal(save.encounter.pendingResponse, null);
+});
+
+test("Shield uses a reaction and spell slot before enemy damage is rolled", () => {
+  const state = encounter();
+  const hero = { ...state.combatants[0], reactionOptions: [{ id: "shield", name: "Shield", kind: "armor-class", armorClassBonus: 5, spellLevel: 1, description: "+5 AC." }] };
+  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [hero, state.combatants[1]], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 } };
+  const attack = resolveEnemyTurn(enemyTurn, () => 0.7);
+  assert.equal(attack.encounter.pendingResponse.type, "attack-reaction");
+  assert.equal(attack.encounter.combatants[0].hitPoints.current, 20);
+  const shield = resolveAttackReaction(attack.encounter, "shield", () => 0);
+  assert.equal(shield.damageRoll, null);
+  assert.equal(shield.encounter.combatants[0].hitPoints.current, 20);
+  assert.equal(shield.encounter.combatants[0].reactionAvailable, false);
+  assert.equal(shield.encounter.combatants[0].resources[0].current, 0);
+  assert.equal(effectiveArmorClass(shield.encounter, "hero"), 20);
+});
+
+test("damage queues a concentration check and a failed save ends concentration", () => {
+  const concentrating = applyEffect(encounter(), { name: "Blur", description: "Concentration.", sourceCombatantId: "hero", targetCombatantId: "hero", durationRounds: 10, concentration: true });
+  const queued = queueConcentrationCheck(concentrating, "hero", 22);
+  assert.equal(queued.pendingResponse.type, "concentration-check");
+  assert.equal(queued.pendingResponse.dc, 11);
+  const result = resolveConcentrationResponse(queued, () => 0.3);
+  assert.equal(result.playerRoll.total, 9);
+  assert.equal(result.encounter.effects.length, 0);
+  assert.equal(result.encounter.pendingResponse, null);
+});
+
+test("death saves track failures and a natural 20 restores consciousness", () => {
+  const state = encounter();
+  const unconscious = { ...state, combatants: state.combatants.map((combatant) => combatant.id === "hero" ? { ...combatant, hitPoints: { ...combatant.hitPoints, current: 0 } } : combatant) };
+  const naturalOne = rollDeathSave(unconscious, "hero", () => 0);
+  assert.equal(naturalOne.encounter.combatants[0].deathSaves.failures, 2);
+  assert.equal(combatOutcome(naturalOne.encounter), "active");
+  const naturalTwenty = rollDeathSave(unconscious, "hero", () => 0.99);
+  assert.equal(naturalTwenty.encounter.combatants[0].hitPoints.current, 1);
+  assert.deepEqual(naturalTwenty.encounter.combatants[0].deathSaves, { successes: 0, failures: 0 });
+  const firstSuccess = rollDeathSave(unconscious, "hero", () => 0.5);
+  const secondSuccess = rollDeathSave(firstSuccess.encounter, "hero", () => 0.5);
+  const thirdSuccess = rollDeathSave(secondSuccess.encounter, "hero", () => 0.5);
+  assert.equal(thirdSuccess.encounter.combatants[0].stabilized, true);
+  assert.equal(combatOutcome(thirdSuccess.encounter), "stabilized");
 });
 
 test("a melee enemy moves into range before ADaM resolves its attack", () => {

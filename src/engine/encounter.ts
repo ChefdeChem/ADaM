@@ -1,4 +1,4 @@
-import type { Character } from "../domain/character";
+import type { AbilityName, Character } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import type { Scenario } from "../scenarios/types";
 import { enemyProfile } from "../rulesets/enemy-profiles";
@@ -6,6 +6,11 @@ import { rollD20, type D20Result } from "./dice";
 import { effectiveSpeed, expireEffectsAtTurnStart } from "./effects";
 
 const abilityModifier=(score:number)=>Math.floor((score-10)/2);
+const abilities:AbilityName[]=["strength","dexterity","constitution","intelligence","wisdom","charisma"];
+
+function characterSavingThrows(character:Character):Record<AbilityName,number>{
+  return Object.fromEntries(abilities.map((ability)=>[ability,character.savingThrowModifiers?.[ability]??abilityModifier(character.abilities[ability])])) as Record<AbilityName,number>;
+}
 
 export function createEncounter(character: Character, scenario: Scenario): EncounterState {
   const enemyPositions = [{ x: 9, y: 2 }, { x: 9, y: 5 }, { x: 10, y: 3 }];
@@ -26,6 +31,13 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       initiativeRolled: false,
       position: seed.position,
       attacks: profile.attacks.map((attack) => ({ ...attack })),
+      savingThrowModifiers: { strength: 0, dexterity: profile.initiativeModifier, constitution: 0, intelligence: 0, wisdom: 0, charisma: 0 },
+      reactionAvailable: true,
+      reactionOptions: [],
+      abilities: profile.abilities.map((ability) => ({ ...ability })),
+      usedAbilityIds: [],
+      deathSaves: { successes: 0, failures: 0 },
+      stabilized: false,
       tacticId: profile.tacticId,
     };
   });
@@ -48,12 +60,20 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         initiativeRolled: false,
         position: { x: 1, y: 6 },
         attacks: (character.attacks ?? []).map((attack) => ({ ...attack })),
+        savingThrowModifiers: characterSavingThrows(character),
+        reactionAvailable: true,
+        reactionOptions: (character.spells ?? []).filter((spell) => spell.name.toLowerCase() === "shield").map(() => ({ id: "shield", name: "Shield", kind: "armor-class" as const, armorClassBonus: 5, spellLevel: 1, description: "+5 AC until the start of your next turn, including against the triggering attack." })),
+        abilities: [],
+        usedAbilityIds: [],
+        deathSaves: { successes: 0, failures: 0 },
+        stabilized: false,
       },
       ...enemies,
     ],
     effects: [],
     map: scenario.grid,
     turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 },
+    pendingResponse: null,
     log: ["Encounter started. The collapsed gate is thirty feet ahead."],
   };
 }
@@ -86,21 +106,26 @@ export function rollCombatantInitiative(encounter:EncounterState,combatantId:str
 }
 
 export function endTurn(encounter: EncounterState): EncounterState {
-  const livingCombatants = encounter.combatants.filter((combatant) => combatant.hitPoints.current > 0);
+  const eligible = (combatant: EncounterState["combatants"][number]) => combatant.side === "enemy"
+    ? combatant.hitPoints.current > 0
+    : combatant.hitPoints.current > 0 || (!combatant.stabilized && combatant.deathSaves.failures < 3);
+  const livingCombatants = encounter.combatants.filter(eligible);
   if (livingCombatants.length === 0) return encounter;
   let nextIndex = encounter.activeIndex;
   for (let offset = 1; offset <= encounter.combatants.length; offset += 1) {
     const candidateIndex = (encounter.activeIndex + offset) % encounter.combatants.length;
-    if (encounter.combatants[candidateIndex].hitPoints.current > 0) { nextIndex = candidateIndex; break; }
+    if (eligible(encounter.combatants[candidateIndex])) { nextIndex = candidateIndex; break; }
   }
   const round = nextIndex <= encounter.activeIndex ? encounter.round + 1 : encounter.round;
   const nextCombatant = encounter.combatants[nextIndex];
+  const combatants = encounter.combatants.map((combatant, index) => index === nextIndex ? { ...combatant, reactionAvailable: true } : combatant);
   const advanced = {
     ...encounter,
+    combatants,
     round,
     activeIndex: nextIndex,
     selectedTargetId: null,
-    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: nextCombatant.baseSpeedFeet },
+    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: nextCombatant.hitPoints.current > 0 ? nextCombatant.baseSpeedFeet : 0 },
     log: [`Turn passed to ${nextCombatant.name}.`, ...encounter.log],
   };
   const expired = expireEffectsAtTurnStart(advanced, round, nextCombatant.id);

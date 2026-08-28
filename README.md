@@ -22,6 +22,9 @@ Initial local-first scaffold for a D&D combat training application.
 - Spell picker with spell-level costs, tracked slot pools, cantrips, and per-cast resource spending
 - Base combat statistics separated from derived values and temporary modifiers
 - Round-based effect expiration, concentration replacement, and temporary hit-point ownership
+- Automated enemy initiative, movement, targeting, attacks, damage, and saving-throw abilities
+- Player-controlled saving throws, reaction windows, concentration checks, and death saves
+- Mode-based enemy health visibility with exact, descriptive, and concealed states
 
 ## Run locally
 
@@ -54,5 +57,6 @@ src/data/            Sample import data
 - Area effects record shape, size, origin, range, line-of-sight needs, affected-creature policy, and whether attacks or saves resolve per target.
 - Friendly fire is never inferred: each action explicitly declares whether it affects all creatures, hostile creatures, or chosen creatures.
 - A rules-content change should update the appropriate edition revision and receive regression coverage before release.
+- Enemy attacks and abilities use data profiles; player response rolls pause the DM turn until resolved.
 
-Next: schema validation, expanded import mapping, enemy turns, opportunity attacks, damage resolution, saving throws, concentration checks, and broader conditions.
+Next: schema validation, expanded import mapping, opportunity attacks, broader conditions, and additional reaction triggers.

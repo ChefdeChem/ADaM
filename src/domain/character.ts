@@ -53,6 +53,7 @@ export type Character = {
   hitPoints: { current: number; maximum: number };
   proficiencyBonus: number;
   abilities: Record<AbilityName, number>;
+  savingThrowModifiers?: Partial<Record<AbilityName, number>>;
   resources: CharacterResource[];
   attacks?: CharacterAttack[];
   spells?: CharacterSpell[];

@@ -87,6 +87,7 @@ button{cursor:pointer}
 .initiative-strip{display:flex;gap:8px;overflow-x:auto;padding:9px;background:#252826;color:#fff}.round{display:grid;place-items:center;min-width:74px;color:#b7b8b4;font-size:10px;text-transform:uppercase}.round strong{display:block;color:var(--gold);font:500 22px Georgia,serif}.initiative-card{display:flex;align-items:center;gap:10px;min-width:175px;padding:10px 12px;border:1px solid #ffffff1c;background:#191b1a}.initiative-card.active{border-color:var(--gold);background:#332d23}.initiative-card>span{display:grid;place-items:center;width:29px;height:29px;border-radius:50%;background:#ffffff12;color:var(--gold);font-weight:800}.initiative-card strong,.initiative-card small{display:block}.initiative-card strong{font-size:12px}.initiative-card small{margin-top:3px;color:#a9aca6;font-size:9px;text-transform:capitalize}
 .turn-dashboard{display:grid;grid-template-columns:1.3fr repeat(4,1fr);border:1px solid var(--line);border-top:0;background:var(--panel)}.turn-dashboard div{padding:12px;border-right:1px solid var(--line)}.turn-dashboard strong{display:block;margin-top:4px;font-size:12px}
 .initiative-card.defeated{opacity:.48;text-decoration:line-through}
+.initiative-card.unconscious{border-color:#96705f;background:#302925}.initiative-card.unconscious>span{color:#e9c2aa}
 .action-console{margin-top:18px;padding:22px;border:1px solid var(--line);background:var(--panel);box-shadow:0 12px 35px #4e463518}.console-heading{display:flex;justify-content:space-between;align-items:center}.console-heading h3,.encounter-log h3{font:500 25px Georgia,serif;margin:5px 0 16px}.mini-roll{display:flex;align-items:center;gap:10px}.mini-roll strong{display:grid;place-items:center;width:42px;height:42px;background:var(--ink);color:var(--gold);font:500 22px Georgia,serif}
 .action-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:8px}.action-grid button{position:relative;min-height:105px;padding:13px;text-align:left;border:1px solid var(--line);background:#f4efe4;color:var(--ink)}.action-grid button:hover{border-color:var(--red)}.action-grid button.illegal{opacity:.55;background:#e4e0d7}.action-grid strong,.action-grid small,.action-grid span{display:block}.action-grid strong{padding-right:45px;font:500 16px Georgia,serif}.action-grid span{position:absolute;right:9px;top:10px;padding:3px 5px;background:#ddd4c2;color:#635d52;font-size:7px;text-transform:uppercase;letter-spacing:.08em}.action-grid small{margin-top:8px;color:var(--muted);font-size:9px;line-height:1.45}
 .action-category-tabs{display:grid;grid-template-columns:repeat(3,1fr);margin-bottom:10px;border:1px solid var(--line);background:#e9e2d3}
@@ -154,9 +155,19 @@ button{cursor:pointer}
 .roll-coach button strong{margin-top:4px;font:500 17px Georgia,serif}
 .roll-coach.damage-coach{border-color:#8d573e;border-left-color:var(--red);background:#f8e9df}
 .roll-coach.enemy-coach{border-color:#6c736d;border-left-color:#252826;background:#eceee9}
+.roll-coach.response-coach{border-color:#bd7d3a;border-left-color:#8c332a;background:#fff1df}
+.roll-coach.reaction-coach{grid-template-columns:1fr;background:#efe9f5;border-color:#76608c;border-left-color:#594269}
+.roll-coach.concentration-coach{background:#e7f0ec;border-color:#5f796d;border-left-color:#3f6253}
+.roll-coach.death-save-coach{background:#eee9e6;border-color:#725d55;border-left-color:#312927}
+.response-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.roll-coach .response-actions button{min-width:180px;padding:11px 13px;background:#594269;box-shadow:none}
+.roll-coach .response-actions button.decline-response{background:#696a66}
+.response-actions em{display:block;margin-top:4px;color:#e3dce8;font-size:8px;font-style:normal;line-height:1.35}
+.death-save-track{display:flex;gap:8px;margin-top:11px}.death-save-track span{padding:7px 9px;background:#fff8;color:#5c514d}.death-save-track strong{display:inline;margin-left:5px;font-family:Georgia,serif;font-size:14px}
 .dm-turn-badge{min-width:132px;padding:12px 15px;background:#252826;color:#fff;text-align:center}
 .dm-turn-badge strong,.dm-turn-badge small{display:block}.dm-turn-badge strong{color:var(--gold);font:500 20px Georgia,serif}.dm-turn-badge small{margin-top:3px;color:#c4c7c1;font-size:8px;text-transform:uppercase;letter-spacing:.09em}
 .combat-outcome{margin:18px 0;padding:18px 20px;border-left:5px solid var(--gold);background:#e8e1d3}.combat-outcome.defeat{border-left-color:var(--red);background:#f0ddd7}.combat-outcome span{color:var(--red);font-size:8px;font-weight:900;letter-spacing:.11em;text-transform:uppercase}.combat-outcome h3{margin:5px 0 4px;font:500 24px Georgia,serif}.combat-outcome p{margin:0;color:var(--muted);font-size:10px}
+.combat-outcome.stabilized{border-left-color:#527164;background:#e1ece7}
 .target-count{min-width:120px;padding:12px;border:1px solid #c5a96f;text-align:center;background:#fffaf0}
 .target-count strong,.target-count small{display:block}
 .target-count strong{font:500 27px Georgia,serif;color:var(--red)}
@@ -205,6 +216,7 @@ button{cursor:pointer}
 .token.player{background:var(--gold);color:#211c14;border:2px solid #f0d28f}
 .token.enemy{background:var(--red);color:#fff;border:2px solid #d8796f}
 .token.defeated{background:#555;color:#ddd;border-color:#777;opacity:.52;box-shadow:none}
+.token.unconscious{background:#403634;color:#f0d2c3;border-color:#a77965;box-shadow:0 0 0 3px #0004}
 .token.selected{outline:3px solid #ffe09d;outline-offset:3px}
 .map-help{display:flex;gap:18px;padding:10px 18px;border-top:1px solid #ffffff18;color:#aeb0ab;font-size:9px}
 .map-help span:before{content:"•";margin-right:6px;color:var(--gold)}

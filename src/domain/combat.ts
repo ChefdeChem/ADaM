@@ -1,6 +1,6 @@
 import type { RulesetId } from "../rulesets";
 import type { ScenarioGrid } from "../scenarios/types";
-import type { CharacterAttack } from "./character";
+import type { AbilityName, CharacterAttack } from "./character";
 
 export type ExperienceMode = "beginner" | "training" | "advanced";
 export type ActionCost = "action" | "bonus-action" | "reaction" | "movement" | "free";
@@ -48,6 +48,54 @@ export type CombatResource = {
   maximum: number;
 };
 
+export type ReactionOption = {
+  id: string;
+  name: string;
+  kind: "armor-class";
+  armorClassBonus: number;
+  spellLevel?: number;
+  description: string;
+};
+
+export type EnemySaveAbility = {
+  id: string;
+  name: string;
+  kind: "saving-throw";
+  saveAbility: AbilityName;
+  saveDc: number;
+  damage: string;
+  damageOnSuccess: "half" | "none";
+  rangeFeet: number;
+  requiresLineOfSight: boolean;
+  uses?: number;
+  description: string;
+};
+
+export type PendingPlayerResponse =
+  | {
+      type: "saving-throw";
+      sourceCombatantId: string;
+      targetCombatantId: string;
+      ability: EnemySaveAbility;
+    }
+  | {
+      type: "attack-reaction";
+      sourceCombatantId: string;
+      targetCombatantId: string;
+      attack: CharacterAttack;
+      attackTotal: number;
+      attackNatural: number;
+      critical: boolean;
+      targetArmorClass: number;
+      availableReactionIds: string[];
+    }
+  | {
+      type: "concentration-check";
+      targetCombatantId: string;
+      damageTaken: number;
+      dc: number;
+    };
+
 export type EffectModifiers = {
   armorClass?: number;
   attackRolls?: number;
@@ -83,6 +131,13 @@ export type Combatant = {
   initiativeRolled: boolean;
   position: { x: number; y: number };
   attacks: CharacterAttack[];
+  savingThrowModifiers: Record<AbilityName, number>;
+  reactionAvailable: boolean;
+  reactionOptions: ReactionOption[];
+  abilities: EnemySaveAbility[];
+  usedAbilityIds: string[];
+  deathSaves: { successes: number; failures: number };
+  stabilized: boolean;
   tacticId?: "ranged-skirmisher" | "melee-brute" | "mobile-harrier";
 };
 
@@ -94,5 +149,6 @@ export type EncounterState = {
   effects: ActiveEffect[];
   map: ScenarioGrid;
   turn: TurnResources;
+  pendingResponse: PendingPlayerResponse | null;
   log: string[];
 };

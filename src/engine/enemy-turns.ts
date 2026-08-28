@@ -1,11 +1,14 @@
 import type { CharacterAttack } from "../domain/character";
-import type { Combatant, EncounterState, ExperienceMode } from "../domain/combat";
+import type { Combatant, EncounterState, EnemySaveAbility, ExperienceMode } from "../domain/combat";
 import type { D20Result, DamageRoll } from "./dice";
 import { resolveAttackDamage, resolveAttackRoll, validateAttackTarget } from "./combat-options";
 import { gridDistanceFeet } from "./targeting";
+import { analyzeTarget } from "./targeting";
+import { queueConcentrationCheck } from "./responses";
+import { validateSpellSlot } from "./resources";
 
 export type EnemyTurnStep = {
-  kind: "move" | "attack" | "damage" | "miss" | "wait";
+  kind: "move" | "ability" | "attack" | "damage" | "miss" | "reaction" | "wait";
   summary: string;
 };
 
@@ -16,13 +19,17 @@ export type EnemyTurnResolution = {
   damageRoll: DamageRoll | null;
 };
 
-export type CombatOutcome = "active" | "victory" | "defeat";
+export type CombatOutcome = "active" | "victory" | "stabilized" | "defeat";
 
 export function combatOutcome(encounter: EncounterState): CombatOutcome {
-  const playerAlive = encounter.combatants.some((combatant) => combatant.side === "player" && combatant.hitPoints.current > 0);
   const enemyAlive = encounter.combatants.some((combatant) => combatant.side === "enemy" && combatant.hitPoints.current > 0);
-  if (!playerAlive) return "defeat";
   if (!enemyAlive) return "victory";
+  const playerCanContinue = encounter.combatants.some((combatant) => combatant.side === "player" && (
+    combatant.hitPoints.current > 0 || (!combatant.stabilized && combatant.deathSaves.failures < 3)
+  ));
+  const playerStabilized = encounter.combatants.some((combatant) => combatant.side === "player" && combatant.stabilized);
+  if (playerStabilized && !encounter.combatants.some((combatant) => combatant.side === "player" && combatant.hitPoints.current > 0)) return "stabilized";
+  if (!playerCanContinue) return "defeat";
   return "active";
 }
 
@@ -82,6 +89,14 @@ function legalAttack(encounter: EncounterState, targetId: string, attacks: Chara
   return attacks.find((attack) => validateAttackTarget(encounter, attack, targetId).legal) ?? null;
 }
 
+function legalSaveAbility(encounter: EncounterState, targetId: string, abilities: EnemySaveAbility[], usedAbilityIds: string[]): EnemySaveAbility | null {
+  const analysis = analyzeTarget(encounter, targetId);
+  if (!analysis || analysis.target.hitPoints.current <= 0) return null;
+  return abilities.find((ability) => !usedAbilityIds.includes(ability.id)
+    && analysis.distanceFeet <= ability.rangeFeet
+    && (!ability.requiresLineOfSight || analysis.lineOfSight)) ?? null;
+}
+
 function chooseEnemyPosition(encounter: EncounterState, target: Combatant, attacks: CharacterAttack[]): { encounter: EncounterState; cost: number } {
   if (legalAttack(encounter, target.id, attacks)) return { encounter, cost: 0 };
   const active = encounter.combatants[encounter.activeIndex];
@@ -123,6 +138,18 @@ export function resolveEnemyTurn(encounter: EncounterState, random = Math.random
   const movedActive = next.combatants[next.activeIndex];
   const steps: EnemyTurnStep[] = [];
   if (positioned.cost > 0) steps.push({ kind: "move", summary: `${active.name} moves ${positioned.cost} feet toward ${target.name}.` });
+  const saveAbility = legalSaveAbility(next, target.id, movedActive.abilities, movedActive.usedAbilityIds);
+  if (saveAbility) {
+    const summary = `${movedActive.name} uses ${saveAbility.name}. ${target.name} must make a ${saveAbility.saveAbility} saving throw against DC ${saveAbility.saveDc}.`;
+    next = {
+      ...next,
+      turn: { ...next.turn, action: false },
+      pendingResponse: { type: "saving-throw", sourceCombatantId: movedActive.id, targetCombatantId: target.id, ability: saveAbility },
+      combatants: next.combatants.map((combatant) => combatant.id === movedActive.id ? { ...combatant, usedAbilityIds: [...combatant.usedAbilityIds, saveAbility.id] } : combatant),
+      log: [summary, ...next.log],
+    };
+    return { encounter: next, steps: [...steps, { kind: "ability", summary }], attackRoll: null, damageRoll: null };
+  }
   const attack = legalAttack(next, target.id, attacks);
   if (!attack) {
     const summary = `${active.name} cannot reach a legal attack and ends its turn.`;
@@ -135,9 +162,32 @@ export function resolveEnemyTurn(encounter: EncounterState, random = Math.random
   steps.push({ kind: attackResult.hit ? "attack" : "miss", summary: `${movedActive.name} targets ${target.name}. ${attackResult.summary}` });
   if (!attackResult.hit) return { encounter: next, steps, attackRoll: attackResult.roll, damageRoll: null };
 
+  const updatedTargetBeforeDamage = next.combatants.find((combatant) => combatant.id === target.id)!;
+  const availableReactionIds = updatedTargetBeforeDamage.reactionOptions.filter((option) => updatedTargetBeforeDamage.reactionAvailable
+    && (!option.spellLevel || validateSpellSlot(next, target.id, option.spellLevel).legal)).map((option) => option.id);
+  if (availableReactionIds.length) {
+    const summary = `${target.name} has a reaction opportunity before damage is rolled.`;
+    next = {
+      ...next,
+      pendingResponse: {
+        type: "attack-reaction",
+        sourceCombatantId: movedActive.id,
+        targetCombatantId: target.id,
+        attack,
+        attackTotal: attackResult.roll.total,
+        attackNatural: attackResult.roll.natural,
+        critical: attackResult.critical,
+        targetArmorClass: attackResult.targetArmorClass,
+        availableReactionIds,
+      },
+      log: [summary, ...next.log],
+    };
+    return { encounter: next, steps: [...steps, { kind: "reaction", summary }], attackRoll: attackResult.roll, damageRoll: null };
+  }
+
   const damageResult = resolveAttackDamage(next, attack, target.id, attackResult.critical, random);
   if (!damageResult.legal) return { encounter: next, steps: [...steps, { kind: "wait", summary: damageResult.reason }], attackRoll: attackResult.roll, damageRoll: null };
-  next = damageResult.encounter;
+  next = queueConcentrationCheck(damageResult.encounter, target.id, damageResult.damageApplied);
   const updatedTarget = next.combatants.find((combatant) => combatant.id === target.id)!;
   steps.push({ kind: "damage", summary: `${damageResult.summary} ${updatedTarget.name} has ${updatedTarget.hitPoints.current}/${updatedTarget.hitPoints.maximum} HP remaining.` });
   return { encounter: next, steps, attackRoll: attackResult.roll, damageRoll: damageResult.roll };

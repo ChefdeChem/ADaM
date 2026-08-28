@@ -1,3 +1,4 @@
+import type { AbilityName } from "../domain/character";
 import type { ActiveEffect, EffectModifiers, EncounterState } from "../domain/combat";
 
 export type EffectInput = {
@@ -92,6 +93,25 @@ export function effectiveArmorClass(encounter: EncounterState, combatantId: stri
 export function effectiveAttackModifier(encounter: EncounterState, combatantId: string): number {
   return effectsForCombatant(encounter, combatantId)
     .reduce((total, effect) => total + (effect.modifiers.attackRolls ?? 0), 0);
+}
+
+export function effectiveSavingThrowModifier(encounter: EncounterState, combatantId: string, ability: AbilityName): number {
+  const combatant = encounter.combatants.find((item) => item.id === combatantId);
+  if (!combatant) return 0;
+  return combatant.savingThrowModifiers[ability] + effectsForCombatant(encounter, combatantId)
+    .reduce((total, effect) => total + (effect.modifiers.savingThrows ?? 0), 0);
+}
+
+export function endConcentration(encounter: EncounterState, sourceCombatantId: string, reason: string): EncounterState {
+  const ended = encounter.effects.filter((effect) => effect.concentration && effect.sourceCombatantId === sourceCombatantId);
+  if (!ended.length) return encounter;
+  const endedIds = new Set(ended.map((effect) => effect.id));
+  const cleaned = cleanExpiredTemporaryHitPoints(encounter, endedIds);
+  return {
+    ...cleaned,
+    effects: cleaned.effects.filter((effect) => !endedIds.has(effect.id)),
+    log: [`Concentration ended: ${reason}.`, ...cleaned.log],
+  };
 }
 
 export function effectiveSpeed(encounter: EncounterState, combatantId: string): number {

@@ -29,6 +29,7 @@ test("parses a flattened D&D Beyond character and its ranged attacks", () => {
   assert.equal(parsed.speedFeet, 35);
   assert.deepEqual(parsed.hitPoints, { current: 28, maximum: 28 });
   assert.deepEqual(parsed.abilities, { strength: 14, dexterity: 16, constitution: 12, intelligence: 10, wisdom: 13, charisma: 8 });
+  assert.deepEqual(parsed.savingThrowModifiers, { charisma: -1, dexterity: 5, intelligence: 0, strength: 4, wisdom: 1, constitution: 1 });
   assert.equal(parsed.attacks.length, 3);
   assert.deepEqual(parsed.attacks[1], {
     id: "poison-dart-2",
