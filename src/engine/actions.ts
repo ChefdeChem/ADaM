@@ -2,6 +2,7 @@ import type { Character } from "../domain/character";
 import type { CombatAction, EncounterState, ExperienceMode } from "../domain/combat";
 import type { RulesetId } from "../rulesets";
 import { validateAttackChoice } from "./combat-options";
+import { effectiveSpeed } from "./effects";
 import { spendNamedResource, validateNamedResource } from "./resources";
 import { analyzeTarget } from "./targeting";
 
@@ -96,6 +97,8 @@ export function consumeAction(action: CombatAction, encounter: EncounterState): 
   if (action.cost === "reaction") turn.reaction = false;
   if (action.cost === "movement") turn.movementRemaining = Math.max(0, turn.movementRemaining - 5);
   const active = encounter.combatants[encounter.activeIndex];
+  if (action.id === "dash" && active) turn.movementRemaining += effectiveSpeed(encounter, active.id);
+  if (action.id === "disengage") turn.disengaged = true;
   const spent = action.resourceCost && active
     ? spendNamedResource(encounter, active.id, action.resourceCost.resourceName, action.resourceCost.amount)
     : encounter;

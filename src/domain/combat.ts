@@ -37,6 +37,14 @@ export type TurnResources = {
   bonusAction: boolean;
   reaction: boolean;
   movementRemaining: number;
+  disengaged: boolean;
+};
+
+export type MovementContinuation = {
+  combatantId: string;
+  x: number;
+  y: number;
+  cost: number;
 };
 
 export type CombatResource = {
@@ -88,6 +96,17 @@ export type PendingPlayerResponse =
       critical: boolean;
       targetArmorClass: number;
       availableReactionIds: string[];
+      continuation?: MovementContinuation;
+    }
+  | {
+      type: "opportunity-attack";
+      sourceCombatantId: string;
+      targetCombatantId: string;
+      phase: "choice" | "attack-roll" | "damage-roll";
+      availableAttackIds: string[];
+      attackId?: string;
+      critical?: boolean;
+      continuation: MovementContinuation;
     }
   | {
       type: "concentration-check";

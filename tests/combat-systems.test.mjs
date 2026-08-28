@@ -3,10 +3,11 @@ import test from "node:test";
 
 import { executeAttackChoice, executeSpellChoice, resolveAttackDamage, resolveAttackRoll, validateAttackChoice, validateAttackTarget } from "../src/engine/combat-options.ts";
 import { applyEffect, effectiveArmorClass, expireEffectsAtTurnStart, minutesToRounds } from "../src/engine/effects.ts";
-import { visibleActionsForMode } from "../src/engine/actions.ts";
+import { actionCatalog, consumeAction, visibleActionsForMode } from "../src/engine/actions.ts";
 import { rollCombatantInitiative, rollPlayerAndEnemyInitiative } from "../src/engine/encounter.ts";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns.ts";
-import { queueConcentrationCheck, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave } from "../src/engine/responses.ts";
+import { chooseOpportunityAttack, queueConcentrationCheck, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses.ts";
+import { moveActiveCombatant } from "../src/engine/movement.ts";
 
 const map = { width: 12, height: 8, terrain: [] };
 
@@ -36,7 +37,7 @@ function encounter() {
     ],
     effects: [],
     map,
-    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 },
+    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false },
     pendingResponse: null,
     log: [],
   };
@@ -69,6 +70,53 @@ test("ranged attacks beyond normal range remain legal with disadvantage", () => 
   assert.equal(result.roll.mode, "disadvantage");
   assert.deepEqual(result.roll.rolls, [20, 1]);
   assert.equal(result.roll.total, 4);
+});
+
+test("ranged attacks have disadvantage while a hostile creature is within five feet", () => {
+  const state = encounter();
+  const adjacent = { ...state.combatants[1], position: { x: 2, y: 1 } };
+  const attack = { id: "crossbow", name: "Light Crossbow", kind: "ranged", attackBonus: 3, damage: "1d8 + 1", normalRangeFeet: 80, longRangeFeet: 320 };
+  const validation = validateAttackChoice({ ...state, combatants: [state.combatants[0], adjacent] }, attack);
+  assert.equal(validation.legal, true);
+  assert.equal(validation.rollMode, "disadvantage");
+});
+
+test("Dash adds movement and movement can be split around other turn choices", () => {
+  const state = encounter();
+  const dash = actionCatalog.find((action) => action.id === "dash");
+  const dashed = consumeAction(dash, state);
+  assert.equal(dashed.turn.action, false);
+  assert.equal(dashed.turn.movementRemaining, 60);
+  const firstStep = moveActiveCombatant(dashed, 2, 1);
+  const secondStep = moveActiveCombatant(firstStep.encounter, 3, 1);
+  assert.equal(firstStep.legal, true);
+  assert.equal(secondStep.legal, true);
+  assert.equal(secondStep.encounter.turn.movementRemaining, 50);
+});
+
+test("ADaM automatically rolls an enemy opportunity attack when the player leaves reach", () => {
+  const state = encounter();
+  const enemy = { ...state.combatants[1], position: { x: 2, y: 1 }, attacks: [{ id: "sword", name: "Sword", kind: "melee", attackBonus: 5, damage: "1d6 + 2 slashing", normalRangeFeet: 5 }] };
+  const values = [0.7, 0];
+  const result = moveActiveCombatant({ ...state, combatants: [state.combatants[0], enemy] }, 0, 1, () => values.shift());
+  assert.equal(result.legal, true);
+  assert.equal(result.attackRoll.total, 20);
+  assert.equal(result.damageRoll.total, 3);
+  assert.equal(result.encounter.combatants[0].hitPoints.current, 17);
+  assert.deepEqual(result.encounter.combatants[0].position, { x: 0, y: 1 });
+  assert.equal(result.encounter.combatants[1].reactionAvailable, false);
+});
+
+test("Disengage prevents opportunity attacks for the rest of the turn", () => {
+  const state = encounter();
+  const enemy = { ...state.combatants[1], position: { x: 2, y: 1 }, attacks: [{ id: "sword", name: "Sword", kind: "melee", attackBonus: 20, damage: "1d6 + 2 slashing", normalRangeFeet: 5 }] };
+  const disengage = actionCatalog.find((action) => action.id === "disengage");
+  const prepared = consumeAction(disengage, { ...state, combatants: [state.combatants[0], enemy] });
+  const result = moveActiveCombatant(prepared, 0, 1, () => 0.99);
+  assert.equal(prepared.turn.disengaged, true);
+  assert.equal(result.attackRoll, null);
+  assert.equal(result.encounter.combatants[0].hitPoints.current, 20);
+  assert.equal(result.encounter.combatants[1].reactionAvailable, true);
 });
 
 test("weapon-first targeting finds ranged targets before one is selected", () => {
@@ -123,7 +171,7 @@ test("the player rolls once while ADaM automatically rolls enemy initiative", ()
 });
 
 test("ADaM resolves an enemy attack and damage without player roll prompts", () => {
-  const state = { ...encounter(), activeIndex: 1, selectedTargetId: null, turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 } };
+  const state = { ...encounter(), activeIndex: 1, selectedTargetId: null, turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false } };
   const values = [0.7, 0];
   const result = resolveEnemyTurn(state, () => values.shift());
   assert.equal(result.attackRoll.total, 19);
@@ -132,11 +180,33 @@ test("ADaM resolves an enemy attack and damage without player roll prompts", () 
   assert.deepEqual(result.steps.map((step) => step.kind), ["attack", "damage"]);
 });
 
+test("a retreating enemy pauses for the player's opportunity attack rolls", () => {
+  const state = encounter();
+  const hero = { ...state.combatants[0], attacks: [{ id: "staff", name: "Quarterstaff", kind: "melee", attackBonus: 5, damage: "1d6 + 3 bludgeoning", normalRangeFeet: 5 }] };
+  const enemy = { ...state.combatants[1], position: { x: 2, y: 1 }, hitPoints: { current: 12, maximum: 12 }, abilities: [] };
+  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [hero, enemy], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false } };
+  const planned = resolveEnemyTurn(enemyTurn, () => 0.5);
+  assert.equal(planned.encounter.pendingResponse.type, "opportunity-attack");
+  assert.equal(planned.encounter.pendingResponse.phase, "choice");
+  assert.deepEqual(planned.encounter.combatants[1].position, { x: 2, y: 1 });
+  const chosen = chooseOpportunityAttack(planned.encounter, "staff");
+  assert.equal(chosen.encounter.pendingResponse.phase, "attack-roll");
+  const attack = rollOpportunityAttack(chosen.encounter, () => 0.7);
+  assert.equal(attack.playerRoll.total, 20);
+  assert.equal(attack.encounter.pendingResponse.phase, "damage-roll");
+  const damage = rollOpportunityDamage(attack.encounter, () => 0);
+  assert.equal(damage.damageRoll.total, 4);
+  assert.equal(damage.encounter.combatants[1].hitPoints.current, 8);
+  assert.equal(damage.encounter.pendingResponse, null);
+  assert.equal(damage.encounter.combatants[0].reactionAvailable, false);
+  assert.notDeepEqual(damage.encounter.combatants[1].position, { x: 2, y: 1 });
+});
+
 test("enemy abilities pause the DM turn for a player saving throw", () => {
   const state = encounter();
   const ability = { id: "cinder-flask", name: "Cinder Flask", kind: "saving-throw", saveAbility: "dexterity", saveDc: 12, damage: "2d6 fire", damageOnSuccess: "half", rangeFeet: 60, requiresLineOfSight: true, uses: 1, description: "Dexterity save for half damage." };
   const enemy = { ...state.combatants[1], abilities: [ability] };
-  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [state.combatants[0], enemy], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 } };
+  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [state.combatants[0], enemy], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false } };
   const result = resolveEnemyTurn(enemyTurn, () => 0.5);
   assert.equal(result.encounter.pendingResponse.type, "saving-throw");
   assert.equal(result.encounter.pendingResponse.ability.id, "cinder-flask");
@@ -152,7 +222,7 @@ test("enemy abilities pause the DM turn for a player saving throw", () => {
 test("Shield uses a reaction and spell slot before enemy damage is rolled", () => {
   const state = encounter();
   const hero = { ...state.combatants[0], reactionOptions: [{ id: "shield", name: "Shield", kind: "armor-class", armorClassBonus: 5, spellLevel: 1, description: "+5 AC." }] };
-  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [hero, state.combatants[1]], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 } };
+  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [hero, state.combatants[1]], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false } };
   const attack = resolveEnemyTurn(enemyTurn, () => 0.7);
   assert.equal(attack.encounter.pendingResponse.type, "attack-reaction");
   assert.equal(attack.encounter.combatants[0].hitPoints.current, 20);
@@ -198,7 +268,7 @@ test("a melee enemy moves into range before ADaM resolves its attack", () => {
     attacks: [{ id: "maul", name: "Stone Maul", kind: "melee", attackBonus: 5, damage: "1d8 + 3 bludgeoning", normalRangeFeet: 5 }],
     tacticId: "melee-brute",
   };
-  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [state.combatants[0], meleeEnemy], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 } };
+  const enemyTurn = { ...state, activeIndex: 1, selectedTargetId: null, combatants: [state.combatants[0], meleeEnemy], turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false } };
   const values = [0.7, 0];
   const result = resolveEnemyTurn(enemyTurn, () => values.shift());
   assert.equal(result.steps[0].kind, "move");

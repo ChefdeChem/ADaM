@@ -1,8 +1,12 @@
 import type { EncounterState } from "../domain/combat";
-import { applyDamageToCombatant, resolveAttackDamage } from "./combat-options";
+import { applyDamageToCombatant, resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options";
 import { rollD20, rollDamage, type D20Result, type DamageRoll } from "./dice";
 import { applyEffect, effectiveSavingThrowModifier, endConcentration } from "./effects";
+import { queueConcentrationCheck } from "./defensive-responses";
 import { spendSpellSlot, validateSpellSlot } from "./resources";
+import { applyMovementContinuation } from "./movement";
+
+export { queueConcentrationCheck } from "./defensive-responses";
 
 export type PlayerResponseResolution = {
   encounter: EncounterState;
@@ -10,23 +14,6 @@ export type PlayerResponseResolution = {
   damageRoll: DamageRoll | null;
   summary: string;
 };
-
-export function queueConcentrationCheck(encounter: EncounterState, targetCombatantId: string, damageTaken: number): EncounterState {
-  if (damageTaken <= 0) return { ...encounter, pendingResponse: null };
-  const target = encounter.combatants.find((combatant) => combatant.id === targetCombatantId);
-  const concentrating = encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === targetCombatantId);
-  if (!target || !concentrating) return { ...encounter, pendingResponse: null };
-  if (target.hitPoints.current <= 0) return { ...endConcentration(encounter, targetCombatantId, `${target.name} became unconscious`), pendingResponse: null };
-  return {
-    ...encounter,
-    pendingResponse: {
-      type: "concentration-check",
-      targetCombatantId,
-      damageTaken,
-      dc: Math.max(10, Math.floor(damageTaken / 2)),
-    },
-  };
-}
 
 export function resolveSavingThrowResponse(encounter: EncounterState, random = Math.random): PlayerResponseResolution {
   const pending = encounter.pendingResponse;
@@ -78,14 +65,72 @@ export function resolveAttackReaction(encounter: EncounterState, reactionId: str
     const prevented = !pending.critical && pending.attackNatural !== 20 && pending.attackTotal < defendedArmorClass;
     reactionSummary = `${target.name} uses ${option.name}, raising AC to ${defendedArmorClass}${prevented ? " and turning the hit into a miss" : ", but the attack still hits"}.`;
     next = { ...next, log: [reactionSummary, ...next.log] };
-    if (prevented) return { encounter: next, playerRoll: null, damageRoll: null, summary: reactionSummary };
+    if (prevented) {
+      if (pending.continuation && target.hitPoints.current > 0) next = applyMovementContinuation(next, pending.continuation);
+      return { encounter: next, playerRoll: null, damageRoll: null, summary: `${reactionSummary}${pending.continuation ? " Movement continues." : ""}` };
+    }
   }
   const damageResult = resolveAttackDamage(next, pending.attack, target.id, pending.critical, random);
   if (!damageResult.legal) return { encounter: next, playerRoll: null, damageRoll: null, summary: damageResult.reason };
   const updatedTarget = damageResult.encounter.combatants.find((combatant) => combatant.id === target.id)!;
   const damageSummary = `${damageResult.summary} ${updatedTarget.name} has ${updatedTarget.hitPoints.current}/${updatedTarget.hitPoints.maximum} HP remaining.`;
-  next = queueConcentrationCheck(damageResult.encounter, target.id, damageResult.damageApplied);
-  return { encounter: next, playerRoll: null, damageRoll: damageResult.roll, summary: `${reactionSummary} ${damageSummary}` };
+  next = pending.continuation && updatedTarget.hitPoints.current > 0
+    ? applyMovementContinuation(damageResult.encounter, pending.continuation)
+    : damageResult.encounter;
+  next = queueConcentrationCheck(next, target.id, damageResult.damageApplied);
+  return { encounter: next, playerRoll: null, damageRoll: damageResult.roll, summary: `${reactionSummary} ${damageSummary}${pending.continuation && updatedTarget.hitPoints.current > 0 ? " Movement continues." : ""}` };
+}
+
+export function chooseOpportunityAttack(encounter: EncounterState, attackId: string | null): PlayerResponseResolution {
+  const pending = encounter.pendingResponse;
+  if (!pending || pending.type !== "opportunity-attack" || pending.phase !== "choice") return { encounter, playerRoll: null, damageRoll: null, summary: "No opportunity-attack choice is pending." };
+  const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId);
+  const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId);
+  if (!source || !target) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The opportunity attack can no longer be resolved." };
+  if (!attackId) {
+    let next = applyMovementContinuation({ ...encounter, pendingResponse: null }, pending.continuation);
+    const summary = `${source.name} saves their reaction. ${target.name} completes the move without an opportunity attack.`;
+    next = { ...next, log: [summary, ...next.log] };
+    return { encounter: next, playerRoll: null, damageRoll: null, summary };
+  }
+  const attack = source.attacks.find((candidate) => candidate.id === attackId && pending.availableAttackIds.includes(candidate.id));
+  if (!attack) return { encounter, playerRoll: null, damageRoll: null, summary: "That melee attack is unavailable for this reaction." };
+  const summary = `${source.name} will use their reaction to make an opportunity attack with ${attack.name}. Click to roll the attack.`;
+  return { encounter: { ...encounter, pendingResponse: { ...pending, phase: "attack-roll", attackId }, log: [summary, ...encounter.log] }, playerRoll: null, damageRoll: null, summary };
+}
+
+export function rollOpportunityAttack(encounter: EncounterState, random = Math.random): PlayerResponseResolution {
+  const pending = encounter.pendingResponse;
+  if (!pending || pending.type !== "opportunity-attack" || pending.phase !== "attack-roll" || !pending.attackId) return { encounter, playerRoll: null, damageRoll: null, summary: "No opportunity attack roll is pending." };
+  const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId);
+  const attack = source?.attacks.find((candidate) => candidate.id === pending.attackId);
+  if (!source || !attack) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The opportunity attack can no longer be resolved." };
+  const result = resolveReactionAttackRoll({ ...encounter, pendingResponse: null }, source.id, pending.targetCombatantId, attack, random);
+  if (!result.legal) return { encounter, playerRoll: null, damageRoll: null, summary: result.reason };
+  if (!result.hit) {
+    const moved = applyMovementContinuation(result.encounter, pending.continuation);
+    return { encounter: moved, playerRoll: result.roll, damageRoll: null, summary: `${result.summary} The attack misses and movement continues.` };
+  }
+  return {
+    encounter: { ...result.encounter, pendingResponse: { ...pending, phase: "damage-roll", critical: result.critical } },
+    playerRoll: result.roll,
+    damageRoll: null,
+    summary: `${result.summary} Click to roll ${attack.damage}${result.critical ? " with doubled damage dice" : ""}.`,
+  };
+}
+
+export function rollOpportunityDamage(encounter: EncounterState, random = Math.random): PlayerResponseResolution {
+  const pending = encounter.pendingResponse;
+  if (!pending || pending.type !== "opportunity-attack" || pending.phase !== "damage-roll" || !pending.attackId) return { encounter, playerRoll: null, damageRoll: null, summary: "No opportunity damage roll is pending." };
+  const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId);
+  const attack = source?.attacks.find((candidate) => candidate.id === pending.attackId);
+  if (!source || !attack) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The opportunity attack can no longer be resolved." };
+  const result = resolveAttackDamage({ ...encounter, pendingResponse: null }, attack, pending.targetCombatantId, pending.critical, random);
+  if (!result.legal) return { encounter, playerRoll: null, damageRoll: null, summary: result.reason };
+  const target = result.encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
+  const next = target.hitPoints.current > 0 ? applyMovementContinuation(result.encounter, pending.continuation) : result.encounter;
+  const summary = `${result.summary}${target.hitPoints.current > 0 ? ` ${target.name} survives and completes the move.` : ` ${target.name} falls before leaving reach.`}`;
+  return { encounter: { ...next, log: [summary, ...next.log] }, playerRoll: null, damageRoll: result.roll, summary };
 }
 
 export function resolveConcentrationResponse(encounter: EncounterState, random = Math.random): PlayerResponseResolution {

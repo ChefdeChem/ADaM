@@ -8,7 +8,7 @@ import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, validateAtt
 import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds } from "../src/engine/effects";
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
-import { resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave } from "../src/engine/responses";
+import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { moveActiveCombatant } from "../src/engine/movement";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
@@ -193,7 +193,7 @@ export default function Home() {
     setEncounter(nextEncounter);
     if (playerRoll) setLastRoll(playerRoll);
     setFeedback(summary);
-    setEnemyTurnPhase(nextEncounter.pendingResponse ? "awaiting-player" : "showing");
+    setEnemyTurnPhase(activeCombatant.side === "enemy" ? (nextEncounter.pendingResponse ? "awaiting-player" : "showing") : "idle");
   }
 
   function rollPendingSavingThrow() {
@@ -204,6 +204,29 @@ export default function Home() {
   function choosePendingReaction(reactionId: string | null) {
     const result = resolveAttackReaction(encounter, reactionId);
     finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
+  }
+
+  function choosePendingOpportunityAttack(attackId: string | null) {
+    const result = chooseOpportunityAttack(encounter, attackId);
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
+    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
+  }
+
+  function rollPendingOpportunityAttack() {
+    const result = rollOpportunityAttack(encounter);
+    setEncounter(result.encounter);
+    if (result.playerRoll) setLastRoll(result.playerRoll);
+    setFeedback(result.summary);
+    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
+  }
+
+  function rollPendingOpportunityDamage() {
+    const result = rollOpportunityDamage(encounter);
+    setEncounter(result.encounter);
+    if (result.damageRoll) setLastRoll(result.damageRoll);
+    setFeedback(result.summary);
+    setEnemyTurnPhase("resolving");
   }
 
   function rollPendingConcentration() {
@@ -282,7 +305,7 @@ export default function Home() {
     if (!validation.legal) {
       setFeedback(experienceMode === "training" ? validation.reason ?? "That action is not currently legal." : "Action disallowed."); return;
     }
-    if (action.id === "move") { setFeedback("Choose a highlighted adjacent square on the tactical map. Difficult terrain costs 10 feet."); return; }
+    if (action.id === "move") { setFeedback("Choose a highlighted adjacent square. You can split your movement before and after actions; leaving an enemy's reach may trigger an opportunity attack."); return; }
     if (action.id === "magic" || action.id === "cast-spell") { setChoiceMode("spell"); setFeedback("Choose a spell. ADaM will verify its level, slot, target, and range before casting."); return; }
     let next = consumeAction(action, encounter);
     if (action.id === "dodge") {
@@ -298,7 +321,12 @@ export default function Home() {
     setEncounter(next);
     setChoiceMode(null);
     const targetCopy = action.targeting?.mode === "single" && targetAnalysis ? ` against ${targetAnalysis.target.name}` : "";
-    setFeedback(`${action.name}${targetCopy} accepted. This action does not require a dice roll.`);
+    const tacticalCopy = action.id === "dash"
+      ? ` Your available movement is now ${next.turn.movementRemaining} feet and may be split around other choices.`
+      : action.id === "disengage"
+        ? " Your movement will not provoke opportunity attacks for the rest of this turn."
+        : "";
+    setFeedback(`${action.name}${targetCopy} accepted. This action does not require a dice roll.${tacticalCopy}`);
   }
 
   function chooseAttack(attack: CharacterAttack) {
@@ -335,7 +363,7 @@ export default function Home() {
     if (!result.legal) { setFeedback(result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
-    setFeedback(result.summary);
+    setFeedback(`${result.summary} You still have ${result.encounter.turn.movementRemaining} feet of movement and may use it before ending your turn.`);
     setAttackFlow(null);
     setChoiceMode(null);
   }
@@ -385,6 +413,7 @@ export default function Home() {
   function handleGridMove(x: number, y: number) {
     const result = moveActiveCombatant(encounter, x, y);
     if (result.legal) setEncounter(result.encounter);
+    if (result.damageRoll ?? result.attackRoll) setLastRoll(result.damageRoll ?? result.attackRoll);
     setFeedback(result.reason);
   }
 
@@ -396,9 +425,10 @@ export default function Home() {
       const validation = validateAttackTarget(encounter, attackFlow.attack, occupantId);
       if (!validation.legal) { setFeedback(experienceMode === "advanced" ? "Target disallowed." : validation.reason ?? "That target is not legal."); return; }
       const analysis = analyzeTarget(encounter, occupantId)!;
+      const rollMode = validation.rollMode === "disadvantage" ? " Roll two d20s and use the lower result because the attack is at long range or a hostile creature is within 5 feet." : "";
       setEncounter((state) => selectTarget(state, occupantId));
       setAttackFlow({ ...attackFlow, phase: "attack-roll", targetId: occupantId });
-      setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Click to roll the attack: d20 ${attackFlow.attack.attackBonus >= 0 ? "+" : "−"} ${Math.abs(attackFlow.attack.attackBonus)}.`);
+      setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Click to roll the attack: d20 ${attackFlow.attack.attackBonus >= 0 ? "+" : "−"} ${Math.abs(attackFlow.attack.attackBonus)}.${rollMode}`);
       return;
     }
     if (!occupantId) { handleGridMove(x, y); return; }
@@ -483,6 +513,21 @@ export default function Home() {
             <div><span>Player response · Reaction window</span><h3>ADaM rolled {pending.attackTotal} against AC {pending.targetArmorClass}</h3><p>The attack would hit. Choose an available reaction before ADaM rolls damage. Reactions reset at the start of your next turn.</p><div className="response-actions">{target.reactionOptions.filter((option) => pending.availableReactionIds.includes(option.id)).map((option) => <button type="button" key={option.id} onClick={() => choosePendingReaction(option.id)}><small>Use reaction</small><strong>{option.name}</strong><em>{option.description}</em></button>)}<button type="button" className="decline-response" onClick={() => choosePendingReaction(null)}><small>No reaction</small><strong>Take the hit</strong></button></div></div>
           </section>;
         })()}
+        {encounter.pendingResponse?.type === "opportunity-attack" && (() => {
+          const pending = encounter.pendingResponse;
+          const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId)!;
+          const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
+          const attack = source.attacks.find((candidate) => candidate.id === pending.attackId);
+          return <section className="roll-coach response-coach reaction-coach opportunity-coach" aria-live="assertive">
+            <div><span>Player response · Opportunity attack</span><h3>{target.name} is leaving your reach</h3>
+              {pending.phase === "choice" && <><p>You may spend your reaction to make one melee attack before {target.name} moves, or save the reaction for another trigger.</p><div className="response-actions">{source.attacks.filter((candidate) => pending.availableAttackIds.includes(candidate.id)).map((candidate) => <button type="button" key={candidate.id} onClick={() => choosePendingOpportunityAttack(candidate.id)}><small>Use reaction</small><strong>{candidate.name}</strong><em>{candidate.damage} · {candidate.attackBonus >= 0 ? "+" : ""}{candidate.attackBonus} to hit</em></button>)}<button type="button" className="decline-response" onClick={() => choosePendingOpportunityAttack(null)}><small>Save reaction</small><strong>Let them move</strong></button></div></>}
+              {pending.phase === "attack-roll" && attack && <p>Roll a <strong>d20</strong> and add {attack.attackBonus >= 0 ? "+" : "−"}{Math.abs(attack.attackBonus)}. This reaction is separate from your Action on your own turn.</p>}
+              {pending.phase === "damage-roll" && attack && <p>The opportunity attack hit. Roll <strong>{attack.damage}</strong>{pending.critical ? " with doubled damage dice for the critical hit" : ""} before movement continues.</p>}
+            </div>
+            {pending.phase === "attack-roll" && attack && <button type="button" onClick={rollPendingOpportunityAttack}><small>Roll opportunity attack</small><strong>d20 {attack.attackBonus >= 0 ? "+" : "−"} {Math.abs(attack.attackBonus)}</strong></button>}
+            {pending.phase === "damage-roll" && attack && <button type="button" onClick={rollPendingOpportunityDamage}><small>Roll opportunity damage</small><strong>{attack.damage}</strong></button>}
+          </section>;
+        })()}
         {encounter.pendingResponse?.type === "concentration-check" && (() => {
           const pending = encounter.pendingResponse;
           const modifier = effectiveSavingThrowModifier(encounter, pending.targetCombatantId, "constitution");
@@ -543,7 +588,7 @@ export default function Home() {
 
         <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${initiativeReady && index === encounter.activeIndex ? "active" : ""} ${combatant.hitPoints.current <= 0 ? combatant.side === "player" && !combatant.stabilized && combatant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""}`}><span>{combatant.initiativeRolled ? combatant.initiative : "—"}</span><div><strong>{combatant.name}</strong><small>{combatant.hitPoints.current <= 0 ? combatant.stabilized ? "stabilized" : combatant.deathSaves.failures >= 3 ? "defeated" : `${combatant.deathSaves.successes} saves · ${combatant.deathSaves.failures} failures` : combatant.initiativeRolled ? `initiative · ${combatant.side}` : combatant.side === "player" ? `d20 ${combatant.initiativeModifier >= 0 ? "+" : "−"}${Math.abs(combatant.initiativeModifier)} · your roll` : "ADaM rolls privately"}</small></div></div>)}</div>
 
-        <div className="turn-dashboard"><div><span>Current turn</span><strong>{activeCombatant.name}</strong></div><div><span>Action</span><strong>{encounter.turn.action ? "Ready" : "Used"}</strong></div><div><span>Bonus action</span><strong>{encounter.turn.bonusAction ? "Ready" : "Used"}</strong></div><div><span>Movement</span><strong>{encounter.turn.movementRemaining} ft.</strong></div><div><span>Your reaction</span><strong>{playerCombatant.reactionAvailable ? "Ready" : "Used"}</strong></div></div>
+        <div className="turn-dashboard"><div><span>Current turn</span><strong>{activeCombatant.name}</strong></div><div><span>Action</span><strong>{encounter.turn.action ? "Ready" : "Used"}</strong></div><div><span>Bonus action</span><strong>{encounter.turn.bonusAction ? "Ready" : "Used"}</strong></div><div><span>Movement</span><strong>{encounter.turn.movementRemaining} ft.{encounter.turn.disengaged ? " · Disengaged" : ""}</strong></div><div><span>Your reaction</span><strong>{playerCombatant.reactionAvailable ? "Ready" : "Used"}</strong></div></div>
 
         <section className="state-tray" aria-label="Character resources and temporary effects">
           <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses remaining</h3></div><div className="resource-pills">{playerCombatant.resources.length ? playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>) : <p>No tracked resources imported.</p>}</div></div>

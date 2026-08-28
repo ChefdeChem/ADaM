@@ -4,8 +4,9 @@ import type { D20Result, DamageRoll } from "./dice";
 import { resolveAttackDamage, resolveAttackRoll, validateAttackTarget } from "./combat-options";
 import { gridDistanceFeet } from "./targeting";
 import { analyzeTarget } from "./targeting";
-import { queueConcentrationCheck } from "./responses";
+import { queueConcentrationCheck } from "./defensive-responses";
 import { validateSpellSlot } from "./resources";
+import { applyMovementContinuation } from "./movement";
 
 export type EnemyTurnStep = {
   kind: "move" | "ability" | "attack" | "damage" | "miss" | "reaction" | "wait";
@@ -97,30 +98,30 @@ function legalSaveAbility(encounter: EncounterState, targetId: string, abilities
     && (!ability.requiresLineOfSight || analysis.lineOfSight)) ?? null;
 }
 
-function chooseEnemyPosition(encounter: EncounterState, target: Combatant, attacks: CharacterAttack[]): { encounter: EncounterState; cost: number } {
-  if (legalAttack(encounter, target.id, attacks)) return { encounter, cost: 0 };
+function chooseEnemyDestination(encounter: EncounterState, target: Combatant, attacks: CharacterAttack[]): ReachableCell {
   const active = encounter.combatants[encounter.activeIndex];
   const options = reachableCells(encounter).map((cell) => {
     const state = withActivePosition(encounter, cell);
     const moved = state.combatants[state.activeIndex];
-    return { cell, state, canAttack: Boolean(legalAttack(state, target.id, attacks)), distance: gridDistanceFeet(moved, target) };
+    const legal = legalAttack(state, target.id, attacks);
+    return { cell, canAttack: Boolean(legal), hasRangedAttack: legal?.kind === "ranged", distance: gridDistanceFeet(moved, target) };
   });
+  const shouldRetreat = (active.tacticId === "ranged-skirmisher" || active.tacticId === "mobile-harrier")
+    && gridDistanceFeet(active, target) <= 5
+    && attacks.some((attack) => attack.kind === "ranged");
+  if (shouldRetreat) {
+    const retreat = options.filter((option) => option.distance > 5 && option.hasRangedAttack)
+      .sort((left, right) => left.cell.cost - right.cell.cost || right.distance - left.distance)[0];
+    if (retreat) return retreat.cell;
+  }
+  if (legalAttack(encounter, target.id, attacks)) return { ...active.position, cost: 0 };
   options.sort((left, right) => {
     if (left.canAttack !== right.canAttack) return left.canAttack ? -1 : 1;
     if (left.canAttack && right.canAttack) return left.cell.cost - right.cell.cost || left.distance - right.distance;
     return left.distance - right.distance || right.cell.cost - left.cell.cost;
   });
   const chosen = options[0];
-  if (!chosen || (chosen.cell.x === active.position.x && chosen.cell.y === active.position.y)) return { encounter, cost: 0 };
-  const coordinate = `${String.fromCharCode(65 + chosen.cell.x)}${chosen.cell.y + 1}`;
-  return {
-    cost: chosen.cell.cost,
-    encounter: {
-      ...chosen.state,
-      turn: { ...chosen.state.turn, movementRemaining: Math.max(0, chosen.state.turn.movementRemaining - chosen.cell.cost) },
-      log: [`${active.name} moved ${chosen.cell.cost} feet to ${coordinate}.`, ...chosen.state.log],
-    },
-  };
+  return chosen?.cell ?? { ...active.position, cost: 0 };
 }
 
 export function resolveEnemyTurn(encounter: EncounterState, random = Math.random): EnemyTurnResolution {
@@ -133,11 +134,33 @@ export function resolveEnemyTurn(encounter: EncounterState, random = Math.random
   if (!target) return { encounter, steps: [{ kind: "wait", summary: `${active.name} has no conscious target.` }], attackRoll: null, damageRoll: null };
 
   const attacks = active.attacks ?? [];
-  const positioned = chooseEnemyPosition(encounter, target, attacks);
-  let next: EncounterState = { ...positioned.encounter, selectedTargetId: target.id };
-  const movedActive = next.combatants[next.activeIndex];
   const steps: EnemyTurnStep[] = [];
-  if (positioned.cost > 0) steps.push({ kind: "move", summary: `${active.name} moves ${positioned.cost} feet toward ${target.name}.` });
+  const destination = chooseEnemyDestination(encounter, target, attacks);
+  let next: EncounterState = { ...encounter, selectedTargetId: target.id };
+  if (destination.cost > 0) {
+    const availableOpportunityAttacks = target.reactionAvailable ? target.attacks.filter((attack) => attack.kind === "melee"
+      && gridDistanceFeet(active, target) <= attack.normalRangeFeet
+      && Math.max(Math.abs(destination.x - target.position.x), Math.abs(destination.y - target.position.y)) * 5 > attack.normalRangeFeet) : [];
+    if (availableOpportunityAttacks.length && !next.turn.disengaged) {
+      const summary = `${active.name} starts to leave ${target.name}'s reach. ${target.name} can spend their reaction on an opportunity attack before the movement completes.`;
+      next = {
+        ...next,
+        pendingResponse: {
+          type: "opportunity-attack",
+          sourceCombatantId: target.id,
+          targetCombatantId: active.id,
+          phase: "choice",
+          availableAttackIds: availableOpportunityAttacks.map((attack) => attack.id),
+          continuation: { combatantId: active.id, x: destination.x, y: destination.y, cost: destination.cost },
+        },
+        log: [summary, ...next.log],
+      };
+      return { encounter: next, steps: [{ kind: "reaction", summary }], attackRoll: null, damageRoll: null };
+    }
+    next = applyMovementContinuation(next, { combatantId: active.id, x: destination.x, y: destination.y, cost: destination.cost });
+    steps.push({ kind: "move", summary: `${active.name} moves ${destination.cost} feet toward a better tactical position.` });
+  }
+  const movedActive = next.combatants[next.activeIndex];
   const saveAbility = legalSaveAbility(next, target.id, movedActive.abilities, movedActive.usedAbilityIds);
   if (saveAbility) {
     const summary = `${movedActive.name} uses ${saveAbility.name}. ${target.name} must make a ${saveAbility.saveAbility} saving throw against DC ${saveAbility.saveDc}.`;

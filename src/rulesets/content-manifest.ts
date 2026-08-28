@@ -10,14 +10,14 @@ export type RulesContentRevision = {
 export const rulesContentManifest: Record<RulesetId, RulesContentRevision> = {
   "dnd-2024": {
     rulesetId: "dnd-2024",
-    revision: "defensive-responses-2026.08",
-    reviewedOn: "2026-08-27",
-    scope: "Core action economy, enemy turns, saving throws, reactions, concentration checks, death saves, and data-driven profiles",
+    revision: "tactical-reactions-2026.08",
+    reviewedOn: "2026-08-28",
+    scope: "Core action economy, split movement, opportunity attacks, saving throws, reactions, concentration checks, death saves, and data-driven enemy turns",
   },
   "dnd-2014": {
     rulesetId: "dnd-2014",
-    revision: "legacy-defensive-responses-2026.08",
-    reviewedOn: "2026-08-27",
-    scope: "Legacy action economy, enemy turns, saving throws, reactions, concentration checks, death saves, and data-driven profiles",
+    revision: "legacy-tactical-reactions-2026.08",
+    reviewedOn: "2026-08-28",
+    scope: "Legacy action economy, split movement, opportunity attacks, saving throws, reactions, concentration checks, death saves, and data-driven enemy turns",
   },
 };

@@ -72,7 +72,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
     ],
     effects: [],
     map: scenario.grid,
-    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30 },
+    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false },
     pendingResponse: null,
     log: ["Encounter started. The collapsed gate is thirty feet ahead."],
   };
@@ -125,7 +125,7 @@ export function endTurn(encounter: EncounterState): EncounterState {
     round,
     activeIndex: nextIndex,
     selectedTargetId: null,
-    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: nextCombatant.hitPoints.current > 0 ? nextCombatant.baseSpeedFeet : 0 },
+    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: nextCombatant.hitPoints.current > 0 ? nextCombatant.baseSpeedFeet : 0, disengaged: false },
     log: [`Turn passed to ${nextCombatant.name}.`, ...encounter.log],
   };
   const expired = expireEffectsAtTurnStart(advanced, round, nextCombatant.id);

@@ -3,7 +3,7 @@ import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
 import { applyEffect, effectiveArmorClass, effectiveAttackModifier } from "./effects";
 import { spendSpellSlot, validateSpellSlot } from "./resources";
-import { analyzeTarget } from "./targeting";
+import { analyzeTarget, gridDistanceFeet } from "./targeting";
 
 export type OptionValidation = {
   legal: boolean;
@@ -26,7 +26,11 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   const maximumRange = attack.longRangeFeet ?? attack.normalRangeFeet;
   if (analysis.distanceFeet > maximumRange) return { legal: false, reason: `${analysis.target.name} is ${analysis.distanceFeet} feet away; ${attack.name} reaches ${maximumRange} feet.` };
   const longRange = attack.kind === "ranged" && analysis.distanceFeet > attack.normalRangeFeet;
-  return { legal: true, rollMode: longRange ? "disadvantage" : "normal", distanceFeet: analysis.distanceFeet };
+  const active = encounter.combatants[encounter.activeIndex];
+  const threatened = attack.kind === "ranged" && encounter.combatants.some((combatant) => combatant.side !== active.side
+    && combatant.hitPoints.current > 0
+    && gridDistanceFeet(active, combatant) <= 5);
+  return { legal: true, rollMode: longRange || threatened ? "disadvantage" : "normal", distanceFeet: analysis.distanceFeet };
 }
 
 export function validateAttackTarget(encounter:EncounterState,attack:CharacterAttack,targetId:string):OptionValidation{
@@ -49,6 +53,29 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   const rangeNote=validation.rollMode==="disadvantage"?" with disadvantage":"";
   const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
   return{legal:true,roll,hit,critical,targetArmorClass,summary,encounter:{...encounter,turn:{...encounter.turn,action:false},log:[`${active.name} attacks ${target.target.name}. ${summary}`,...encounter.log]}};
+}
+
+export type ReactionAttackRollResolution=
+  |{legal:false;reason:string;encounter:EncounterState}
+  |{legal:true;encounter:EncounterState;roll:D20Result;hit:boolean;critical:boolean;targetArmorClass:number;summary:string};
+
+export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:string,targetId:string,attack:CharacterAttack,random=Math.random):ReactionAttackRollResolution{
+  const attacker=encounter.combatants.find((combatant)=>combatant.id===attackerId);
+  const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
+  if(!attacker||!target)return{legal:false,reason:"The opportunity attack can no longer be resolved.",encounter};
+  if(!attacker.reactionAvailable)return{legal:false,reason:`${attacker.name}'s reaction is unavailable.`,encounter};
+  if(attack.kind!=="melee")return{legal:false,reason:"Opportunity attacks require a melee attack.",encounter};
+  if(gridDistanceFeet(attacker,target)>attack.normalRangeFeet)return{legal:false,reason:`${target.name} is outside ${attack.name}'s reach.`,encounter};
+  const roll=rollD20({mode:"normal",modifier:attack.attackBonus+effectiveAttackModifier(encounter,attacker.id),random});
+  const targetArmorClass=effectiveArmorClass(encounter,target.id);
+  const critical=roll.natural===20;
+  const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
+  const summary=`Opportunity attack with ${attack.name}: ${roll.kept} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
+  return{legal:true,roll,hit,critical,targetArmorClass,summary,encounter:{
+    ...encounter,
+    combatants:encounter.combatants.map((combatant)=>combatant.id===attacker.id?{...combatant,reactionAvailable:false}:combatant),
+    log:[`${attacker.name} reacts as ${target.name} leaves its reach. ${summary}`,...encounter.log],
+  }};
 }
 
 export type DamageResolution=
@@ -89,7 +116,7 @@ export function executeAttackChoice(encounter: EncounterState, attack: Character
   const active = encounter.combatants[encounter.activeIndex];
   const target = analyzeTarget(encounter, encounter.selectedTargetId!)!;
   const roll = rollD20({ mode: validation.rollMode ?? "normal", modifier: attack.attackBonus + effectiveAttackModifier(encounter, active.id), random });
-  const rangeNote = validation.rollMode === "disadvantage" ? " at long range with disadvantage" : "";
+  const rangeNote = validation.rollMode === "disadvantage" ? " with disadvantage" : "";
   const summary = `${attack.name} against ${target.target.name}${rangeNote}: ${roll.total} (${roll.kept} + ${roll.modifier}).`;
   return {
     legal: true,
