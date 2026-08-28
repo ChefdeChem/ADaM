@@ -33,5 +33,6 @@ test("renders the combat trainer shell and current state trackers", async () => 
   assert.match(html, /ADaM will roll privately for the enemies/i);
   assert.match(html, /exact enemy health/i);
   assert.match(html, /Five upload slots available/i);
+  assert.match(html, /Kael Emberward/i);
   assert.doesNotMatch(html, /codex-preview/i);
 });

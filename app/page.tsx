@@ -57,7 +57,7 @@ const abilityLabels: Array<{ id: AbilityName; label: string }> = [
 ];
 
 const sample: Character = {
-  id: "sample-hinnom", name: "Hinnom", className: "Sorcerer", level: 4, armorClass: 15,
+  id: "sample-kael-emberward", name: "Kael Emberward", className: "Sorcerer", level: 4, armorClass: 15,
   speedFeet: 30, hitPoints: { current: 34, maximum: 34 }, proficiencyBonus: 2,
   abilities: { strength: 8, dexterity: 12, constitution: 16, intelligence: 10, wisdom: 13, charisma: 18 },
   savingThrowModifiers: { strength: -1, dexterity: 1, constitution: 5, intelligence: 0, wisdom: 1, charisma: 6 },
