@@ -4,7 +4,7 @@ import { rollD20, rollDamage, type D20Result, type DamageRoll } from "./dice";
 import { applyEffect, effectiveSavingThrowModifier, endConcentration } from "./effects";
 import { queueConcentrationCheck } from "./defensive-responses";
 import { spendSpellSlot, validateSpellSlot } from "./resources";
-import { applyMovementContinuation } from "./movement";
+import { resumeMovementContinuation } from "./movement";
 
 export { queueConcentrationCheck } from "./defensive-responses";
 
@@ -66,19 +66,19 @@ export function resolveAttackReaction(encounter: EncounterState, reactionId: str
     reactionSummary = `${target.name} uses ${option.name}, raising AC to ${defendedArmorClass}${prevented ? " and turning the hit into a miss" : ", but the attack still hits"}.`;
     next = { ...next, log: [reactionSummary, ...next.log] };
     if (prevented) {
-      if (pending.continuation && target.hitPoints.current > 0) next = applyMovementContinuation(next, pending.continuation);
-      return { encounter: next, playerRoll: null, damageRoll: null, summary: `${reactionSummary}${pending.continuation ? " Movement continues." : ""}` };
+      const resumed = pending.continuation && target.hitPoints.current > 0 ? resumeMovementContinuation(next, pending.continuation, random) : null;
+      return { encounter: resumed?.encounter ?? next, playerRoll: null, damageRoll: resumed?.damageRoll ?? null, summary: `${reactionSummary}${resumed ? ` ${resumed.reason}` : ""}` };
     }
   }
   const damageResult = resolveAttackDamage(next, pending.attack, target.id, pending.critical, random);
   if (!damageResult.legal) return { encounter: next, playerRoll: null, damageRoll: null, summary: damageResult.reason };
   const updatedTarget = damageResult.encounter.combatants.find((combatant) => combatant.id === target.id)!;
   const damageSummary = `${damageResult.summary} ${updatedTarget.name} has ${updatedTarget.hitPoints.current}/${updatedTarget.hitPoints.maximum} HP remaining.`;
-  next = pending.continuation && updatedTarget.hitPoints.current > 0
-    ? applyMovementContinuation(damageResult.encounter, pending.continuation)
-    : damageResult.encounter;
-  next = queueConcentrationCheck(next, target.id, damageResult.damageApplied);
-  return { encounter: next, playerRoll: null, damageRoll: damageResult.roll, summary: `${reactionSummary} ${damageSummary}${pending.continuation && updatedTarget.hitPoints.current > 0 ? " Movement continues." : ""}` };
+  next = queueConcentrationCheck(damageResult.encounter, target.id, damageResult.damageApplied, updatedTarget.hitPoints.current > 0 ? pending.continuation : undefined);
+  const resumed = pending.continuation && updatedTarget.hitPoints.current > 0 && next.pendingResponse?.type !== "concentration-check"
+    ? resumeMovementContinuation(next, pending.continuation, random)
+    : null;
+  return { encounter: resumed?.encounter ?? next, playerRoll: null, damageRoll: resumed?.damageRoll ?? damageResult.roll, summary: `${reactionSummary} ${damageSummary}${resumed ? ` ${resumed.reason}` : next.pendingResponse?.type === "concentration-check" ? " Resolve concentration before movement continues." : ""}` };
 }
 
 export function chooseOpportunityAttack(encounter: EncounterState, attackId: string | null): PlayerResponseResolution {
@@ -88,7 +88,7 @@ export function chooseOpportunityAttack(encounter: EncounterState, attackId: str
   const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId);
   if (!source || !target) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The opportunity attack can no longer be resolved." };
   if (!attackId) {
-    let next = applyMovementContinuation({ ...encounter, pendingResponse: null }, pending.continuation);
+    let next = resumeMovementContinuation({ ...encounter, pendingResponse: null }, pending.continuation).encounter;
     const summary = `${source.name} saves their reaction. ${target.name} completes the move without an opportunity attack.`;
     next = { ...next, log: [summary, ...next.log] };
     return { encounter: next, playerRoll: null, damageRoll: null, summary };
@@ -108,8 +108,8 @@ export function rollOpportunityAttack(encounter: EncounterState, random = Math.r
   const result = resolveReactionAttackRoll({ ...encounter, pendingResponse: null }, source.id, pending.targetCombatantId, attack, random);
   if (!result.legal) return { encounter, playerRoll: null, damageRoll: null, summary: result.reason };
   if (!result.hit) {
-    const moved = applyMovementContinuation(result.encounter, pending.continuation);
-    return { encounter: moved, playerRoll: result.roll, damageRoll: null, summary: `${result.summary} The attack misses and movement continues.` };
+    const moved = resumeMovementContinuation(result.encounter, pending.continuation, random);
+    return { encounter: moved.encounter, playerRoll: result.roll, damageRoll: moved.damageRoll, summary: `${result.summary} The attack misses. ${moved.reason}` };
   }
   return {
     encounter: { ...result.encounter, pendingResponse: { ...pending, phase: "damage-roll", critical: result.critical } },
@@ -128,8 +128,9 @@ export function rollOpportunityDamage(encounter: EncounterState, random = Math.r
   const result = resolveAttackDamage({ ...encounter, pendingResponse: null }, attack, pending.targetCombatantId, pending.critical, random);
   if (!result.legal) return { encounter, playerRoll: null, damageRoll: null, summary: result.reason };
   const target = result.encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
-  const next = target.hitPoints.current > 0 ? applyMovementContinuation(result.encounter, pending.continuation) : result.encounter;
-  const summary = `${result.summary}${target.hitPoints.current > 0 ? ` ${target.name} survives and completes the move.` : ` ${target.name} falls before leaving reach.`}`;
+  const resumed = target.hitPoints.current > 0 ? resumeMovementContinuation(result.encounter, pending.continuation, random) : null;
+  const next = resumed?.encounter ?? result.encounter;
+  const summary = `${result.summary}${target.hitPoints.current > 0 ? ` ${target.name} survives. ${resumed?.reason ?? "Movement continues."}` : ` ${target.name} falls before leaving reach.`}`;
   return { encounter: { ...next, log: [summary, ...next.log] }, playerRoll: null, damageRoll: result.roll, summary };
 }
 
@@ -145,7 +146,8 @@ export function resolveConcentrationResponse(encounter: EncounterState, random =
   if (!succeeded) next = endConcentration(next, target.id, `failed DC ${pending.dc} Constitution save`);
   const summary = `${target.name} rolls ${playerRoll.kept} ${modifier >= 0 ? "+" : "−"} ${Math.abs(modifier)} = ${playerRoll.total} vs concentration DC ${pending.dc} — concentration ${succeeded ? "maintained" : "lost"}.`;
   next = { ...next, log: [summary, ...next.log] };
-  return { encounter: next, playerRoll, damageRoll: null, summary };
+  const resumed = pending.continuation && target.hitPoints.current > 0 ? resumeMovementContinuation(next, pending.continuation, random) : null;
+  return { encounter: resumed?.encounter ?? next, playerRoll, damageRoll: resumed?.damageRoll ?? null, summary: `${summary}${resumed ? ` ${resumed.reason}` : ""}` };
 }
 
 export function rollDeathSave(encounter: EncounterState, targetCombatantId: string, random = Math.random): PlayerResponseResolution {

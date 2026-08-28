@@ -7,7 +7,7 @@ import { actionCatalog, consumeAction, visibleActionsForMode } from "../src/engi
 import { rollCombatantInitiative, rollPlayerAndEnemyInitiative } from "../src/engine/encounter.ts";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns.ts";
 import { chooseOpportunityAttack, queueConcentrationCheck, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses.ts";
-import { moveActiveCombatant } from "../src/engine/movement.ts";
+import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement.ts";
 
 const map = { width: 12, height: 8, terrain: [] };
 
@@ -94,16 +94,28 @@ test("Dash adds movement and movement can be split around other turn choices", (
   assert.equal(secondStep.encounter.turn.movementRemaining, 50);
 });
 
+test("all legally reachable movement squares can be selected with one tap", () => {
+  const state = encounter();
+  const destinations = legalMovementDestinations(state);
+  const destination = destinations.find((cell) => cell.x === 6 && cell.y === 1);
+  assert.equal(destination.cost, 25);
+  assert.equal(destination.path.length, 5);
+  const moved = moveActiveCombatant(state, 6, 1);
+  assert.equal(moved.legal, true);
+  assert.deepEqual(moved.encounter.combatants[0].position, { x: 6, y: 1 });
+  assert.equal(moved.encounter.turn.movementRemaining, 5);
+});
+
 test("ADaM automatically rolls an enemy opportunity attack when the player leaves reach", () => {
   const state = encounter();
   const enemy = { ...state.combatants[1], position: { x: 2, y: 1 }, attacks: [{ id: "sword", name: "Sword", kind: "melee", attackBonus: 5, damage: "1d6 + 2 slashing", normalRangeFeet: 5 }] };
   const values = [0.7, 0];
-  const result = moveActiveCombatant({ ...state, combatants: [state.combatants[0], enemy] }, 0, 1, () => values.shift());
+  const result = moveActiveCombatant({ ...state, combatants: [state.combatants[0], enemy] }, 0, 3, () => values.shift());
   assert.equal(result.legal, true);
   assert.equal(result.attackRoll.total, 20);
   assert.equal(result.damageRoll.total, 3);
   assert.equal(result.encounter.combatants[0].hitPoints.current, 17);
-  assert.deepEqual(result.encounter.combatants[0].position, { x: 0, y: 1 });
+  assert.deepEqual(result.encounter.combatants[0].position, { x: 0, y: 3 });
   assert.equal(result.encounter.combatants[1].reactionAvailable, false);
 });
 
@@ -117,6 +129,20 @@ test("Disengage prevents opportunity attacks for the rest of the turn", () => {
   assert.equal(result.attackRoll, null);
   assert.equal(result.encounter.combatants[0].hitPoints.current, 20);
   assert.equal(result.encounter.combatants[1].reactionAvailable, true);
+});
+
+test("a Shield reaction resumes the remaining one-tap movement path", () => {
+  const state = encounter();
+  const hero = { ...state.combatants[0], reactionOptions: [{ id: "shield", name: "Shield", kind: "armor-class", armorClassBonus: 5, spellLevel: 1, description: "+5 AC." }] };
+  const enemy = { ...state.combatants[1], position: { x: 2, y: 1 }, attacks: [{ id: "sword", name: "Sword", kind: "melee", attackBonus: 5, damage: "1d6 + 2 slashing", normalRangeFeet: 5 }] };
+  const started = moveActiveCombatant({ ...state, combatants: [hero, enemy] }, 0, 3, () => 0.65);
+  assert.equal(started.encounter.pendingResponse.type, "attack-reaction");
+  assert.deepEqual(started.encounter.pendingResponse.continuation.destination, { x: 0, y: 3 });
+  const shielded = resolveAttackReaction(started.encounter, "shield");
+  assert.equal(shielded.damageRoll, null);
+  assert.equal(shielded.encounter.pendingResponse, null);
+  assert.deepEqual(shielded.encounter.combatants[0].position, { x: 0, y: 3 });
+  assert.equal(shielded.encounter.combatants[0].resources[0].current, 0);
 });
 
 test("weapon-first targeting finds ranged targets before one is selected", () => {
@@ -178,6 +204,31 @@ test("ADaM resolves an enemy attack and damage without player roll prompts", () 
   assert.equal(result.damageRoll.total, 3);
   assert.equal(result.encounter.combatants[0].hitPoints.current, 17);
   assert.deepEqual(result.steps.map((step) => step.kind), ["attack", "damage"]);
+});
+
+test("enemy tactical decisions scale across beginner intermediate and advanced modes", () => {
+  const base = encounter();
+  const ability = { id: "burst", name: "Arc Burst", kind: "saving-throw", saveAbility: "dexterity", saveDc: 12, damage: "2d6 force", damageOnSuccess: "half", rangeFeet: 60, requiresLineOfSight: true, uses: 1, description: "Dexterity save." };
+  const weak = { id: "weak-bow", name: "Practice Bow", kind: "ranged", attackBonus: 4, damage: "1d4 piercing", normalRangeFeet: 80, longRangeFeet: 320 };
+  const strong = { id: "strong-bow", name: "Heavy Bow", kind: "ranged", attackBonus: 5, damage: "1d10 + 3 piercing", normalRangeFeet: 80, longRangeFeet: 320 };
+  const enemy = { ...base.combatants[1], attacks: [weak, strong], abilities: [ability] };
+  const state = { ...base, activeIndex: 1, selectedTargetId: null, combatants: [base.combatants[0], enemy], map: { ...map, terrain: [{ x: 8, y: 1, kind: "cover", label: "Stone cover" }] }, turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false } };
+
+  const beginnerValues = [0.7, 0];
+  const beginner = resolveEnemyTurn(state, "beginner", () => beginnerValues.shift());
+  assert.equal(beginner.encounter.pendingResponse, null);
+  assert.match(beginner.steps.find((step) => step.kind === "attack").summary, /Practice Bow/);
+  assert.deepEqual(beginner.encounter.combatants[1].position, { x: 7, y: 1 });
+
+  const intermediate = resolveEnemyTurn(state, "training", () => 0.5);
+  assert.equal(intermediate.encounter.pendingResponse.type, "saving-throw");
+  assert.equal(intermediate.encounter.pendingResponse.ability.id, "burst");
+
+  const advancedState = { ...state, combatants: [state.combatants[0], { ...enemy, abilities: [] }] };
+  const advancedValues = [0.7, 0];
+  const advanced = resolveEnemyTurn(advancedState, "advanced", () => advancedValues.shift());
+  assert.deepEqual(advanced.encounter.combatants[1].position, { x: 8, y: 1 });
+  assert.match(advanced.steps.find((step) => step.kind === "attack").summary, /Heavy Bow/);
 });
 
 test("a retreating enemy pauses for the player's opportunity attack rolls", () => {

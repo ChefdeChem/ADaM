@@ -13,7 +13,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Scripted scenario generation from modular environments and objectives
 - Natural-language, guided, combined, and reusable-template scenario setup
 - Initiative order, round tracking, action economy, movement, and combat log state
-- Interactive 5-foot square tactical grid with split movement, Dash, Disengage, blocking terrain, occupied squares, and difficult-terrain costs
+- Interactive 5-foot square tactical grid with one-tap pathfinding to every reachable square, split movement, Dash, Disengage, blocking terrain, occupied squares, and difficult-terrain costs
 - Target-first combat flow with selected-target state, grid distance, blocked line of sight, basic cover detection, and range-aware action legality
 - Action, Bonus Action, and Movement category navigation with legal-option counts and a persistent End Turn control
 - Extensible area-effect targeting schema for shapes, size, origin, affected creatures, and per-target resolution
@@ -23,6 +23,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Base combat statistics separated from derived values and temporary modifiers
 - Round-based effect expiration, concentration replacement, and temporary hit-point ownership
 - Automated enemy initiative, movement, targeting, attacks, damage, and saving-throw abilities
+- Mode-scaled enemy tactics: predictable direct play for Beginner, signature abilities and repositioning for Intermediate, and vulnerable-target, strongest-attack, range, and cover priorities for Advanced
 - Player-controlled saving throws, Shield and opportunity-attack reaction windows, concentration checks, and death saves
 - Automated enemy opportunity attacks when the player leaves reach, with movement resolved in the correct sequence
 - Mode-based enemy health visibility with exact, descriptive, and concealed states

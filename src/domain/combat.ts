@@ -45,6 +45,7 @@ export type MovementContinuation = {
   x: number;
   y: number;
   cost: number;
+  destination?: { x: number; y: number };
 };
 
 export type CombatResource = {
@@ -113,6 +114,7 @@ export type PendingPlayerResponse =
       targetCombatantId: string;
       damageTaken: number;
       dc: number;
+      continuation?: MovementContinuation;
     };
 
 export type EffectModifiers = {

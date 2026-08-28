@@ -9,7 +9,7 @@ import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effects
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
-import { moveActiveCombatant } from "../src/engine/movement";
+import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
 import { importCharacterFile, type ImportResult } from "../src/importers";
@@ -77,9 +77,9 @@ const sample: Character = {
 };
 
 const modeCopy: Record<ExperienceMode, { label: string; detail: string }> = {
-  beginner: { label: "Beginner", detail: "Legal actions, full rules guidance, and exact enemy health are shown." },
-  training: { label: "Training", detail: "Illegal choices are explained and enemy health uses condition descriptions." },
-  advanced: { label: "Advanced", detail: "Illegal choices are disallowed without guidance and enemy health is concealed." },
+  beginner: { label: "Beginner", detail: "Full coaching and exact enemy health; enemies use direct, predictable tactics." },
+  training: { label: "Intermediate", detail: "Rules feedback and descriptive health; enemies reposition and use signature abilities." },
+  advanced: { label: "Advanced", detail: "Minimal guidance and concealed health; enemies prioritize vulnerable targets, strong attacks, range, and cover." },
 };
 
 function withCombatDefaults(character: Character): Character {
@@ -151,6 +151,8 @@ export default function Home() {
       ? encounter.combatants.filter((combatant) => combatant.side !== activeCombatant.side && combatant.hitPoints.current > 0 && validateAttackTarget(encounter, attackFlow.attack, combatant.id).legal).map((combatant) => combatant.id)
       : [],
   ), [activeCombatant.side, attackFlow, encounter]);
+  const legalMovementCells = useMemo(() => legalMovementDestinations(encounter), [encounter]);
+  const legalMovementByCell = useMemo(() => new Map(legalMovementCells.map((cell) => [`${cell.x},${cell.y}`, cell])), [legalMovementCells]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -175,7 +177,7 @@ export default function Home() {
         return;
       }
       if (enemyTurnPhase === "resolving") {
-        const result = resolveEnemyTurn(encounter);
+        const result = resolveEnemyTurn(encounter, experienceMode);
         setEncounter(result.encounter);
         setLastRoll(result.damageRoll ?? result.attackRoll);
         setFeedback(result.steps.map((step) => step.summary).join(" "));
@@ -187,7 +189,7 @@ export default function Home() {
       setFeedback("Enemy turn complete. Initiative advances to the next living combatant.");
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [activeCombatant?.id, activeCombatant?.name, activeCombatant?.side, encounter, enemyTurnPhase, initiativeReady, outcome]);
+  }, [activeCombatant?.id, activeCombatant?.name, activeCombatant?.side, encounter, enemyTurnPhase, experienceMode, initiativeReady, outcome]);
 
   function finishPlayerResponse(nextEncounter: typeof encounter, summary: string, playerRoll: ReturnType<typeof rollD20> | null) {
     setEncounter(nextEncounter);
@@ -495,7 +497,7 @@ export default function Home() {
           <button type="button" onClick={rollInitiative}><small>Roll your initiative</small><strong>d20 {playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "−"} {Math.abs(playerNeedsInitiative.initiativeModifier)}</strong></button>
         </section>}
         {initiativeReady && activeCombatant.side === "enemy" && outcome === "active" && <section className="roll-coach enemy-coach" aria-live="polite">
-          <div><span>DM-controlled turn · {enemyTurnPhase}</span><h3>{activeCombatant.name}</h3><p>ADaM controls this creature&apos;s movement, targeting, action selection, attack roll, and damage roll. Watch the combat log for the rules breakdown.</p></div>
+          <div><span>DM-controlled turn · {modeCopy[experienceMode].label} tactics · {enemyTurnPhase}</span><h3>{activeCombatant.name}</h3><p>ADaM controls this creature&apos;s movement, targeting, action selection, attack roll, and damage roll. Tactical decision quality scales with the selected experience mode.</p></div>
           <div className="dm-turn-badge"><strong>ADaM</strong><small>resolving enemy</small></div>
         </section>}
         {encounter.pendingResponse?.type === "saving-throw" && (() => {
@@ -566,16 +568,14 @@ export default function Home() {
                 const y = Math.floor(index / encounter.map.width);
                 const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
                 const occupant = encounter.combatants.find((combatant) => combatant.position.x === x && combatant.position.y === y);
-                const dx = Math.abs(activeCombatant.position.x - x);
-                const dy = Math.abs(activeCombatant.position.y - y);
-                const cost = terrain?.kind === "difficult" ? 10 : 5;
-                const reachable = !attackFlow && initiativeReady && activeCombatant.side === "player" && Math.max(dx, dy) === 1 && terrain?.kind !== "wall" && !occupant && encounter.turn.movementRemaining >= cost;
+                const movementCell = legalMovementByCell.get(`${x},${y}`);
+                const reachable = !attackFlow && initiativeReady && activeCombatant.side === "player" && !occupant && Boolean(movementCell);
                 const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
                 const targeted = occupant?.id === encounter.selectedTargetId;
                 const attackCandidate = Boolean(occupant && attackFlow?.phase === "target" && occupant.side !== activeCombatant.side);
                 const legalAttackTarget = Boolean(occupant && legalAttackTargetIds.has(occupant.id));
                 const attackValidation = occupant && attackFlow?.phase === "target" ? validateAttackTarget(encounter, attackFlow.attack, occupant.id) : null;
-                return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""} ${targeted ? "targeted" : ""} ${legalAttackTarget ? "legal-target" : attackCandidate ? "illegal-target" : ""}`} onClick={() => handleGridInteraction(x, y, occupant?.id)} aria-pressed={targeted} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${occupant ? `. Occupied by ${occupant.name}. ${legalAttackTarget ? `Legal target for ${attackFlow?.attack.name}.` : "Select as target."}` : ""}`} title={`${coordinate} · ${occupant ? legalAttackTarget ? `${occupant.name}: legal target` : attackValidation?.reason ?? `Select ${occupant.name}` : terrain?.label ?? "Open ground"}`}>
+                return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""} ${targeted ? "targeted" : ""} ${legalAttackTarget ? "legal-target" : attackCandidate ? "illegal-target" : ""}`} onClick={() => handleGridInteraction(x, y, occupant?.id)} aria-pressed={targeted} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${movementCell ? `. Reachable for ${movementCell.cost} feet.` : ""}${occupant ? `. Occupied by ${occupant.name}. ${legalAttackTarget ? `Legal target for ${attackFlow?.attack.name}.` : "Select as target."}` : ""}`} title={`${coordinate} · ${occupant ? legalAttackTarget ? `${occupant.name}: legal target` : attackValidation?.reason ?? `Select ${occupant.name}` : movementCell ? `${movementCell.cost} ft. by legal path` : terrain?.label ?? "Open ground"}`}>
                   <small>{coordinate}</small>
                   {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : "◆"}</span>}
                   {occupant && <span className={`token ${occupant.side} ${occupant.hitPoints.current <= 0 ? occupant.side === "player" && !occupant.stabilized && occupant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.hitPoints.current <= 0 ? occupant.stabilized ? "S" : "0" : occupant.name.slice(0, 2).toUpperCase()}</span>}
@@ -583,7 +583,7 @@ export default function Home() {
               })}
             </div>
           </div>
-          <div className="map-help"><span>{attackFlow?.phase === "target" ? "Gold ring: legal weapon target" : "Creature token: select target"}</span><span>Highlighted empty square: move</span><span>Diagonal squares cost 5 ft.; difficult terrain costs 10 ft.</span></div>
+          <div className="map-help"><span>{attackFlow?.phase === "target" ? "Gold ring: legal weapon target" : "Creature token: select target"}</span><span>Highlighted empty square: tap once to move there</span><span>ADaM finds a legal path and charges terrain costs</span></div>
         </section>
 
         <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${initiativeReady && index === encounter.activeIndex ? "active" : ""} ${combatant.hitPoints.current <= 0 ? combatant.side === "player" && !combatant.stabilized && combatant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""}`}><span>{combatant.initiativeRolled ? combatant.initiative : "—"}</span><div><strong>{combatant.name}</strong><small>{combatant.hitPoints.current <= 0 ? combatant.stabilized ? "stabilized" : combatant.deathSaves.failures >= 3 ? "defeated" : `${combatant.deathSaves.successes} saves · ${combatant.deathSaves.failures} failures` : combatant.initiativeRolled ? `initiative · ${combatant.side}` : combatant.side === "player" ? `d20 ${combatant.initiativeModifier >= 0 ? "+" : "−"}${Math.abs(combatant.initiativeModifier)} · your roll` : "ADaM rolls privately"}</small></div></div>)}</div>

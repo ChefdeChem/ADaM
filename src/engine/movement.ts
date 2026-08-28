@@ -4,6 +4,8 @@ import { resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options
 import { queueConcentrationCheck } from "./defensive-responses";
 import { validateSpellSlot } from "./resources";
 
+export type MovementStep = { x: number; y: number; cost: number };
+export type ReachableMovementCell = { x: number; y: number; cost: number; path: MovementStep[] };
 export type MovementResult = {
   legal: boolean;
   reason: string;
@@ -12,12 +14,58 @@ export type MovementResult = {
   damageRoll: DamageRoll | null;
 };
 
+const cellKey = (x: number, y: number) => `${x},${y}`;
 const distanceFromCell = (x: number, y: number, other: { position: { x: number; y: number } }) => Math.max(
   Math.abs(x - other.position.x),
   Math.abs(y - other.position.y),
 ) * 5;
 
-export function applyMovementContinuation(encounter: EncounterState, continuation: MovementContinuation): EncounterState {
+export function legalMovementDestinations(encounter: EncounterState): ReachableMovementCell[] {
+  const active = encounter.combatants[encounter.activeIndex];
+  if (!active || active.side !== "player" || active.hitPoints.current <= 0 || encounter.pendingResponse || encounter.turn.movementRemaining < 5) return [];
+  const originKey = cellKey(active.position.x, active.position.y);
+  const best = new Map<string, number>([[originKey, 0]]);
+  const previous = new Map<string, string>();
+  const nodes = new Map<string, MovementStep>([[originKey, { ...active.position, cost: 0 }]]);
+  const queue: Array<{ x: number; y: number; cost: number }> = [{ ...active.position, cost: 0 }];
+
+  while (queue.length) {
+    queue.sort((left, right) => left.cost - right.cost);
+    const current = queue.shift()!;
+    if (current.cost !== best.get(cellKey(current.x, current.y))) continue;
+    for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) {
+      if (dx === 0 && dy === 0) continue;
+      const x = current.x + dx;
+      const y = current.y + dy;
+      if (x < 0 || y < 0 || x >= encounter.map.width || y >= encounter.map.height) continue;
+      const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
+      if (terrain?.kind === "wall") continue;
+      if (encounter.combatants.some((combatant) => combatant.id !== active.id && combatant.position.x === x && combatant.position.y === y)) continue;
+      const stepCost = terrain?.kind === "difficult" ? 10 : 5;
+      const nextCost = current.cost + stepCost;
+      if (nextCost > encounter.turn.movementRemaining) continue;
+      const key = cellKey(x, y);
+      if (nextCost >= (best.get(key) ?? Number.POSITIVE_INFINITY)) continue;
+      best.set(key, nextCost);
+      previous.set(key, cellKey(current.x, current.y));
+      nodes.set(key, { x, y, cost: stepCost });
+      queue.push({ x, y, cost: nextCost });
+    }
+  }
+
+  return [...best.entries()].filter(([key]) => key !== originKey).map(([key, cost]) => {
+    const path: MovementStep[] = [];
+    let cursor = key;
+    while (cursor !== originKey) {
+      path.unshift(nodes.get(cursor)!);
+      cursor = previous.get(cursor)!;
+    }
+    const destination = nodes.get(key)!;
+    return { x: destination.x, y: destination.y, cost, path };
+  });
+}
+
+export function applyMovementContinuation(encounter: EncounterState, continuation: MovementContinuation, logMovement = true): EncounterState {
   const mover = encounter.combatants.find((combatant) => combatant.id === continuation.combatantId);
   if (!mover || mover.hitPoints.current <= 0) return encounter;
   const coordinate = `${String.fromCharCode(65 + continuation.x)}${continuation.y + 1}`;
@@ -27,8 +75,17 @@ export function applyMovementContinuation(encounter: EncounterState, continuatio
       ? { ...combatant, position: { x: continuation.x, y: continuation.y } }
       : combatant),
     turn: { ...encounter.turn, movementRemaining: Math.max(0, encounter.turn.movementRemaining - continuation.cost) },
-    log: [`${mover.name} moved ${continuation.cost} feet to ${coordinate}.`, ...encounter.log],
+    log: logMovement ? [`${mover.name} moved ${continuation.cost} feet to ${coordinate}.`, ...encounter.log] : encounter.log,
   };
+}
+
+export function resumeMovementContinuation(encounter: EncounterState, continuation: MovementContinuation, random = Math.random): MovementResult {
+  const moved = applyMovementContinuation(encounter, continuation, false);
+  const destination = continuation.destination;
+  if (destination && (destination.x !== continuation.x || destination.y !== continuation.y)) {
+    return moveActiveCombatant(moved, destination.x, destination.y, random);
+  }
+  return { legal: true, reason: "Movement continues.", encounter: moved, attackRoll: null, damageRoll: null };
 }
 
 export function moveActiveCombatant(encounter: EncounterState, x: number, y: number, random = Math.random): MovementResult {
@@ -36,73 +93,78 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
   const active = encounter.combatants[encounter.activeIndex];
   if (!active || active.side !== "player") return denied("Movement is only available during your character's turn.");
   if (encounter.pendingResponse) return denied("Resolve the pending player response before moving.");
-  if (x < 0 || y < 0 || x >= encounter.map.width || y >= encounter.map.height) return denied("That square is outside the map.");
+  if (x === active.position.x && y === active.position.y) return denied("Your character is already on that square.");
+  const destination = legalMovementDestinations(encounter).find((cell) => cell.x === x && cell.y === y);
+  if (!destination) return denied("That square cannot be reached with your remaining movement by a legal path.");
 
-  const dx = Math.abs(active.position.x - x);
-  const dy = Math.abs(active.position.y - y);
-  if (Math.max(dx, dy) !== 1) return denied("Choose an adjacent square. Each horizontal, vertical, or diagonal square is 5 feet.");
+  let next = encounter;
+  let lastAttackRoll: D20Result | null = null;
+  let lastDamageRoll: DamageRoll | null = null;
+  const notes: string[] = [];
 
-  const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
-  if (terrain?.kind === "wall") return denied(`${terrain.label} blocks that square.`);
-  if (encounter.combatants.some((combatant) => combatant.position.x === x && combatant.position.y === y)) return denied("Another creature occupies that square.");
+  for (const step of destination.path) {
+    const mover = next.combatants[next.activeIndex];
+    const continuation: MovementContinuation = { combatantId: mover.id, ...step, destination: { x, y } };
+    const threat = next.turn.disengaged ? null : next.combatants
+      .filter((combatant) => combatant.side === "enemy" && combatant.hitPoints.current > 0 && combatant.reactionAvailable)
+      .flatMap((combatant) => combatant.attacks.filter((attack) => attack.kind === "melee").map((attack) => ({ combatant, attack })))
+      .find(({ combatant, attack }) => distanceFromCell(mover.position.x, mover.position.y, combatant) <= attack.normalRangeFeet
+        && distanceFromCell(step.x, step.y, combatant) > attack.normalRangeFeet);
 
-  const cost = terrain?.kind === "difficult" ? 10 : 5;
-  if (encounter.turn.movementRemaining < cost) return denied(`That square costs ${cost} feet and you only have ${encounter.turn.movementRemaining} feet remaining.`);
-  const continuation: MovementContinuation = { combatantId: active.id, x, y, cost };
+    if (!threat) {
+      next = applyMovementContinuation(next, continuation, false);
+      continue;
+    }
 
-  const threat = encounter.turn.disengaged ? null : encounter.combatants
-    .filter((combatant) => combatant.side === "enemy" && combatant.hitPoints.current > 0 && combatant.reactionAvailable)
-    .flatMap((combatant) => combatant.attacks.filter((attack) => attack.kind === "melee").map((attack) => ({ combatant, attack })))
-    .find(({ combatant, attack }) => distanceFromCell(active.position.x, active.position.y, combatant) <= attack.normalRangeFeet
-      && distanceFromCell(x, y, combatant) > attack.normalRangeFeet);
+    const attackResult = resolveReactionAttackRoll(next, threat.combatant.id, mover.id, threat.attack, random);
+    if (!attackResult.legal) return { legal: false, reason: attackResult.reason, encounter: next, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
+    lastAttackRoll = attackResult.roll;
+    notes.push(`${threat.combatant.name} uses its reaction as ${mover.name} leaves its reach. ${attackResult.summary}`);
+    if (!attackResult.hit) {
+      next = applyMovementContinuation(attackResult.encounter, continuation, false);
+      continue;
+    }
 
-  if (!threat) {
-    const moved = applyMovementContinuation(encounter, continuation);
-    const terrainNote = terrain ? ` (${terrain.label})` : "";
-    const objectiveNote = terrain?.kind === "objective" ? ` ${active.name} reached the objective square.` : "";
-    return { legal: true, reason: `${active.name} moved ${cost} feet${terrainNote}.${objectiveNote} ${moved.turn.movementRemaining} feet remain and can be used before or after an action.`, encounter: moved, attackRoll: null, damageRoll: null };
+    const updatedPlayer = attackResult.encounter.combatants.find((combatant) => combatant.id === mover.id)!;
+    const availableReactionIds = updatedPlayer.reactionOptions.filter((option) => updatedPlayer.reactionAvailable
+      && (!option.spellLevel || validateSpellSlot(attackResult.encounter, mover.id, option.spellLevel).legal)).map((option) => option.id);
+    if (availableReactionIds.length) {
+      next = {
+        ...attackResult.encounter,
+        pendingResponse: {
+          type: "attack-reaction",
+          sourceCombatantId: threat.combatant.id,
+          targetCombatantId: mover.id,
+          attack: threat.attack,
+          attackTotal: attackResult.roll.total,
+          attackNatural: attackResult.roll.natural,
+          critical: attackResult.critical,
+          targetArmorClass: attackResult.targetArmorClass,
+          availableReactionIds,
+          continuation,
+        },
+        log: [`Pause movement: ${mover.name} can react before the opportunity attack deals damage.`, ...attackResult.encounter.log],
+      };
+      return { legal: true, reason: `${notes.join(" ")} Resolve your reaction before movement continues toward ${String.fromCharCode(65 + x)}${y + 1}.`, encounter: next, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
+    }
+
+    const damageResult = resolveAttackDamage(attackResult.encounter, threat.attack, mover.id, attackResult.critical, random);
+    if (!damageResult.legal) return { legal: false, reason: damageResult.reason, encounter: damageResult.encounter, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
+    lastDamageRoll = damageResult.roll;
+    notes.push(damageResult.summary);
+    const conscious = damageResult.encounter.combatants.find((combatant) => combatant.id === mover.id)!.hitPoints.current > 0;
+    if (!conscious) return { legal: true, reason: `${notes.join(" ")} ${mover.name} falls unconscious before leaving the square.`, encounter: damageResult.encounter, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
+    const concentrated = queueConcentrationCheck(damageResult.encounter, mover.id, damageResult.damageApplied, continuation);
+    if (concentrated.pendingResponse?.type === "concentration-check") {
+      return { legal: true, reason: `${notes.join(" ")} Resolve the concentration check before movement continues.`, encounter: concentrated, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
+    }
+    next = applyMovementContinuation(concentrated, continuation, false);
   }
 
-  const attackResult = resolveReactionAttackRoll(encounter, threat.combatant.id, active.id, threat.attack, random);
-  if (!attackResult.legal) return denied(attackResult.reason);
-  if (!attackResult.hit) {
-    const moved = applyMovementContinuation(attackResult.encounter, continuation);
-    return { legal: true, reason: `${threat.combatant.name} uses its reaction as you leave its reach. ${attackResult.summary} You complete the move.`, encounter: moved, attackRoll: attackResult.roll, damageRoll: null };
-  }
-
-  const updatedPlayer = attackResult.encounter.combatants.find((combatant) => combatant.id === active.id)!;
-  const availableReactionIds = updatedPlayer.reactionOptions.filter((option) => updatedPlayer.reactionAvailable
-    && (!option.spellLevel || validateSpellSlot(attackResult.encounter, active.id, option.spellLevel).legal)).map((option) => option.id);
-  if (availableReactionIds.length) {
-    const pending: EncounterState = {
-      ...attackResult.encounter,
-      pendingResponse: {
-        type: "attack-reaction",
-        sourceCombatantId: threat.combatant.id,
-        targetCombatantId: active.id,
-        attack: threat.attack,
-        attackTotal: attackResult.roll.total,
-        attackNatural: attackResult.roll.natural,
-        critical: attackResult.critical,
-        targetArmorClass: attackResult.targetArmorClass,
-        availableReactionIds,
-        continuation,
-      },
-      log: [`Pause movement: ${active.name} can react before the opportunity attack deals damage.`, ...attackResult.encounter.log],
-    };
-    return { legal: true, reason: `${threat.combatant.name} hits with an opportunity attack. Resolve your reaction before movement continues.`, encounter: pending, attackRoll: attackResult.roll, damageRoll: null };
-  }
-
-  const damageResult = resolveAttackDamage(attackResult.encounter, threat.attack, active.id, attackResult.critical, random);
-  if (!damageResult.legal) return { legal: false, reason: damageResult.reason, encounter: damageResult.encounter, attackRoll: attackResult.roll, damageRoll: null };
-  const conscious = damageResult.encounter.combatants.find((combatant) => combatant.id === active.id)!.hitPoints.current > 0;
-  const moved = conscious ? applyMovementContinuation(damageResult.encounter, continuation) : damageResult.encounter;
-  const next = queueConcentrationCheck(moved, active.id, damageResult.damageApplied);
-  return {
-    legal: true,
-    reason: `${threat.combatant.name} uses its reaction as you leave its reach. ${attackResult.summary} ${damageResult.summary}${conscious ? " You complete the move." : " You fall unconscious before leaving the square."}`,
-    encounter: next,
-    attackRoll: attackResult.roll,
-    damageRoll: damageResult.roll,
-  };
+  const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
+  const terrain = next.map.terrain.find((cell) => cell.x === x && cell.y === y);
+  const objectiveNote = terrain?.kind === "objective" ? ` ${active.name} reached the objective square.` : "";
+  const summary = `${active.name} moved ${destination.cost} feet to ${coordinate}.${objectiveNote} ${next.turn.movementRemaining} feet remain and can be used before or after an action.`;
+  next = { ...next, log: [summary, ...next.log] };
+  return { legal: true, reason: `${notes.join(" ")}${notes.length ? " " : ""}${summary}`, encounter: next, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
 }

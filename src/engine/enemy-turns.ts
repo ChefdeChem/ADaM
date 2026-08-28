@@ -1,10 +1,11 @@
 import type { CharacterAttack } from "../domain/character";
 import type { Combatant, EncounterState, EnemySaveAbility, ExperienceMode } from "../domain/combat";
-import type { D20Result, DamageRoll } from "./dice";
+import { parseDamageFormula, type D20Result, type DamageRoll } from "./dice";
 import { resolveAttackDamage, resolveAttackRoll, validateAttackTarget } from "./combat-options";
 import { gridDistanceFeet } from "./targeting";
 import { analyzeTarget } from "./targeting";
 import { queueConcentrationCheck } from "./defensive-responses";
+import { effectiveArmorClass } from "./effects";
 import { validateSpellSlot } from "./resources";
 import { applyMovementContinuation } from "./movement";
 
@@ -86,8 +87,20 @@ function withActivePosition(encounter: EncounterState, cell: ReachableCell): Enc
   };
 }
 
-function legalAttack(encounter: EncounterState, targetId: string, attacks: CharacterAttack[]): CharacterAttack | null {
-  return attacks.find((attack) => validateAttackTarget(encounter, attack, targetId).legal) ?? null;
+function averageDamage(attack: CharacterAttack): number {
+  const formula = parseDamageFormula(attack.damage);
+  return formula ? formula.diceCount * (formula.dieSize + 1) / 2 + formula.modifier : 0;
+}
+
+function legalAttack(encounter: EncounterState, targetId: string, attacks: CharacterAttack[], mode: ExperienceMode = "training"): CharacterAttack | null {
+  const legal = attacks.filter((attack) => validateAttackTarget(encounter, attack, targetId).legal);
+  if (mode !== "advanced") return legal[0] ?? null;
+  return legal.sort((left, right) => {
+    const leftMode = validateAttackTarget(encounter, left, targetId).rollMode;
+    const rightMode = validateAttackTarget(encounter, right, targetId).rollMode;
+    if ((leftMode === "disadvantage") !== (rightMode === "disadvantage")) return leftMode === "disadvantage" ? 1 : -1;
+    return averageDamage(right) - averageDamage(left) || right.attackBonus - left.attackBonus;
+  })[0] ?? null;
 }
 
 function legalSaveAbility(encounter: EncounterState, targetId: string, abilities: EnemySaveAbility[], usedAbilityIds: string[]): EnemySaveAbility | null {
@@ -98,15 +111,16 @@ function legalSaveAbility(encounter: EncounterState, targetId: string, abilities
     && (!ability.requiresLineOfSight || analysis.lineOfSight)) ?? null;
 }
 
-function chooseEnemyDestination(encounter: EncounterState, target: Combatant, attacks: CharacterAttack[]): ReachableCell {
+function chooseEnemyDestination(encounter: EncounterState, target: Combatant, attacks: CharacterAttack[], mode: ExperienceMode): ReachableCell {
   const active = encounter.combatants[encounter.activeIndex];
   const options = reachableCells(encounter).map((cell) => {
     const state = withActivePosition(encounter, cell);
     const moved = state.combatants[state.activeIndex];
-    const legal = legalAttack(state, target.id, attacks);
-    return { cell, canAttack: Boolean(legal), hasRangedAttack: legal?.kind === "ranged", distance: gridDistanceFeet(moved, target) };
+    const legal = legalAttack(state, target.id, attacks, mode);
+    const terrain = state.map.terrain.find((item) => item.x === cell.x && item.y === cell.y);
+    return { cell, canAttack: Boolean(legal), hasRangedAttack: legal?.kind === "ranged", distance: gridDistanceFeet(moved, target), hasCover: terrain?.kind === "cover" };
   });
-  const shouldRetreat = (active.tacticId === "ranged-skirmisher" || active.tacticId === "mobile-harrier")
+  const shouldRetreat = mode !== "beginner" && (active.tacticId === "ranged-skirmisher" || active.tacticId === "mobile-harrier")
     && gridDistanceFeet(active, target) <= 5
     && attacks.some((attack) => attack.kind === "ranged");
   if (shouldRetreat) {
@@ -114,7 +128,15 @@ function chooseEnemyDestination(encounter: EncounterState, target: Combatant, at
       .sort((left, right) => left.cell.cost - right.cell.cost || right.distance - left.distance)[0];
     if (retreat) return retreat.cell;
   }
-  if (legalAttack(encounter, target.id, attacks)) return { ...active.position, cost: 0 };
+  if (mode === "advanced") {
+    const tactical = options.filter((option) => option.canAttack).sort((left, right) =>
+      Number(right.hasCover) - Number(left.hasCover)
+      || Number(right.hasRangedAttack) - Number(left.hasRangedAttack)
+      || right.distance - left.distance
+      || left.cell.cost - right.cell.cost)[0];
+    if (tactical) return tactical.cell;
+  }
+  if (legalAttack(encounter, target.id, attacks, mode)) return { ...active.position, cost: 0 };
   options.sort((left, right) => {
     if (left.canAttack !== right.canAttack) return left.canAttack ? -1 : 1;
     if (left.canAttack && right.canAttack) return left.cell.cost - right.cell.cost || left.distance - right.distance;
@@ -124,18 +146,26 @@ function chooseEnemyDestination(encounter: EncounterState, target: Combatant, at
   return chosen?.cell ?? { ...active.position, cost: 0 };
 }
 
-export function resolveEnemyTurn(encounter: EncounterState, random = Math.random): EnemyTurnResolution {
+export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: ExperienceMode | (() => number) = "training", random = Math.random): EnemyTurnResolution {
+  const mode: ExperienceMode = typeof modeOrRandom === "function" ? "training" : modeOrRandom;
+  const rollRandom = typeof modeOrRandom === "function" ? modeOrRandom : random;
   const active = encounter.combatants[encounter.activeIndex];
   if (!active || active.side !== "enemy") return { encounter, steps: [], attackRoll: null, damageRoll: null };
   if (active.hitPoints.current <= 0) return { encounter, steps: [{ kind: "wait", summary: `${active.name} is defeated and cannot act.` }], attackRoll: null, damageRoll: null };
-  const target = encounter.combatants
-    .filter((combatant) => combatant.side === "player" && combatant.hitPoints.current > 0)
-    .sort((left, right) => gridDistanceFeet(active, left) - gridDistanceFeet(active, right))[0];
+  const target = encounter.combatants.filter((combatant) => combatant.side === "player" && combatant.hitPoints.current > 0).sort((left, right) => {
+    if (mode === "advanced") {
+      const healthPriority = left.hitPoints.current / left.hitPoints.maximum - right.hitPoints.current / right.hitPoints.maximum;
+      if (healthPriority) return healthPriority;
+      const armorPriority = effectiveArmorClass(encounter, left.id) - effectiveArmorClass(encounter, right.id);
+      if (armorPriority) return armorPriority;
+    }
+    return gridDistanceFeet(active, left) - gridDistanceFeet(active, right);
+  })[0];
   if (!target) return { encounter, steps: [{ kind: "wait", summary: `${active.name} has no conscious target.` }], attackRoll: null, damageRoll: null };
 
   const attacks = active.attacks ?? [];
   const steps: EnemyTurnStep[] = [];
-  const destination = chooseEnemyDestination(encounter, target, attacks);
+  const destination = chooseEnemyDestination(encounter, target, attacks, mode);
   let next: EncounterState = { ...encounter, selectedTargetId: target.id };
   if (destination.cost > 0) {
     const availableOpportunityAttacks = target.reactionAvailable ? target.attacks.filter((attack) => attack.kind === "melee"
@@ -161,7 +191,10 @@ export function resolveEnemyTurn(encounter: EncounterState, random = Math.random
     steps.push({ kind: "move", summary: `${active.name} moves ${destination.cost} feet toward a better tactical position.` });
   }
   const movedActive = next.combatants[next.activeIndex];
-  const saveAbility = legalSaveAbility(next, target.id, movedActive.abilities, movedActive.usedAbilityIds);
+  const availableWeaponAttack = legalAttack(next, target.id, attacks, mode);
+  const saveAbility = mode === "beginner" && availableWeaponAttack
+    ? null
+    : legalSaveAbility(next, target.id, movedActive.abilities, movedActive.usedAbilityIds);
   if (saveAbility) {
     const summary = `${movedActive.name} uses ${saveAbility.name}. ${target.name} must make a ${saveAbility.saveAbility} saving throw against DC ${saveAbility.saveDc}.`;
     next = {
@@ -173,13 +206,13 @@ export function resolveEnemyTurn(encounter: EncounterState, random = Math.random
     };
     return { encounter: next, steps: [...steps, { kind: "ability", summary }], attackRoll: null, damageRoll: null };
   }
-  const attack = legalAttack(next, target.id, attacks);
+  const attack = legalAttack(next, target.id, attacks, mode);
   if (!attack) {
     const summary = `${active.name} cannot reach a legal attack and ends its turn.`;
     return { encounter: { ...next, log: [summary, ...next.log] }, steps: [...steps, { kind: "wait", summary }], attackRoll: null, damageRoll: null };
   }
 
-  const attackResult = resolveAttackRoll(next, attack, random);
+  const attackResult = resolveAttackRoll(next, attack, rollRandom);
   if (!attackResult.legal) return { encounter: next, steps: [...steps, { kind: "wait", summary: attackResult.reason }], attackRoll: null, damageRoll: null };
   next = attackResult.encounter;
   steps.push({ kind: attackResult.hit ? "attack" : "miss", summary: `${movedActive.name} targets ${target.name}. ${attackResult.summary}` });
@@ -208,7 +241,7 @@ export function resolveEnemyTurn(encounter: EncounterState, random = Math.random
     return { encounter: next, steps: [...steps, { kind: "reaction", summary }], attackRoll: attackResult.roll, damageRoll: null };
   }
 
-  const damageResult = resolveAttackDamage(next, attack, target.id, attackResult.critical, random);
+  const damageResult = resolveAttackDamage(next, attack, target.id, attackResult.critical, rollRandom);
   if (!damageResult.legal) return { encounter: next, steps: [...steps, { kind: "wait", summary: damageResult.reason }], attackRoll: attackResult.roll, damageRoll: null };
   next = queueConcentrationCheck(damageResult.encounter, target.id, damageResult.damageApplied);
   const updatedTarget = next.combatants.find((combatant) => combatant.id === target.id)!;
