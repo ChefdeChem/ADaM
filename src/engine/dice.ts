@@ -8,7 +8,11 @@ export type DamageRoll={formula:DamageFormula;critical:boolean;rolls:number[];mo
 export function parseDamageFormula(expression:string):DamageFormula|null{
   const normalized=expression.replace(/−/g,"-").replace(/\s+/g," ").trim();
   const match=normalized.match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?\s*(.*)$/i);
-  if(!match)return null;
+  if(!match){
+    const fixed=normalized.match(/^(\d+)\s*(.*)$/);
+    if(!fixed)return null;
+    return{diceCount:0,dieSize:0,modifier:Number(fixed[1]),damageType:fixed[2]?.trim()||"damage"};
+  }
   const modifier=match[3]&&match[4]?(match[3]==="-"?-1:1)*Number(match[4]):0;
   return{diceCount:Number(match[1]),dieSize:Number(match[2]),modifier,damageType:match[5]?.trim()||"damage"};
 }

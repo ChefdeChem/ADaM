@@ -6,6 +6,7 @@ Initial local-first scaffold for a D&D combat training application.
 
 - Fillable PDF and ADaM JSON character import adapters
 - Device-local roster for five uploaded characters, with one-tap encounter loading of each character's complete combat statistics
+- Cleira Oestwilde included as the first verified roster character, with legacy ruleset selection, spell slots, Bardic Inspiration, attacks, saves, skills, senses, proficiencies, equipment, and spellbook data extracted from her D&D Beyond PDF
 - Normal, advantage, and disadvantage d20 engine
 - Selectable D&D 2024 and D&D 2014/legacy rulesets
 - Responsive training console
@@ -21,6 +22,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Character-sheet attack picker with melee, normal-range, and long-range validation
 - Automatic disadvantage at long range and when making ranged attacks while threatened within 5 feet
 - Spell picker with spell-level costs, tracked slot pools, cantrips, and per-cast resource spending
+- Single-target enemy saving-throw resolution and friendly healing spell support; Cleira's Healing Word is fully playable
 - Base combat statistics separated from derived values and temporary modifiers
 - Round-based effect expiration, concentration replacement, and temporary hit-point ownership
 - Automated enemy initiative, movement, targeting, attacks, damage, and saving-throw abilities

@@ -1,0 +1,68 @@
+import type { Character } from "../domain/character";
+import { VERIFIED_PDF_CHARACTERS } from "./verified-pdf-characters";
+
+export const cleiraOestwilde: Character = {
+  id: "cleira-oestwilde",
+  name: "Cleira Oestwilde",
+  className: "Bard",
+  level: 1,
+  rulesetId: "dnd-2014",
+  armorClass: 13,
+  speedFeet: 30,
+  hitPoints: { current: 10, maximum: 10 },
+  proficiencyBonus: 2,
+  abilities: { strength: 8, dexterity: 15, constitution: 14, intelligence: 13, wisdom: 10, charisma: 15 },
+  savingThrowModifiers: { strength: -1, dexterity: 4, constitution: 2, intelligence: 1, wisdom: 0, charisma: 4 },
+  resources: [
+    { id: "bardic-inspiration", name: "Bardic Inspiration", kind: "generic", current: 2, maximum: 2, recovery: "long-rest" },
+    { id: "spell-slot-1", name: "Level 1 Spell Slots", kind: "spell-slot", level: 1, current: 2, maximum: 2, recovery: "long-rest" },
+  ],
+  attacks: [
+    { id: "rapier", name: "Rapier", kind: "melee", attackBonus: 4, damage: "1d8 + 2 piercing", normalRangeFeet: 5, description: "Martial, finesse, Vex." },
+    { id: "dagger", name: "Dagger", kind: "melee", attackBonus: 4, damage: "1d4 + 2 piercing", normalRangeFeet: 5, description: "Simple, finesse, light." },
+    { id: "thrown-dagger", name: "Thrown Dagger", kind: "ranged", attackBonus: 4, damage: "1d4 + 2 piercing", normalRangeFeet: 20, longRangeFeet: 60, description: "Normal to 20 feet; disadvantage from 25 to 60 feet." },
+    { id: "unarmed-strike", name: "Unarmed Strike", kind: "melee", attackBonus: 1, damage: "0 bludgeoning", normalRangeFeet: 5, description: "Fixed damage shown on the source sheet." },
+  ],
+  spells: [
+    { id: "dancing-lights", name: "Dancing Lights", level: 0, castingTime: "action", rangeFeet: 120, target: "self", requiresLineOfSight: true, concentration: true, durationRounds: 10, description: "Creates and moves up to four lights for 1 minute.", unsupportedReason: "Movable point-based light placement is not implemented yet." },
+    { id: "vicious-mockery", name: "Vicious Mockery", level: 0, castingTime: "action", rangeFeet: 60, target: "single", targetSide: "hostile", requiresLineOfSight: true, damage: "1d4 psychic", save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, description: "The target makes a DC 12 Wisdom save; on a failure it takes psychic damage and has disadvantage on its next attack roll.", unsupportedReason: "The next-attack disadvantage rider is not implemented yet." },
+    { id: "minor-illusion", name: "Minor Illusion", level: 0, castingTime: "action", rangeFeet: 30, target: "self", requiresLineOfSight: true, durationRounds: 10, description: "Creates a sound or image in a 5-foot cube for 1 minute.", unsupportedReason: "Illusion placement and adjudication are not implemented yet." },
+    { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, durationRounds: 600, description: "A humanoid target makes a DC 12 Wisdom save or is charmed for 1 hour.", unsupportedReason: "Humanoid validation, hostile-save advantage, and the charmed condition are not implemented yet." },
+    { id: "detect-magic", name: "Detect Magic", level: 1, castingTime: "action", rangeFeet: 0, target: "self", requiresLineOfSight: false, ritual: true, concentration: true, durationRounds: 100, description: "Senses magic within 30 feet for up to 10 minutes.", unsupportedReason: "Magic-aura detection and ritual casting are not implemented yet.", effect: { name: "Detect Magic", description: "Cleira is concentrating on Detect Magic within 30 feet." } },
+    { id: "healing-word", name: "Healing Word", level: 1, castingTime: "bonus-action", rangeFeet: 60, target: "self-or-single", targetSide: "friendly", requiresLineOfSight: true, healing: "1d4 + 2 healing", description: "A visible creature within 60 feet regains 1d4 + 2 hit points." },
+    { id: "thunderwave", name: "Thunderwave", level: 1, castingTime: "action", rangeFeet: 0, target: "self", targetSide: "hostile", requiresLineOfSight: false, damage: "2d8 thunder", save: { ability: "constitution", dc: 12, damageOnSuccess: "half" }, description: "Creatures in a 15-foot cube make a DC 12 Constitution save; the wave can push them 10 feet.", unsupportedReason: "Directional area selection and forced movement are not implemented yet." },
+  ],
+  actions: ["Attack", "Cast a Spell", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Use an Object"],
+  profile: {
+    playerName: "ChefdeStruct",
+    species: "High Elf",
+    background: "Smuggler",
+    alignment: "Chaotic Neutral",
+    initiativeModifier: 2,
+    spellcasting: { ability: "charisma", saveDc: 12, attackBonus: 4 },
+    senses: { darkvisionFeet: 60, passivePerception: 12, passiveInsight: 10, passiveInvestigation: 11 },
+    skills: { Acrobatics: 4, "Animal Handling": 0, Arcana: 1, Athletics: 1, Deception: 4, History: 1, Insight: 0, Intimidation: 2, Investigation: 1, Medicine: 0, Nature: 1, Perception: 2, Performance: 4, Persuasion: 2, Religion: 1, "Sleight of Hand": 4, Stealth: 2, Survival: 0 },
+    proficiencies: {
+      armor: ["Light Armor"],
+      weapons: ["Hand Crossbow", "Longbow", "Longsword", "Rapier", "Shortsword", "Simple Weapons"],
+      tools: ["Flute", "Lute", "Vehicles (Water)", "Viol"],
+      languages: ["Celestial", "Common", "Elvish"],
+    },
+    equipment: [
+      { name: "Leather Armor", quantity: 1, weightPounds: 10 },
+      { name: "Dagger", quantity: 1, weightPounds: 1 },
+      { name: "Rapier", quantity: 1, weightPounds: 2 },
+      { name: "Lute", quantity: 1, weightPounds: 2 },
+      { name: "Disguise Kit", quantity: 1, weightPounds: 3 },
+    ],
+    features: [
+      { name: "Bardic Inspiration", description: "Twice per long rest, grant another creature within 60 feet a d6 inspiration die as a bonus action." },
+      { name: "Fey Ancestry", description: "Advantage on saving throws against being charmed; magic cannot put Cleira to sleep." },
+      { name: "Trance", description: "Meditates for 4 hours instead of sleeping." },
+      { name: "Keen Senses", description: "Proficient in Perception." },
+    ],
+  },
+  source: { format: "flattened-pdf", fileName: "ChefdeStruct_170365689.pdf", importedAt: "2026-08-29T02:24:02.000Z" },
+};
+
+export const BUILT_IN_CHARACTERS: Character[] = [cleiraOestwilde, ...VERIFIED_PDF_CHARACTERS];

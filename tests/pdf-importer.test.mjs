@@ -43,3 +43,27 @@ test("parses a flattened D&D Beyond character and its ranged attacks", () => {
   });
   assert.equal(parsed.attacks[2].longRangeFeet, 320);
 });
+
+test("parses Cleira's split D&D Beyond headings, save markers, and fixed-damage attack", () => {
+  const tokens = [
+    "ABILITY SAVE DC",
+    "Cleira", "Oestwilde", "Bard", "1", "ChefdeStruct", "High", "Elf", "Smuggler", "(Milestone)",
+    "8", "-1", "15", "+2", "14", "+2", "13", "+1", "10", "+0", "15", "+2",
+    "-1", "•", "+4", "+2", "+1", "+0", "•", "+4", "Immunities", "Magical", "Sleep",
+    "P", "+4", "DEX", "+0", "WIS", "+1", "INT", "P", "+1", "STR", "P", "+4", "CHA",
+    "12", "10", "11", "Darkvision", "60", "ft.", "+2", "13", "+2", "30", "ft.", "(Walking)", "10", "--", "1d8",
+    "Rapier", "+4", "1d8+2", "Piercing", "Martial,", "Finesse,", "Vex",
+    "Unarmed", "Strike", "+1", "0", "Bludgeoning",
+  ];
+
+  const parsed = parseDndBeyondTokens(tokens);
+  assert.ok(parsed);
+  assert.equal(parsed.name, "Cleira Oestwilde");
+  assert.equal(parsed.className, "Bard");
+  assert.equal(parsed.level, 1);
+  assert.equal(parsed.armorClass, 13);
+  assert.equal(parsed.speedFeet, 30);
+  assert.deepEqual(parsed.hitPoints, { current: 10, maximum: 10 });
+  assert.deepEqual(parsed.savingThrowModifiers, { strength: -1, dexterity: 4, constitution: 2, intelligence: 1, wisdom: 0, charisma: 4 });
+  assert.deepEqual(parsed.attacks.map((attack) => [attack.name, attack.damage]), [["Rapier", "1d8+2 piercing"], ["Unarmed Strike", "0 bludgeoning"]]);
+});

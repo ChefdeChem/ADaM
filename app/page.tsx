@@ -16,7 +16,7 @@ import { importCharacterFile, type ImportResult } from "../src/importers";
 import { rulesets, type RulesetId } from "../src/rulesets";
 import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } from "../src/scenarios/scripted-generator";
 import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
-import { CHARACTER_ROSTER_LIMIT, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster";
+import { CHARACTER_ROSTER_LIMIT, CHARACTER_ROSTER_SEED_VERSION, mergeBuiltInCharacters, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
 type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
@@ -163,12 +163,9 @@ export default function Home() {
   ), [activeCombatant.side, attackFlow, encounter]);
   const legalSpellTargetIds = useMemo(() => new Set(
     spellFlow?.phase === "target"
-      ? encounter.combatants.filter((combatant) => combatant.id !== activeCombatant.id
-        && combatant.hitPoints.current > 0
-        && (spellFlow.spell.attackBonus === undefined && !spellFlow.spell.damage ? true : combatant.side !== activeCombatant.side)
-        && validateSpellTarget(encounter, spellFlow.spell, combatant.id).legal).map((combatant) => combatant.id)
+      ? encounter.combatants.filter((combatant) => validateSpellTarget(encounter, spellFlow.spell, combatant.id).legal).map((combatant) => combatant.id)
       : [],
-  ), [activeCombatant.id, activeCombatant.side, encounter, spellFlow]);
+  ), [encounter, spellFlow]);
   const legalMovementCells = useMemo(() => legalMovementDestinations(encounter), [encounter]);
   const legalMovementByCell = useMemo(() => new Map(legalMovementCells.map((cell) => [`${cell.x},${cell.y}`, cell])), [legalMovementCells]);
 
@@ -180,12 +177,16 @@ export default function Home() {
         const rosterJson = localStorage.getItem("adam-character-roster");
         const roster = rosterJson ? (JSON.parse(rosterJson) as Character[]) : [];
         const validRoster = roster.filter((candidate) => candidate?.id && candidate?.name && candidate?.hitPoints && candidate?.abilities).slice(0, CHARACTER_ROSTER_LIMIT).map(withCombatDefaults);
-        const nextRoster = validRoster;
+        const seedVersion = Number(localStorage.getItem("adam-character-roster-seed-version") ?? "0");
+        const nextRoster = seedVersion < CHARACTER_ROSTER_SEED_VERSION ? mergeBuiltInCharacters(validRoster) : validRoster;
         setStoredCharacters(nextRoster);
         localStorage.setItem("adam-character-roster", JSON.stringify(nextRoster));
+        if (nextRoster.some((candidate) => candidate.id === "cleira-oestwilde")) localStorage.setItem("adam-character-roster-seed-version", String(CHARACTER_ROSTER_SEED_VERSION));
         const activeId = localStorage.getItem("adam-active-character-id");
         const activeCharacter = nextRoster.find((candidate) => candidate.id === activeId) ?? nextRoster[0] ?? sample;
         setCharacter(activeCharacter);
+        if (activeCharacter.rulesetId) setRulesetId(activeCharacter.rulesetId);
+        setMessage(`${activeCharacter.name}'s stored character sheet is loaded and ready for a fresh encounter.`);
         setEncounter(createEncounter(activeCharacter, initialScenario.current));
       } catch {
         setSavedTemplates([]);
@@ -295,6 +296,7 @@ export default function Home() {
 
   function activateCharacter(nextCharacter: Character, announcement: string) {
     setCharacter(nextCharacter);
+    if (nextCharacter.rulesetId) setRulesetId(nextCharacter.rulesetId);
     setEncounter(createEncounter(nextCharacter, scenario));
     setChoiceMode(null);
     setAttackFlow(null);
@@ -437,8 +439,15 @@ export default function Home() {
 
   function chooseSpell(spell: CharacterSpell) {
     const availability = validateSpellAvailability(encounter, spell);
-    if (!availability.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : availability.reason); return; }
-    if (spell.target === "single") {
+    if (!availability.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : availability.reason ?? "That spell is not available."); return; }
+    const hasOtherFriendlyTarget = encounter.combatants.some((combatant) => combatant.id !== activeCombatant.id && combatant.side === activeCombatant.side && combatant.hitPoints.current > 0);
+    if (spell.target === "self-or-single" && spell.targetSide === "friendly" && !hasOtherFriendlyTarget) {
+      const result = executeSpellChoice({ ...encounter, selectedTargetId: activeCombatant.id }, spell);
+      if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
+      setEncounter(result.encounter); setLastRoll(result.roll); setChoiceMode(null); setSpellFlow(null); setFeedback(result.summary);
+      return;
+    }
+    if (spell.target === "single" || spell.target === "self-or-single") {
       setEncounter((state) => selectTarget(state, null));
       setSpellFlow({ spell, phase: "target" });
       setAttackFlow(null);
@@ -711,7 +720,7 @@ export default function Home() {
                 const reachable = !attackFlow && !spellFlow && initiativeReady && activeCombatant.side === "player" && !occupant && Boolean(movementCell);
                 const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
                 const targeted = occupant?.id === encounter.selectedTargetId;
-                const targetCandidate = Boolean(occupant && (attackFlow?.phase === "target" || spellFlow?.phase === "target") && occupant.id !== activeCombatant.id);
+                const targetCandidate = Boolean(occupant && (attackFlow?.phase === "target" || spellFlow?.phase === "target"));
                 const legalOptionTarget = Boolean(occupant && (legalAttackTargetIds.has(occupant.id) || legalSpellTargetIds.has(occupant.id)));
                 const targetValidation = occupant && attackFlow?.phase === "target" ? validateAttackTarget(encounter, attackFlow.attack, occupant.id) : occupant && spellFlow?.phase === "target" ? validateSpellTarget(encounter, spellFlow.spell, occupant.id) : null;
                 const targetOptionName = attackFlow?.attack.name ?? spellFlow?.spell.name;
@@ -748,7 +757,7 @@ export default function Home() {
             return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{targetingLabel}</span>{experienceMode !== "advanced" && <small>{validation.legal || experienceMode === "beginner" ? action.description : validation.reason}</small>}</button>;
           }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
           {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose weapon</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.attacks ?? []).map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
-          {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : `Level ${spell.level} · 1 slot`}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.effect?.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
+          {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           <div className="area-effect-note"><span>Area-effect foundation</span><p>Future actions can define cones, cubes, cylinders, lines, spheres, or emanations and specify whether they affect every creature, only hostiles, or chosen creatures.</p></div>
           <div className="turn-controls"><div><span>Turn control</span><p>{activeCombatant.side === "player" ? "End your turn and let ADaM advance initiative." : "ADaM controls and advances enemy turns automatically."}</p></div><button type="button" disabled={activeCombatant.side !== "player" || outcome !== "active"} onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>{activeCombatant.side === "player" ? "End turn" : "Enemy acting"}</button></div>
           <form className="command-bar" onSubmit={submitCommand}><label htmlFor="command">Or describe your action</label><div><input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Example: I cast a spell at the scout" /><button>Submit</button></div></form>

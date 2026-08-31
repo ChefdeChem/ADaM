@@ -1,6 +1,8 @@
 import type { Character } from "../domain/character";
+import { BUILT_IN_CHARACTERS } from "./built-ins";
 
 export const CHARACTER_ROSTER_LIMIT = 5;
+export const CHARACTER_ROSTER_SEED_VERSION = 2;
 
 export type RosterUpdate = {
   characters: Character[];
@@ -31,4 +33,14 @@ export function upsertRosterCharacter(characters: Character[], character: Charac
 
 export function removeRosterCharacter(characters: Character[], characterId: string): Character[] {
   return characters.filter((character) => character.id !== characterId);
+}
+
+export function mergeBuiltInCharacters(characters: Character[]): Character[] {
+  const merged = [...characters];
+  for (const builtIn of BUILT_IN_CHARACTERS) {
+    const existingIndex = merged.findIndex((character) => character.id === builtIn.id);
+    if (existingIndex >= 0) merged[existingIndex] = builtIn;
+    else if (merged.length < CHARACTER_ROSTER_LIMIT) merged.push(builtIn);
+  }
+  return merged.slice(0, CHARACTER_ROSTER_LIMIT);
 }

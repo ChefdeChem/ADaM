@@ -1,7 +1,7 @@
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
-import { applyEffect, effectiveArmorClass, effectiveAttackModifier } from "./effects";
+import { applyEffect, effectiveArmorClass, effectiveAttackModifier, effectiveSavingThrowModifier } from "./effects";
 import { spendSpellSlot, validateSpellSlot } from "./resources";
 import { analyzeTarget, gridDistanceFeet } from "./targeting";
 
@@ -14,7 +14,7 @@ export type OptionValidation = {
 
 export type OptionResolution =
   | { legal: false; reason: string; encounter: EncounterState }
-  | { legal: true; encounter: EncounterState; roll: D20Result | null; summary: string };
+  | { legal: true; encounter: EncounterState; roll: D20Result | DamageRoll | null; summary: string };
 
 export function validateAttackChoice(encounter: EncounterState, attack: CharacterAttack): OptionValidation {
   if (!encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
@@ -132,6 +132,7 @@ export function executeAttackChoice(encounter: EncounterState, attack: Character
 
 export function validateSpellAvailability(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const active = encounter.combatants[encounter.activeIndex];
+  if (spell.unsupportedReason) return { legal: false, reason: spell.unsupportedReason };
   if (spell.castingTime === "reaction") return { legal: false, reason: `${spell.name} becomes available automatically when its reaction trigger occurs.` };
   if (spell.castingTime === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (spell.castingTime === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
@@ -143,14 +144,20 @@ export function validateSpellAvailability(encounter: EncounterState, spell: Char
 export function validateSpellChoice(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const availability = validateSpellAvailability(encounter, spell);
   if (!availability.legal) return availability;
-  if (spell.target === "single") {
+  if (spell.target === "single" || spell.target === "self-or-single") {
     if (!encounter.selectedTargetId) return { legal: false, reason: "Select a target on the tactical map first." };
+    const active = encounter.combatants[encounter.activeIndex];
+    if (encounter.selectedTargetId === active.id) {
+      if (spell.target !== "self-or-single" || spell.targetSide === "hostile") return { legal: false, reason: `${spell.name} cannot target the caster.` };
+      return { legal: true, rollMode: "normal", distanceFeet: 0 };
+    }
     const analysis = analyzeTarget(encounter, encounter.selectedTargetId);
     if (!analysis) return { legal: false, reason: "The selected target is no longer available." };
-    if (analysis.target.hitPoints.current <= 0) return { legal: false, reason: `${analysis.target.name} is already defeated.` };
+    if (analysis.target.hitPoints.current <= 0 && !spell.healing) return { legal: false, reason: `${analysis.target.name} is already defeated.` };
     if (spell.requiresLineOfSight && !analysis.lineOfSight) return { legal: false, reason: `${analysis.target.name} is outside your line of sight.` };
     if (analysis.distanceFeet > spell.rangeFeet) return { legal: false, reason: `${analysis.target.name} is ${analysis.distanceFeet} feet away; ${spell.name} reaches ${spell.rangeFeet} feet.` };
-    const active = encounter.combatants[encounter.activeIndex];
+    if (spell.targetSide === "hostile" && analysis.target.side === active.side) return { legal: false, reason: `${spell.name} requires a hostile target.` };
+    if (spell.targetSide === "friendly" && analysis.target.side !== active.side) return { legal: false, reason: `${spell.name} requires a friendly target.` };
     const threatened = spell.attackBonus !== undefined && encounter.combatants.some((combatant) => combatant.side !== active.side
       && combatant.hitPoints.current > 0
       && gridDistanceFeet(active, combatant) <= 5);
@@ -220,6 +227,35 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       reaction: spell.castingTime === "reaction" ? false : next.turn.reaction,
     },
   };
+  if (spell.save) {
+    const target = next.combatants.find((combatant) => combatant.id === targetId);
+    if (!target) return { legal: false, reason: "The target is no longer available.", encounter };
+    const saveRoll = rollD20({ mode: "normal", modifier: effectiveSavingThrowModifier(next, targetId, spell.save.ability), random });
+    const succeeded = saveRoll.total >= spell.save.dc;
+    let damageCopy = "";
+    if (spell.damage && (!succeeded || spell.save.damageOnSuccess === "half")) {
+      const damageRoll = rollDamage(spell.damage, { random });
+      if (!damageRoll) return { legal: false, reason: `ADaM could not read the damage formula “${spell.damage}”.`, encounter };
+      const damage = succeeded ? Math.floor(damageRoll.total / 2) : damageRoll.total;
+      next = applyDamageToCombatant(next, targetId, damage);
+      damageCopy = ` ${damage} ${damageRoll.formula.damageType} damage.`;
+    }
+    if (!succeeded && spell.effect) next = applyEffect(next, { ...spell.effect, sourceCombatantId: active.id, targetCombatantId: targetId, durationRounds: spell.durationRounds, concentration: spell.concentration });
+    const summary = `${target.name} rolled ${saveRoll.total} on the DC ${spell.save.dc} ${spell.save.ability} save against ${spell.name} and ${succeeded ? "succeeded" : "failed"}.${damageCopy}`;
+    return { legal: true, roll: saveRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
+  }
+  if (spell.healing) {
+    const healingRoll = rollDamage(spell.healing, { random });
+    if (!healingRoll) return { legal: false, reason: `ADaM could not read the healing formula “${spell.healing}”.`, encounter };
+    next = { ...next, combatants: next.combatants.map((combatant) => combatant.id === targetId ? {
+      ...combatant,
+      hitPoints: { ...combatant.hitPoints, current: Math.min(combatant.hitPoints.maximum, combatant.hitPoints.current + healingRoll.total) },
+      deathSaves: combatant.hitPoints.current === 0 ? { successes: 0, failures: 0 } : combatant.deathSaves,
+      stabilized: false,
+    } : combatant) };
+    const summary = `${active.name} casts ${spell.name}; ${targetName} regains ${healingRoll.total} hit points.`;
+    return { legal: true, roll: healingRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
+  }
   if (spell.effect) {
     next = applyEffect(next, {
       ...spell.effect,

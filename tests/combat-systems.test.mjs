@@ -208,6 +208,38 @@ test("spell attacks spend resources and keep attack and damage as separate playe
   assert.equal(damageResult.encounter.combatants[1].hitPoints.current, 5);
 });
 
+test("saving-throw cantrips resolve the enemy save and damage", () => {
+  const state = encounter();
+  const spell = { id: "vicious-mockery", name: "Vicious Mockery", level: 0, castingTime: "action", rangeFeet: 60, target: "single", targetSide: "hostile", requiresLineOfSight: true, damage: "1d4 psychic", save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" } };
+  const values = [0, 0];
+  const result = executeSpellChoice(state, spell, () => values.shift());
+  assert.equal(result.legal, true);
+  assert.equal(result.roll.total, 1);
+  assert.equal(result.encounter.combatants[1].hitPoints.current, 9);
+  assert.equal(result.encounter.turn.action, false);
+});
+
+test("Healing Word restores hit points and spends a bonus action and slot", () => {
+  const state = encounter();
+  const injured = { ...state.combatants[0], hitPoints: { current: 10, maximum: 20 } };
+  const targeted = { ...state, selectedTargetId: "hero", combatants: [injured, state.combatants[1]] };
+  const spell = { id: "healing-word", name: "Healing Word", level: 1, castingTime: "bonus-action", rangeFeet: 60, target: "self-or-single", targetSide: "friendly", requiresLineOfSight: true, healing: "1d4 + 2 healing" };
+  const result = executeSpellChoice(targeted, spell, () => 0);
+  assert.equal(result.legal, true);
+  assert.equal(result.roll.total, 3);
+  assert.equal(result.encounter.combatants[0].hitPoints.current, 13);
+  assert.equal(result.encounter.turn.action, true);
+  assert.equal(result.encounter.turn.bonusAction, false);
+  assert.equal(result.encounter.combatants[0].resources[0].current, 0);
+});
+
+test("reference-only spells explain why their mechanics are unavailable", () => {
+  const spell = { id: "thunderwave", name: "Thunderwave", level: 1, castingTime: "action", rangeFeet: 0, target: "self", requiresLineOfSight: false, unsupportedReason: "Directional area selection is not implemented yet." };
+  const validation = validateSpellAvailability(encounter(), spell);
+  assert.equal(validation.legal, false);
+  assert.match(validation.reason, /directional area selection/i);
+});
+
 test("attack and damage require separate rolls before target HP changes", () => {
   const attack = { id: "shortbow", name: "Shortbow", kind: "ranged", attackBonus: 5, damage: "1d6+3 piercing", normalRangeFeet: 80, longRangeFeet: 320 };
   const attackResult = resolveAttackRoll(encounter(), attack, () => 0.7);

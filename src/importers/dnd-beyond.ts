@@ -21,7 +21,9 @@ export type DndBeyondCharacterData = {
 };
 
 const integer = (value: string | undefined) => {
-  const parsed = Number(String(value ?? "").replace(/[^0-9-]/g, ""));
+  const normalized = String(value ?? "").replace(/[^0-9-]/g, "");
+  if (!normalized || normalized === "-") return null;
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
@@ -41,12 +43,16 @@ const compoundAttackNames = new Set([
   "Short Bow", "Short Sword", "Two-Handed Sword", "Unarmed Strike", "War Hammer",
 ]);
 
+const classNames = new Set([
+  "artificer", "barbarian", "bard", "cleric", "druid", "fighter", "monk", "paladin", "ranger", "rogue", "sorcerer", "warlock", "wizard",
+]);
+
 const idFor = (name: string, index: number) => `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "attack"}-${index + 1}`;
 
 function extractAttacks(tokens: string[], start: number): CharacterAttack[] {
   const attacks: CharacterAttack[] = [];
   const hitPattern = /^[+-]\d+$/;
-  const damagePattern = /^\d+d\d+(?:[+-]\d+)?$/i;
+  const damagePattern = /^(?:\d+d\d+(?:[+-]\d+)?|\d+)$/i;
   const rangePattern = /\((\d+)\s*\/\s*(\d+)\)/;
 
   for (let index = Math.max(1, start); index < tokens.length - 2; index += 1) {
@@ -88,10 +94,13 @@ export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterDat
   if (marker < 0) return null;
 
   const start = marker + 1;
-  const levelIndex = tokens.findIndex((token, index) => index >= start + 2 && index <= start + 7 && isLevel(token));
-  if (levelIndex < 0) return null;
+  const experienceIndex = tokens.findIndex((token, index) => index >= start && /^\(.*milestone.*\)$/i.test(token));
+  if (experienceIndex < 0) return null;
+  const classIndex = tokens.findIndex((token, index) => index >= start && index < experienceIndex && classNames.has(token.toLowerCase()) && isLevel(tokens[index + 1]));
+  if (classIndex < 0) return null;
+  const levelIndex = classIndex + 1;
 
-  const abilityStart = levelIndex + 5;
+  const abilityStart = experienceIndex + 1;
   const abilityValues = [0, 2, 4, 6, 8, 10].map((offset) => integer(tokens[abilityStart + offset]));
   if (abilityValues.some((score, index) => score === null || !isAbilityScore(tokens[abilityStart + index * 2]))) return null;
 
@@ -112,13 +121,17 @@ export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterDat
   const maximumHitPoints = hpValues[0] ?? 1;
   const currentHitPoints = hpValues[1] ?? maximumHitPoints;
   const attacks = extractAttacks(tokens, hitDiceIndex + 1);
-  const saveOrder: AbilityName[] = ["charisma", "dexterity", "intelligence", "strength", "wisdom", "constitution"];
-  const saveValues = saveOrder.map((_, index) => integer(tokens[abilityStart + 12 + index]));
-  const savingThrowModifiers = Object.fromEntries(saveOrder.map((ability, index) => [ability, saveValues[index] ?? abilityModifier(abilityValues[["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].indexOf(ability)]!)])) as Record<AbilityName, number>;
+  const abilityOrder: AbilityName[] = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"];
+  const legacySaveOrder: AbilityName[] = ["charisma", "dexterity", "intelligence", "strength", "wisdom", "constitution"];
+  const rawSaveTokens = tokens.slice(abilityStart + 12, abilityStart + 30);
+  const markedAbilityOrder = rawSaveTokens.includes("•");
+  const saveOrder = markedAbilityOrder ? abilityOrder : legacySaveOrder;
+  const saveValues = rawSaveTokens.map(integer).filter((item): item is number => item !== null).slice(0, 6);
+  const savingThrowModifiers = Object.fromEntries(saveOrder.map((ability, index) => [ability, saveValues[index] ?? abilityModifier(abilityValues[abilityOrder.indexOf(ability)]!)])) as Record<AbilityName, number>;
 
   return {
-    name: tokens[start] || "Unnamed Adventurer",
-    className: tokens.slice(start + 1, levelIndex).join(" ") || "Adventurer",
+    name: tokens.slice(start, classIndex).join(" ") || "Unnamed Adventurer",
+    className: tokens[classIndex] || "Adventurer",
     level: integer(tokens[levelIndex]) ?? 1,
     armorClass,
     speedFeet: integer(tokens[speedIndex]) ?? 30,
