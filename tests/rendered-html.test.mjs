@@ -34,5 +34,7 @@ test("renders the combat trainer shell and current state trackers", async () => 
   assert.match(html, /exact enemy health/i);
   assert.match(html, /Five upload slots available/i);
   assert.match(html, /Kael Emberward/i);
+  assert.match(html, /Mechanic coverage/i);
+  assert.match(html, /executable/i);
   assert.doesNotMatch(html, /codex-preview/i);
 });

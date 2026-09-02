@@ -274,6 +274,14 @@ button{cursor:pointer}
 .import-attacks{margin-top:16px;padding:12px 14px;border:1px solid var(--line);background:#f3eee3}
 .import-attacks span{color:var(--red);font-size:8px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
 .import-attacks p{margin:6px 0 0;color:var(--muted);font-size:10px;line-height:1.55}
+.mechanic-coverage{margin:10px 0 14px;padding:11px 12px;border:1px solid var(--line);border-left:3px solid var(--gold);background:#ece5d7}
+.mechanic-coverage>div{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.mechanic-coverage span{color:var(--red);font-size:8px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}
+.mechanic-coverage strong{font:500 14px Georgia,serif}
+.mechanic-coverage p{margin:7px 0 4px;color:var(--muted);font-size:9px;line-height:1.4}
+.mechanic-coverage b{color:var(--ink)}
+.mechanic-coverage small{display:block;color:#77766f;font-size:8px;line-height:1.35}
+.import-coverage{margin-top:16px;background:#f3eee3}
 .import-review-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 .import-review-actions button{padding:11px 16px;border:1px solid var(--red);background:transparent;color:var(--red);font-size:9px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}
 .import-review-actions button[type="submit"]{background:var(--red);color:#fff}

@@ -1,771 +1,42 @@
-"use client";
-
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { AbilityName, Character, CharacterAttack, CharacterSpell } from "../src/domain/character";
-import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
-import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
-import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget } from "../src/engine/combat-options";
-import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds } from "../src/engine/effects";
-import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
-import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
-import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
-import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
-import { analyzeTarget, selectTarget } from "../src/engine/targeting";
-import { rollD20, type DamageRoll } from "../src/engine/dice";
-import { importCharacterFile, type ImportResult } from "../src/importers";
-import { rulesets, type RulesetId } from "../src/rulesets";
-import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } from "../src/scenarios/scripted-generator";
-import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
-import { CHARACTER_ROSTER_LIMIT, CHARACTER_ROSTER_SEED_VERSION, mergeBuiltInCharacters, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster";
-
-type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
-type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
-type ChoiceMode = "attack" | "spell" | null;
-type AttackFlow = null | {
-  attack: CharacterAttack;
-  phase: "target" | "attack-roll" | "damage-roll";
-  targetId?: string;
-  critical?: boolean;
-};
-type SpellFlow = null | {
-  spell: CharacterSpell;
-  phase: "target" | "attack-roll" | "damage-roll";
-  targetId?: string;
-  critical?: boolean;
-};
-
-const actionCategoryCopy: Array<{ id: ActionCategory; label: string; detail: string }> = [
-  { id: "action", label: "Action", detail: "Attacks, magic, and core actions" },
-  { id: "bonus-action", label: "Bonus Action", detail: "Features with a bonus-action cost" },
-  { id: "movement", label: "Movement", detail: "Positioning on the tactical grid" },
-];
-
-const setupModeCopy: Record<ScenarioSetupMode, { label: string; detail: string }> = {
-  describe: { label: "Describe", detail: "Write the encounter in your own words." },
-  guided: { label: "Guided", detail: "Choose environment, objective, and difficulty." },
-  combined: { label: "Combined", detail: "Use controls, then add custom details." },
-  templates: { label: "Templates", detail: "Start from a saved scenario setup." },
-};
-
-const abilityLabels: Array<{ id: AbilityName; label: string }> = [
-  { id: "strength", label: "Strength" },
-  { id: "dexterity", label: "Dexterity" },
-  { id: "constitution", label: "Constitution" },
-  { id: "intelligence", label: "Intelligence" },
-  { id: "wisdom", label: "Wisdom" },
-  { id: "charisma", label: "Charisma" },
-];
-
-const sample: Character = {
-  id: "sample-kael-emberward", name: "Kael Emberward", className: "Sorcerer", level: 4, armorClass: 15,
-  speedFeet: 30, hitPoints: { current: 34, maximum: 34 }, proficiencyBonus: 2,
-  abilities: { strength: 8, dexterity: 12, constitution: 16, intelligence: 10, wisdom: 13, charisma: 18 },
-  savingThrowModifiers: { strength: -1, dexterity: 1, constitution: 5, intelligence: 0, wisdom: 1, charisma: 6 },
-  resources: [
-    { id: "sorcery-points", name: "Sorcery Points", kind: "generic", current: 4, maximum: 4, recovery: "long-rest" },
-    { id: "spell-slot-1", name: "Level 1 Spell Slots", kind: "spell-slot", level: 1, current: 4, maximum: 4, recovery: "long-rest" },
-    { id: "spell-slot-2", name: "Level 2 Spell Slots", kind: "spell-slot", level: 2, current: 3, maximum: 3, recovery: "long-rest" },
-  ],
-  attacks: [
-    { id: "quarterstaff", name: "Quarterstaff", kind: "melee", attackBonus: 1, damage: "1d6 âˆ’ 1 bludgeoning", normalRangeFeet: 5, description: "A close-range melee strike." },
-    { id: "thrown-dagger", name: "Thrown Dagger", kind: "ranged", attackBonus: 3, damage: "1d4 + 1 piercing", normalRangeFeet: 20, longRangeFeet: 60, description: "Normal to 20 feet; disadvantage from 25â€“60 feet." },
-    { id: "light-crossbow", name: "Light Crossbow", kind: "ranged", attackBonus: 3, damage: "1d8 + 1 piercing", normalRangeFeet: 80, longRangeFeet: 320, description: "Normal to 80 feet; disadvantage from 85â€“320 feet." },
-  ],
-  spells: [
-    { id: "shield", name: "Shield", level: 1, castingTime: "reaction", rangeFeet: 0, target: "self", requiresLineOfSight: false, durationRounds: 1, effect: { name: "Shield", description: "+5 AC until the start of your next turn.", modifiers: { armorClass: 5 } } },
-    { id: "fire-bolt", name: "Fire Bolt", level: 0, castingTime: "action", rangeFeet: 120, target: "single", requiresLineOfSight: true, attackBonus: 6, damage: "1d10 fire" },
-    { id: "chromatic-orb", name: "Chromatic Orb", level: 1, castingTime: "action", rangeFeet: 90, target: "single", requiresLineOfSight: true, attackBonus: 6, damage: "3d8 chosen damage" },
-    { id: "scorching-ray", name: "Scorching Ray", level: 2, castingTime: "action", rangeFeet: 120, target: "single", requiresLineOfSight: true, attackBonus: 6, damage: "2d6 fire per ray" },
-    { id: "false-life", name: "False Life", level: 1, castingTime: "action", rangeFeet: 0, target: "self", requiresLineOfSight: false, durationRounds: 600, effect: { name: "False Life", description: "7 temporary hit points for 1 hour.", temporaryHitPoints: 7 } },
-    { id: "blur", name: "Blur", level: 2, castingTime: "action", rangeFeet: 0, target: "self", requiresLineOfSight: false, concentration: true, durationRounds: 10, effect: { name: "Blur", description: "Incoming attacks have disadvantage while concentration lasts.", modifiers: { incomingAttacks: "disadvantage" } } },
-  ],
-  actions: ["Attack", "Magic", "Cast a Spell", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Utilize", "Use an Object", "Study", "Influence", "Quickened Spell"],
-  source: { format: "sample", importedAt: new Date().toISOString() },
-};
-
-const modeCopy: Record<ExperienceMode, { label: string; detail: string }> = {
-  beginner: { label: "Beginner", detail: "Full coaching and exact enemy health; enemies use direct, predictable tactics." },
-  training: { label: "Intermediate", detail: "Rules feedback and descriptive health; enemies reposition and use signature abilities." },
-  advanced: { label: "Advanced", detail: "Minimal guidance and concealed health; enemies prioritize vulnerable targets, strong attacks, range, and cover." },
-};
-
-function withCombatDefaults(character: Character): Character {
-  return {
-    ...character,
-    speedFeet: character.speedFeet ?? 30,
-    resources: (character.resources ?? []).map((resource, index) => ({
-      id: resource.id ?? `resource-${index}`,
-      name: resource.name,
-      kind: resource.kind ?? "generic",
-      level: resource.level,
-      current: resource.current,
-      maximum: resource.maximum,
-      recovery: resource.recovery ?? "long-rest",
-    })),
-    attacks: character.attacks?.length ? character.attacks : [{
-      id: "unarmed-strike",
-      name: "Unarmed Strike",
-      kind: "melee",
-      attackBonus: character.proficiencyBonus,
-      damage: "1 + Strength modifier bludgeoning",
-      normalRangeFeet: 5,
-      description: "Fallback attack added because the imported sheet did not include attack data.",
-    }],
-    spells: character.spells ?? [],
-  };
-}
-
-export default function Home() {
-  const [character, setCharacter] = useState(sample);
-  const [storedCharacters, setStoredCharacters] = useState<Character[]>([]);
-  const [rulesetId, setRulesetId] = useState<RulesetId>("dnd-2024");
-  const [experienceMode, setExperienceMode] = useState<ExperienceMode>("beginner");
-  const [message, setMessage] = useState("Using the built-in sample character. Import a PDF or ADaM JSON anytime.");
-  const [pendingImport, setPendingImport] = useState<ImportResult | null>(null);
-  const [reviewCharacter, setReviewCharacter] = useState<Character | null>(null);
-  const [setupMode, setSetupMode] = useState<ScenarioSetupMode>("combined");
-  const [scenarioPrompt, setScenarioPrompt] = useState(defaultScenarioSetup.prompt);
-  const [environment, setEnvironment] = useState<ScenarioEnvironment>(defaultScenarioSetup.environment);
-  const [objective, setObjective] = useState<ScenarioObjective>(defaultScenarioSetup.objective);
-  const [difficulty, setDifficulty] = useState<ScenarioDifficulty>(defaultScenarioSetup.difficulty);
-  const [scenario, setScenario] = useState(() => generateScriptedScenario(defaultScenarioSetup));
-  const initialScenario = useRef(scenario);
-  const [savedTemplates, setSavedTemplates] = useState<ScenarioTemplate[]>([]);
-  const [encounter, setEncounter] = useState(() => createEncounter(sample, scenario));
-  const [command, setCommand] = useState("");
-  const [feedback, setFeedback] = useState("Roll your initiative to begin. ADaM will roll privately for the enemies.");
-  const [lastRoll, setLastRoll] = useState<ReturnType<typeof rollD20> | DamageRoll | null>(null);
-  const [actionCategory, setActionCategory] = useState<ActionCategory>("action");
-  const [choiceMode, setChoiceMode] = useState<ChoiceMode>(null);
-  const [attackFlow, setAttackFlow] = useState<AttackFlow>(null);
-  const [spellFlow, setSpellFlow] = useState<SpellFlow>(null);
-  const [enemyTurnPhase, setEnemyTurnPhase] = useState<"idle" | "resolving" | "awaiting-player" | "showing">("idle");
-
-  const activeRuleset = rulesets.find((ruleset) => ruleset.id === rulesetId)!;
-  const visibleActions = useMemo(
-    () => visibleActionsForMode(character, rulesetId, experienceMode, encounter),
-    [character, encounter, experienceMode, rulesetId],
-  );
-  const categorizedActions = useMemo(() => visibleActions.filter((action) => action.cost === actionCategory), [actionCategory, visibleActions]);
-  const activeCombatant = encounter.combatants[encounter.activeIndex];
-  const playerCombatant = encounter.combatants.find((combatant) => combatant.id === character.id) ?? encounter.combatants[0];
-  const playerArmorClass = effectiveArmorClass(encounter, playerCombatant.id);
-  const playerEffects = effectsForCombatant(encounter, playerCombatant.id);
-  const targetAnalysis = useMemo(() => encounter.selectedTargetId ? analyzeTarget(encounter, encounter.selectedTargetId) : null, [encounter]);
-  const initiativeReady = encounter.combatants.every((combatant) => combatant.initiativeRolled);
-  const playerNeedsInitiative = encounter.combatants.find((combatant) => combatant.side === "player" && !combatant.initiativeRolled);
-  const outcome = combatOutcome(encounter);
-  const deathSaveRequired = initiativeReady && activeCombatant.side === "player" && activeCombatant.hitPoints.current <= 0 && !activeCombatant.stabilized && activeCombatant.deathSaves.failures < 3;
-  const legalAttackTargetIds = useMemo(() => new Set(
-    attackFlow?.phase === "target"
-      ? encounter.combatants.filter((combatant) => combatant.side !== activeCombatant.side && combatant.hitPoints.current > 0 && validateAttackTarget(encounter, attackFlow.attack, combatant.id).legal).map((combatant) => combatant.id)
-      : [],
-  ), [activeCombatant.side, attackFlow, encounter]);
-  const legalSpellTargetIds = useMemo(() => new Set(
-    spellFlow?.phase === "target"
-      ? encounter.combatants.filter((combatant) => validateSpellTarget(encounter, spellFlow.spell, combatant.id).legal).map((combatant) => combatant.id)
-      : [],
-  ), [encounter, spellFlow]);
-  const legalMovementCells = useMemo(() => legalMovementDestinations(encounter), [encounter]);
-  const legalMovementByCell = useMemo(() => new Map(legalMovementCells.map((cell) => [`${cell.x},${cell.y}`, cell])), [legalMovementCells]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        const stored = localStorage.getItem("adam-scenario-templates");
-        if (stored) setSavedTemplates(JSON.parse(stored) as ScenarioTemplate[]);
-        const rosterJson = localStorage.getItem("adam-character-roster");
-        const roster = rosterJson ? (JSON.parse(rosterJson) as Character[]) : [];
-        const validRoster = roster.filter((candidate) => candidate?.id && candidate?.name && candidate?.hitPoints && candidate?.abilities).slice(0, CHARACTER_ROSTER_LIMIT).map(withCombatDefaults);
-        const seedVersion = Number(localStorage.getItem("adam-character-roster-seed-version") ?? "0");
-        const nextRoster = seedVersion < CHARACTER_ROSTER_SEED_VERSION ? mergeBuiltInCharacters(validRoster) : validRoster;
-        setStoredCharacters(nextRoster);
-        localStorage.setItem("adam-character-roster", JSON.stringify(nextRoster));
-        if (nextRoster.some((candidate) => candidate.id === "cleira-oestwilde")) localStorage.setItem("adam-character-roster-seed-version", String(CHARACTER_ROSTER_SEED_VERSION));
-        const activeId = localStorage.getItem("adam-active-character-id");
-        const activeCharacter = nextRoster.find((candidate) => candidate.id === activeId) ?? nextRoster[0] ?? sample;
-        setCharacter(activeCharacter);
-        if (activeCharacter.rulesetId) setRulesetId(activeCharacter.rulesetId);
-        setMessage(`${activeCharacter.name}'s stored character sheet is loaded and ready for a fresh encounter.`);
-        setEncounter(createEncounter(activeCharacter, initialScenario.current));
-      } catch {
-        setSavedTemplates([]);
-        setStoredCharacters([]);
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!initiativeReady || activeCombatant?.side !== "enemy" || outcome !== "active") return;
-    if (encounter.pendingResponse || enemyTurnPhase === "awaiting-player") return;
-    const delay = enemyTurnPhase === "idle" ? 350 : enemyTurnPhase === "resolving" ? 700 : 1800;
-    const timer = window.setTimeout(() => {
-      if (enemyTurnPhase === "idle") {
-        setFeedback(`${activeCombatant.name}'s turn. ADaM is choosing movement, target, and action.`);
-        setEnemyTurnPhase("resolving");
-        return;
-      }
-      if (enemyTurnPhase === "resolving") {
-        const result = resolveEnemyTurn(encounter, experienceMode);
-        setEncounter(result.encounter);
-        setLastRoll(result.damageRoll ?? result.attackRoll);
-        setFeedback(result.steps.map((step) => step.summary).join(" "));
-        setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "showing");
-        return;
-      }
-      setEncounter((state) => endTurn(state));
-      setEnemyTurnPhase("idle");
-      setFeedback("Enemy turn complete. Initiative advances to the next living combatant.");
-    }, delay);
-    return () => window.clearTimeout(timer);
-  }, [activeCombatant?.id, activeCombatant?.name, activeCombatant?.side, encounter, enemyTurnPhase, experienceMode, initiativeReady, outcome]);
-
-  function finishPlayerResponse(nextEncounter: typeof encounter, summary: string, playerRoll: ReturnType<typeof rollD20> | null) {
-    setEncounter(nextEncounter);
-    if (playerRoll) setLastRoll(playerRoll);
-    setFeedback(summary);
-    setEnemyTurnPhase(activeCombatant.side === "enemy" ? (nextEncounter.pendingResponse ? "awaiting-player" : "showing") : "idle");
-  }
-
-  function rollPendingSavingThrow() {
-    const result = resolveSavingThrowResponse(encounter);
-    finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
-  }
-
-  function choosePendingReaction(reactionId: string | null) {
-    const result = resolveAttackReaction(encounter, reactionId);
-    finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
-  }
-
-  function choosePendingOpportunityAttack(attackId: string | null) {
-    const result = chooseOpportunityAttack(encounter, attackId);
-    setEncounter(result.encounter);
-    setFeedback(result.summary);
-    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
-  }
-
-  function rollPendingOpportunityAttack() {
-    const result = rollOpportunityAttack(encounter);
-    setEncounter(result.encounter);
-    if (result.playerRoll) setLastRoll(result.playerRoll);
-    setFeedback(result.summary);
-    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
-  }
-
-  function rollPendingOpportunityDamage() {
-    const result = rollOpportunityDamage(encounter);
-    setEncounter(result.encounter);
-    if (result.damageRoll) setLastRoll(result.damageRoll);
-    setFeedback(result.summary);
-    setEnemyTurnPhase("resolving");
-  }
-
-  function rollPendingConcentration() {
-    const result = resolveConcentrationResponse(encounter);
-    finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
-  }
-
-  function rollPendingDeathSave() {
-    const result = rollDeathSave(encounter, activeCombatant.id);
-    setEncounter(result.encounter);
-    if (result.playerRoll) setLastRoll(result.playerRoll);
-    setFeedback(result.summary);
-  }
-
-  async function handleImport(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]; if (!file) return;
-    setMessage(`Reading ${file.name}...`);
-    try {
-      const imported = await importCharacterFile(file);
-      if (imported.requiresReview) {
-        setPendingImport(imported);
-        setReviewCharacter(imported.character);
-        setMessage(`${file.name} read. Review the extracted values before using this character.`);
-      } else {
-        applyImportedCharacter(imported.character, imported.warnings);
-      }
-    } catch (error) { setMessage(error instanceof Error ? error.message : "The sheet could not be imported."); }
-    finally { event.target.value = ""; }
-  }
-
-  function persistCharacterRoster(nextRoster: Character[]) {
-    setStoredCharacters(nextRoster);
-    localStorage.setItem("adam-character-roster", JSON.stringify(nextRoster));
-  }
-
-  function activateCharacter(nextCharacter: Character, announcement: string) {
-    setCharacter(nextCharacter);
-    if (nextCharacter.rulesetId) setRulesetId(nextCharacter.rulesetId);
-    setEncounter(createEncounter(nextCharacter, scenario));
-    setChoiceMode(null);
-    setAttackFlow(null);
-    setSpellFlow(null);
-    setEnemyTurnPhase("idle");
-    localStorage.setItem("adam-active-character-id", nextCharacter.id);
-    setMessage(announcement);
-  }
-
-  function applyImportedCharacter(importedCharacter: Character, warnings: string[]): boolean {
-    const normalized = withCombatDefaults(importedCharacter);
-    const update = upsertRosterCharacter(storedCharacters, normalized);
-    if (!update.stored) {
-      setMessage(update.reason ?? "The character could not be stored.");
-      return false;
-    }
-    persistCharacterRoster(update.characters);
-    activateCharacter(normalized, `${normalized.name} imported and saved. ${warnings.join(" ") || "Ready for combat."} Roll your initiative to begin.`);
-    return true;
-  }
-
-  function selectStoredCharacter(characterId: string) {
-    const selected = storedCharacters.find((candidate) => candidate.id === characterId);
-    if (!selected) return;
-    activateCharacter(selected, `${selected.name}'s stored statistics are loaded into a fresh encounter. Roll initiative when ready.`);
-  }
-
-  function deleteStoredCharacter(characterId: string) {
-    const nextRoster = removeRosterCharacter(storedCharacters, characterId);
-    persistCharacterRoster(nextRoster);
-    if (character.id === characterId) {
-      const nextActive = nextRoster[0] ?? sample;
-      activateCharacter(nextActive, `${nextActive.name} is now active. The removed character is no longer stored on this device.`);
-    }
-    else setMessage("Character removed from the stored roster.");
-  }
-
-  function updateReviewNumber(field: "level" | "armorClass" | "proficiencyBonus" | "speedFeet", value: string) {
-    setReviewCharacter((current) => current ? { ...current, [field]: Number(value) } : current);
-  }
-
-  function updateReviewHitPoints(field: "current" | "maximum", value: string) {
-    setReviewCharacter((current) => current ? { ...current, hitPoints: { ...current.hitPoints, [field]: Number(value) } } : current);
-  }
-
-  function updateReviewAbility(ability: AbilityName, value: string) {
-    setReviewCharacter((current) => current ? { ...current, abilities: { ...current.abilities, [ability]: Number(value) } } : current);
-  }
-
-  function confirmReviewedImport(event: FormEvent) {
-    event.preventDefault();
-    if (!reviewCharacter) return;
-    if (!applyImportedCharacter(reviewCharacter, pendingImport?.warnings ?? [])) return;
-    setPendingImport(null);
-    setReviewCharacter(null);
-  }
-
-  function runAction(action: CombatAction) {
-    if (!initiativeReady) { setFeedback("Roll your initiative before taking actions. ADaM rolls for the enemies automatically."); return; }
-    if (outcome !== "active") { setFeedback("This encounter is complete. Build a new encounter to continue training."); return; }
-    if (encounter.pendingResponse) { setFeedback("Resolve the pending saving throw or reaction before continuing."); return; }
-    if (activeCombatant.side !== "player") { setFeedback("ADaM is resolving the enemy turn."); return; }
-    if (deathSaveRequired && encounter.turn.action) { setFeedback("Roll the required death saving throw before ending this turn."); return; }
-    if (activeCombatant.hitPoints.current <= 0 && action.id !== "end-turn") { setFeedback("An unconscious character cannot take actions."); return; }
-    if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeedback("Turn ended. Initiative advanced."); return; }
-    if (action.id === "attack") {
-      setChoiceMode("attack");
-      setAttackFlow(null);
-      setSpellFlow(null);
-      setFeedback(`${character.attacks?.length ?? 0} weapon attacks are ready. Choose a weapon to reveal its legal targets.`);
-      return;
-    }
-    const validation = validateAction(action, encounter, character);
-    if (!validation.legal) {
-      setFeedback(experienceMode === "training" ? validation.reason ?? "That action is not currently legal." : "Action disallowed."); return;
-    }
-    if (action.id === "move") { setFeedback("Choose a highlighted adjacent square. You can split your movement before and after actions; leaving an enemy's reach may trigger an opportunity attack."); return; }
-    if (action.id === "magic" || action.id === "cast-spell") { setChoiceMode("spell"); setAttackFlow(null); setSpellFlow(null); setFeedback("Choose a spell first. ADaM will then highlight every legal target for its range and line of sight."); return; }
-    let next = consumeAction(action, encounter);
-    if (action.id === "dodge") {
-      next = applyEffect(next, {
-        name: "Dodge",
-        description: "Incoming attacks have disadvantage until the start of your next turn.",
-        sourceCombatantId: activeCombatant.id,
-        targetCombatantId: activeCombatant.id,
-        durationRounds: 1,
-        modifiers: { incomingAttacks: "disadvantage" },
-      });
-    }
-    setEncounter(next);
-    setChoiceMode(null);
-    const targetCopy = action.targeting?.mode === "single" && targetAnalysis ? ` against ${targetAnalysis.target.name}` : "";
-    const tacticalCopy = action.id === "dash"
-      ? ` Your available movement is now ${next.turn.movementRemaining} feet and may be split around other choices.`
-      : action.id === "disengage"
-        ? " Your movement will not provoke opportunity attacks for the rest of this turn."
-        : "";
-    setFeedback(`${action.name}${targetCopy} accepted. This action does not require a dice roll.${tacticalCopy}`);
-  }
-
-  function chooseAttack(attack: CharacterAttack) {
-    if (!encounter.turn.action) { setFeedback("Your Action has already been used this turn."); return; }
-    setEncounter((state) => selectTarget(state, null));
-    setAttackFlow({ attack, phase: "target" });
-    setSpellFlow(null);
-    setFeedback(`${attack.name} selected. Choose one of the highlighted enemy targets on the tactical map.`);
-  }
-
-  function rollInitiative() {
-    if (!playerNeedsInitiative) return;
-    const result = rollPlayerAndEnemyInitiative(encounter, playerNeedsInitiative.id);
-    setEncounter(result.encounter);
-    setLastRoll(result.playerRoll);
-    setFeedback(`You rolled ${result.playerRoll.total}. ADaM rolled initiative for ${result.enemyRolls.length} ${result.enemyRolls.length === 1 ? "enemy" : "enemies"}. ${result.encounter.combatants[0].name} acts first.`);
-  }
-
-  function rollSelectedAttack() {
-    if (!attackFlow || attackFlow.phase !== "attack-roll") return;
-    const result = resolveAttackRoll(encounter, attackFlow.attack);
-    if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
-    setEncounter(result.encounter);
-    setLastRoll(result.roll);
-    const updatedTarget = result.encounter.combatants.find((combatant) => combatant.id === attackFlow.targetId);
-    const healthCopy = updatedTarget?.side === "enemy" && experienceMode !== "advanced" ? ` ${updatedTarget.name}: ${enemyHealthLabel(updatedTarget, experienceMode)}.` : "";
-    setFeedback(`${result.summary}${healthCopy}`);
-    if (result.hit) setAttackFlow({ ...attackFlow, phase: "damage-roll", critical: result.critical });
-    else { setAttackFlow(null); setChoiceMode(null); }
-  }
-
-  function rollSelectedDamage() {
-    if (!attackFlow || attackFlow.phase !== "damage-roll" || !attackFlow.targetId) return;
-    const result = resolveAttackDamage(encounter, attackFlow.attack, attackFlow.targetId, attackFlow.critical);
-    if (!result.legal) { setFeedback(result.reason); return; }
-    setEncounter(result.encounter);
-    setLastRoll(result.roll);
-    setFeedback(`${result.summary} You still have ${result.encounter.turn.movementRemaining} feet of movement and may use it before ending your turn.`);
-    setAttackFlow(null);
-    setChoiceMode(null);
-  }
-
-  function chooseSpell(spell: CharacterSpell) {
-    const availability = validateSpellAvailability(encounter, spell);
-    if (!availability.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : availability.reason ?? "That spell is not available."); return; }
-    const hasOtherFriendlyTarget = encounter.combatants.some((combatant) => combatant.id !== activeCombatant.id && combatant.side === activeCombatant.side && combatant.hitPoints.current > 0);
-    if (spell.target === "self-or-single" && spell.targetSide === "friendly" && !hasOtherFriendlyTarget) {
-      const result = executeSpellChoice({ ...encounter, selectedTargetId: activeCombatant.id }, spell);
-      if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
-      setEncounter(result.encounter); setLastRoll(result.roll); setChoiceMode(null); setSpellFlow(null); setFeedback(result.summary);
-      return;
-    }
-    if (spell.target === "single" || spell.target === "self-or-single") {
-      setEncounter((state) => selectTarget(state, null));
-      setSpellFlow({ spell, phase: "target" });
-      setAttackFlow(null);
-      setFeedback(`${spell.name} selected. Choose one of the highlighted legal targets on the tactical map.`);
-      return;
-    }
-    const result = executeSpellChoice(encounter, spell);
-    if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
-    setEncounter(result.encounter); setLastRoll(result.roll); setChoiceMode(null); setSpellFlow(null); setFeedback(result.summary);
-  }
-
-  function rollSelectedSpellAttack() {
-    if (!spellFlow || spellFlow.phase !== "attack-roll") return;
-    const result = resolveSpellAttackRoll(encounter, spellFlow.spell);
-    if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
-    setEncounter(result.encounter);
-    setLastRoll(result.roll);
-    setFeedback(result.summary);
-    if (result.hit && spellFlow.spell.damage) setSpellFlow({ ...spellFlow, phase: "damage-roll", critical: result.critical });
-    else { setSpellFlow(null); setChoiceMode(null); }
-  }
-
-  function rollSelectedSpellDamage() {
-    if (!spellFlow || spellFlow.phase !== "damage-roll" || !spellFlow.targetId) return;
-    const result = resolveSpellDamage(encounter, spellFlow.spell, spellFlow.targetId, spellFlow.critical);
-    if (!result.legal) { setFeedback(result.reason); return; }
-    setEncounter(result.encounter);
-    setLastRoll(result.roll);
-    setFeedback(`${result.summary} You still have ${result.encounter.turn.movementRemaining} feet of movement and may use it before ending your turn.`);
-    setSpellFlow(null);
-    setChoiceMode(null);
-  }
-
-  function submitCommand(event: FormEvent) {
-    event.preventDefault();
-    const action = findActionFromText(command, rulesetId);
-    if (!action) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : "I could not match that request to a supported action yet. Try naming the action directly."); return; }
-    runAction(action); setCommand("");
-  }
-
-  function buildScenario(event: FormEvent) {
-    event.preventDefault();
-    const setup: ScenarioSetup = { prompt: setupMode === "guided" ? "" : scenarioPrompt, environment, objective, difficulty };
-    const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
-    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
-  }
-
-  function loadTemplate(template: ScenarioTemplate) {
-    setScenarioPrompt(template.setup.prompt);
-    setEnvironment(template.setup.environment);
-    setObjective(template.setup.objective);
-    setDifficulty(template.setup.difficulty);
-    const next = generateScriptedScenario(template.setup);
-    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
-  }
-
-  function saveTemplate() {
-    const template: ScenarioTemplate = {
-      id: `saved-${Date.now()}`,
-      name: `${scenario.title} Â· ${scenario.difficulty}`,
-      description: scenarioPrompt || `${scenario.objective} in ${scenario.environment}`,
-      setup: { prompt: scenarioPrompt, environment, objective, difficulty },
-    };
-    const next = [...savedTemplates, template];
-    setSavedTemplates(next);
-    localStorage.setItem("adam-scenario-templates", JSON.stringify(next));
-    setFeedback("Scenario setup saved on this device.");
-  }
-
-  function handleGridMove(x: number, y: number) {
-    const result = moveActiveCombatant(encounter, x, y);
-    if (result.legal) setEncounter(result.encounter);
-    if (result.damageRoll ?? result.attackRoll) setLastRoll(result.damageRoll ?? result.attackRoll);
-    setFeedback(result.reason);
-  }
-
-  function handleGridInteraction(x: number, y: number, occupantId?: string) {
-    if (!initiativeReady) { setFeedback("Finish rolling initiative before interacting with the map."); return; }
-    if (activeCombatant.side !== "player") { setFeedback("ADaM controls targeting and movement during enemy turns."); return; }
-    if (attackFlow?.phase === "target") {
-      if (!occupantId) { setFeedback(`Choose a highlighted creature for ${attackFlow.attack.name}.`); return; }
-      const validation = validateAttackTarget(encounter, attackFlow.attack, occupantId);
-      if (!validation.legal) { setFeedback(experienceMode === "advanced" ? "Target disallowed." : validation.reason ?? "That target is not legal."); return; }
-      const analysis = analyzeTarget(encounter, occupantId)!;
-      const rollMode = validation.rollMode === "disadvantage" ? " Roll two d20s and use the lower result because the attack is at long range or a hostile creature is within 5 feet." : "";
-      setEncounter((state) => selectTarget(state, occupantId));
-      setAttackFlow({ ...attackFlow, phase: "attack-roll", targetId: occupantId });
-      setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Click to roll the attack: d20 ${attackFlow.attack.attackBonus >= 0 ? "+" : "âˆ’"} ${Math.abs(attackFlow.attack.attackBonus)}.${rollMode}`);
-      return;
-    }
-    if (spellFlow?.phase === "target") {
-      if (!occupantId) { setFeedback(`Choose a highlighted creature for ${spellFlow.spell.name}.`); return; }
-      const validation = validateSpellTarget(encounter, spellFlow.spell, occupantId);
-      if (!validation.legal || !legalSpellTargetIds.has(occupantId)) { setFeedback(experienceMode === "advanced" ? "Target disallowed." : validation.reason ?? "That target is not legal for this spell."); return; }
-      const analysis = analyzeTarget(encounter, occupantId)!;
-      const targetedEncounter = selectTarget(encounter, occupantId);
-      setEncounter(targetedEncounter);
-      if (spellFlow.spell.attackBonus !== undefined) {
-        const rollMode = validation.rollMode === "disadvantage" ? " Roll two d20s and use the lower result because a hostile creature is within 5 feet." : "";
-        setSpellFlow({ ...spellFlow, phase: "attack-roll", targetId: occupantId });
-        setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Click to roll the spell attack: d20 ${spellFlow.spell.attackBonus >= 0 ? "+" : "âˆ’"} ${Math.abs(spellFlow.spell.attackBonus)}.${rollMode}`);
-        return;
-      }
-      const result = executeSpellChoice(targetedEncounter, spellFlow.spell);
-      if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
-      setEncounter(result.encounter);
-      setLastRoll(result.roll);
-      setSpellFlow(null);
-      setChoiceMode(null);
-      setFeedback(result.summary);
-      return;
-    }
-    if (!occupantId) { handleGridMove(x, y); return; }
-    if (occupantId === activeCombatant.id) {
-      setEncounter((state) => selectTarget(state, null));
-      setFeedback("Target cleared. Select another creature before choosing a targeted action.");
-      return;
-    }
-    const analysis = analyzeTarget(encounter, occupantId);
-    if (!analysis) return;
-    setEncounter((state) => selectTarget(state, occupantId));
-    setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Line of sight: ${analysis.lineOfSight ? "clear" : "blocked"}. Cover: ${analysis.cover}.`);
-  }
-
-  return <main className="app-shell">
-    <header className="topbar"><div><span className="eyebrow">ADaM Â· Automated Dungeon & Mechanics</span><h1>Combat Trainer</h1></div><div className="status"><span />Rules engine active</div></header>
-    {pendingImport && reviewCharacter && <div className="import-review-backdrop">
-      <form className="import-review" onSubmit={confirmReviewedImport} role="dialog" aria-modal="true" aria-labelledby="import-review-title">
-        <div className="import-review-heading"><div><span className="eyebrow">Flattened PDF detected</span><h2 id="import-review-title">Review imported character</h2></div><span className="import-count">{reviewCharacter.attacks?.length ?? 0} attacks found</span></div>
-        <p className="import-review-note">{pendingImport.warnings.join(" ")} Correct anything that does not match the PDF, then load the character into combat.</p>
-        <div className="import-core-grid">
-          <label>Character name<input required value={reviewCharacter.name} onChange={(event) => setReviewCharacter({ ...reviewCharacter, name: event.target.value })} /></label>
-          <label>Class<input required value={reviewCharacter.className} onChange={(event) => setReviewCharacter({ ...reviewCharacter, className: event.target.value })} /></label>
-          <label>Level<input required min="1" max="20" type="number" value={reviewCharacter.level} onChange={(event) => updateReviewNumber("level", event.target.value)} /></label>
-          <label>Armor class<input required min="1" type="number" value={reviewCharacter.armorClass} onChange={(event) => updateReviewNumber("armorClass", event.target.value)} /></label>
-          <label>Current HP<input required min="0" type="number" value={reviewCharacter.hitPoints.current} onChange={(event) => updateReviewHitPoints("current", event.target.value)} /></label>
-          <label>Maximum HP<input required min="1" type="number" value={reviewCharacter.hitPoints.maximum} onChange={(event) => updateReviewHitPoints("maximum", event.target.value)} /></label>
-          <label>Proficiency bonus<input required min="0" type="number" value={reviewCharacter.proficiencyBonus} onChange={(event) => updateReviewNumber("proficiencyBonus", event.target.value)} /></label>
-          <label>Walking speed<input required min="0" step="5" type="number" value={reviewCharacter.speedFeet ?? 30} onChange={(event) => updateReviewNumber("speedFeet", event.target.value)} /></label>
-        </div>
-        <div className="import-ability-grid">{abilityLabels.map((ability) => <label key={ability.id}>{ability.label}<input required min="1" max="30" type="number" value={reviewCharacter.abilities[ability.id]} onChange={(event) => updateReviewAbility(ability.id, event.target.value)} /></label>)}</div>
-        {(reviewCharacter.attacks?.length ?? 0) > 0 && <div className="import-attacks"><span>Imported attacks</span><p>{reviewCharacter.attacks?.map((attack) => `${attack.name} (${attack.attackBonus >= 0 ? "+" : ""}${attack.attackBonus}, ${attack.damage}, ${attack.normalRangeFeet}${attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.)`).join(" Â· ")}</p></div>}
-        <div className="import-review-actions"><button type="button" onClick={() => { setPendingImport(null); setReviewCharacter(null); setMessage("Import canceled; the previous character remains active."); }}>Cancel</button><button type="submit">Use this character</button></div>
-      </form>
-    </div>}
-    <section className="workspace">
-      <aside className="sidebar">
-        <div className="panel"><div className="panel-heading"><span>01</span><h2>Character</h2></div><label className="file-button">Import character sheet<input type="file" accept="application/pdf,application/json,.json,.pdf" onChange={handleImport} /></label><p className="helper">{message}</p></div>
-        <section className="character-roster" aria-label="Stored character roster">
-          <div className="roster-heading"><div><span>Stored characters</span><strong>Encounter roster</strong></div><em>{storedCharacters.length}/{CHARACTER_ROSTER_LIMIT}</em></div>
-          {storedCharacters.length ? <div className="roster-list">{storedCharacters.map((storedCharacter) => <div key={storedCharacter.id} className={`roster-entry ${character.id === storedCharacter.id ? "active" : ""}`}>
-            <button type="button" className="roster-select" onClick={() => selectStoredCharacter(storedCharacter.id)} aria-label={`Load ${storedCharacter.name} into the encounter`}>
-              <span>{storedCharacter.name[0]?.toUpperCase()}</span><div><strong>{storedCharacter.name}</strong><small>{storedCharacter.className} {storedCharacter.level} Â· AC {storedCharacter.armorClass} Â· HP {storedCharacter.hitPoints.maximum} Â· {storedCharacter.attacks?.length ?? 0} attacks Â· {storedCharacter.spells?.length ?? 0} spells</small></div>
-            </button>
-            <button type="button" className="roster-remove" onClick={() => deleteStoredCharacter(storedCharacter.id)} aria-label={`Remove ${storedCharacter.name} from stored characters`}>Remove</button>
-          </div>)}</div> : <div className="roster-empty"><strong>Five upload slots available</strong><p>Import and review a character sheet to save it here for future encounters.</p></div>}
-        </section>
-        <div className="character-card"><div className="portrait">{character.name[0]?.toUpperCase()}</div><div><p className="character-name">{character.name}</p><p>{character.className} Â· Level {character.level}</p></div></div>
-        <div className="stats"><div><span>AC</span><strong>{playerArmorClass}</strong>{playerArmorClass !== character.armorClass && <small>base {character.armorClass}</small>}</div><div><span>HP</span><strong>{playerCombatant.hitPoints.current}/{playerCombatant.hitPoints.maximum}</strong>{playerCombatant.temporaryHitPoints > 0 && <small>+{playerCombatant.temporaryHitPoints} temp</small>}</div><div><span>PROF</span><strong>+{character.proficiencyBonus}</strong></div></div>
-        <div className="weapon-summary"><span>Weapon attacks</span><strong>{character.attacks?.length ?? 0} ready</strong><p>{character.attacks?.map((attack) => attack.name).join(" Â· ") || "No weapon attacks imported."}</p></div>
-        <div className="panel"><div className="panel-heading"><span>02</span><h2>Experience</h2></div><div className="mode-list">{(Object.keys(modeCopy) as ExperienceMode[]).map((mode) => <button key={mode} className={experienceMode === mode ? "selected" : ""} onClick={() => { setExperienceMode(mode); setFeedback(modeCopy[mode].detail); }}><strong>{modeCopy[mode].label}</strong><small>{modeCopy[mode].detail}</small></button>)}</div></div>
-        <div className="panel"><div className="panel-heading"><span>03</span><h2>Ruleset</h2></div><div className="ruleset-list">{rulesets.map((ruleset) => <button key={ruleset.id} className={ruleset.id === rulesetId ? "selected" : ""} onClick={() => setRulesetId(ruleset.id)}><strong>{ruleset.name}</strong><small>{ruleset.description}</small></button>)}</div></div>
-      </aside>
-
-      <section className="combat-area">
-        <div className="combat-heading"><div><span className="eyebrow">Scripted scenario engine</span><h2>{scenario.title}</h2></div><div className="rules-badge">{activeRuleset.label}</div></div>
-        <section className="scenario-studio">
-          <div className="setup-tabs" aria-label="Scenario setup method">{(Object.keys(setupModeCopy) as ScenarioSetupMode[]).map((mode) => <button key={mode} type="button" className={setupMode === mode ? "active" : ""} onClick={() => setSetupMode(mode)}><strong>{setupModeCopy[mode].label}</strong><small>{setupModeCopy[mode].detail}</small></button>)}</div>
-          {setupMode === "templates" ? <div className="template-grid">{[...scenarioTemplates, ...savedTemplates].map((template) => <button type="button" key={template.id} onClick={() => loadTemplate(template)}><span>{template.setup.difficulty}</span><strong>{template.name}</strong><small>{template.description}</small></button>)}</div> : <form className="scenario-builder" onSubmit={buildScenario}>
-            {(setupMode === "describe" || setupMode === "combined") && <label className="prompt-field">Describe the encounter you want<input value={scenarioPrompt} onChange={(event) => setScenarioPrompt(event.target.value)} placeholder="A ruined crypt where I must rescue a trapped scholar" /></label>}
-            {(setupMode === "guided" || setupMode === "combined") && <div className="guided-controls">
-              <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as ScenarioEnvironment)}><option value="crypt">Ruined crypt</option><option value="forest">Dense forest</option><option value="market">Abandoned market</option></select></label>
-              <label>Objective<select value={objective} onChange={(event) => setObjective(event.target.value as ScenarioObjective)}><option value="defeat">Defeat enemies</option><option value="rescue">Rescue a civilian</option><option value="escape">Reach the exit</option><option value="hold">Hold a position</option></select></label>
-              <label>Difficulty<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as ScenarioDifficulty)}><option value="easy">Easy</option><option value="standard">Standard</option><option value="hard">Hard</option></select></label>
-            </div>}
-            <div className="scenario-actions"><button className="generate-button">Build encounter</button><button type="button" className="save-button" onClick={saveTemplate}>Save setup</button></div>
-          </form>}
-        </section>
-        <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" Â· ")}</strong></div><div><span>Difficulty</span><strong>{scenario.difficulty}</strong></div></div>
-
-        {!initiativeReady && playerNeedsInitiative && <section className="roll-coach initiative-coach" aria-live="polite">
-          <div><span>Your initiative Â· Click to roll</span><h3>{playerNeedsInitiative.name}</h3><p>Roll a <strong>d20</strong> and add your initiative modifier ({playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "âˆ’"}{Math.abs(playerNeedsInitiative.initiativeModifier)}). ADaM rolls enemy initiative privately and then reveals turn order.</p></div>
-          <button type="button" onClick={rollInitiative}><small>Roll your initiative</small><strong>d20 {playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "âˆ’"} {Math.abs(playerNeedsInitiative.initiativeModifier)}</strong></button>
-        </section>}
-        {initiativeReady && activeCombatant.side === "enemy" && outcome === "active" && <section className="roll-coach enemy-coach" aria-live="polite">
-          <div><span>DM-controlled turn Â· {modeCopy[experienceMode].label} tactics Â· {enemyTurnPhase}</span><h3>{activeCombatant.name}</h3><p>ADaM controls this creature&apos;s movement, targeting, action selection, attack roll, and damage roll. Tactical decision quality scales with the selected experience mode.</p></div>
-          <div className="dm-turn-badge"><strong>ADaM</strong><small>resolving enemy</small></div>
-        </section>}
-        {encounter.pendingResponse?.type === "saving-throw" && (() => {
-          const pending = encounter.pendingResponse;
-          const modifier = effectiveSavingThrowModifier(encounter, pending.targetCombatantId, pending.ability.saveAbility);
-          return <section className="roll-coach response-coach" aria-live="assertive">
-            <div><span>Player response Â· Saving throw</span><h3>{pending.ability.name}</h3><p>Roll a <strong>d20</strong> and add your {pending.ability.saveAbility} saving throw modifier ({modifier >= 0 ? "+" : "âˆ’"}{Math.abs(modifier)}). Meet or beat DC {pending.ability.saveDc}. ADaM rolls the damage after your save.</p></div>
-            <button type="button" onClick={rollPendingSavingThrow}><small>Roll {pending.ability.saveAbility} save</small><strong>d20 {modifier >= 0 ? "+" : "âˆ’"} {Math.abs(modifier)}</strong></button>
-          </section>;
-        })()}
-        {encounter.pendingResponse?.type === "attack-reaction" && (() => {
-          const pending = encounter.pendingResponse;
-          const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
-          return <section className="roll-coach response-coach reaction-coach" aria-live="assertive">
-            <div><span>Player response Â· Reaction window</span><h3>ADaM rolled {pending.attackTotal} against AC {pending.targetArmorClass}</h3><p>The attack would hit. Choose an available reaction before ADaM rolls damage. Reactions reset at the start of your next turn.</p><div className="response-actions">{target.reactionOptions.filter((option) => pending.availableReactionIds.includes(option.id)).map((option) => <button type="button" key={option.id} onClick={() => choosePendingReaction(option.id)}><small>Use reaction</small><strong>{option.name}</strong><em>{option.description}</em></button>)}<button type="button" className="decline-response" onClick={() => choosePendingReaction(null)}><small>No reaction</small><strong>Take the hit</strong></button></div></div>
-          </section>;
-        })()}
-        {encounter.pendingResponse?.type === "opportunity-attack" && (() => {
-          const pending = encounter.pendingResponse;
-          const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId)!;
-          const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
-          const attack = source.attacks.find((candidate) => candidate.id === pending.attackId);
-          return <section className="roll-coach response-coach reaction-coach opportunity-coach" aria-live="assertive">
-            <div><span>Player response Â· Opportunity attack</span><h3>{target.name} is leaving your reach</h3>
-              {pending.phase === "choice" && <><p>You may spend your reaction to make one melee attack before {target.name} moves, or save the reaction for another trigger.</p><div className="response-actions">{source.attacks.filter((candidate) => pending.availableAttackIds.includes(candidate.id)).map((candidate) => <button type="button" key={candidate.id} onClick={() => choosePendingOpportunityAttack(candidate.id)}><small>Use reaction</small><strong>{candidate.name}</strong><em>{candidate.damage} Â· {candidate.attackBonus >= 0 ? "+" : ""}{candidate.attackBonus} to hit</em></button>)}<button type="button" className="decline-response" onClick={() => choosePendingOpportunityAttack(null)}><small>Save reaction</small><strong>Let them move</strong></button></div></>}
-              {pending.phase === "attack-roll" && attack && <p>Roll a <strong>d20</strong> and add {attack.attackBonus >= 0 ? "+" : "âˆ’"}{Math.abs(attack.attackBonus)}. This reaction is separate from your Action on your own turn.</p>}
-              {pending.phase === "damage-roll" && attack && <p>The opportunity attack hit. Roll <strong>{attack.damage}</strong>{pending.critical ? " with doubled damage dice for the critical hit" : ""} before movement continues.</p>}
-            </div>
-            {pending.phase === "attack-roll" && attack && <button type="button" onClick={rollPendingOpportunityAttack}><small>Roll opportunity attack</small><strong>d20 {attack.attackBonus >= 0 ? "+" : "âˆ’"} {Math.abs(attack.attackBonus)}</strong></button>}
-            {pending.phase === "damage-roll" && attack && <button type="button" onClick={rollPendingOpportunityDamage}><small>Roll opportunity damage</small><strong>{attack.damage}</strong></button>}
-          </section>;
-        })()}
-        {encounter.pendingResponse?.type === "concentration-check" && (() => {
-          const pending = encounter.pendingResponse;
-          const modifier = effectiveSavingThrowModifier(encounter, pending.targetCombatantId, "constitution");
-          return <section className="roll-coach response-coach concentration-coach" aria-live="assertive">
-            <div><span>Player response Â· Concentration</span><h3>Maintain concentration</h3><p>You took {pending.damageTaken} damage while concentrating. Roll a <strong>Constitution saving throw</strong> against DC {pending.dc}.</p></div>
-            <button type="button" onClick={rollPendingConcentration}><small>Roll concentration</small><strong>d20 {modifier >= 0 ? "+" : "âˆ’"} {Math.abs(modifier)}</strong></button>
-          </section>;
-        })()}
-        {deathSaveRequired && encounter.turn.action && <section className="roll-coach response-coach death-save-coach" aria-live="assertive">
-          <div><span>Start of turn Â· Death saving throw</span><h3>{activeCombatant.name} is unconscious</h3><p>Roll a <strong>d20</strong> with no modifier. A 10 or higher succeeds; a natural 1 causes two failures; a natural 20 restores 1 HP. Three successes stabilize you and three failures mean death.</p><div className="death-save-track"><span>Successes <strong>{activeCombatant.deathSaves.successes}/3</strong></span><span>Failures <strong>{activeCombatant.deathSaves.failures}/3</strong></span></div></div>
-          <button type="button" onClick={rollPendingDeathSave}><small>Roll death save</small><strong>d20</strong></button>
-        </section>}
-        {outcome !== "active" && <section className={`combat-outcome ${outcome}`} aria-live="assertive"><span>Encounter complete</span><h3>{outcome === "victory" ? "Victory" : outcome === "stabilized" ? "Your character is stabilized" : "Your character is defeated"}</h3><p>{outcome === "victory" ? "All hostile creatures have been defeated." : outcome === "stabilized" ? "You are unconscious but no longer making death saving throws. This solo scenario ends here." : "Build a new encounter or import another character to try again."}</p></section>}
-        {initiativeReady && attackFlow?.phase === "target" && <section className="roll-coach target-coach" aria-live="polite">
-          <div><span>Weapon selected Â· Choose target</span><h3>{attackFlow.attack.name}</h3><p>Targets highlighted in gold are within range and line of sight. Long-range targets remain legal and will roll with disadvantage.</p></div>
-          <div className="target-count"><strong>{legalAttackTargetIds.size}</strong><small>legal targets</small></div>
-        </section>}
-        {initiativeReady && spellFlow?.phase === "target" && <section className="roll-coach target-coach" aria-live="polite">
-          <div><span>Spell selected Â· Choose target</span><h3>{spellFlow.spell.name}</h3><p>Targets highlighted in gold are legal for this spell&apos;s range, line of sight, and target type.</p></div>
-          <div className="target-count"><strong>{legalSpellTargetIds.size}</strong><small>legal targets</small></div>
-        </section>}
-        {attackFlow?.phase === "attack-roll" && targetAnalysis && <section className="roll-coach attack-coach" aria-live="polite">
-          <div><span>Attack roll Â· Click to roll</span><h3>{attackFlow.attack.name} vs. {targetAnalysis.target.name}</h3><p>Roll a <strong>d20</strong> {validateAttackChoice(encounter, attackFlow.attack).rollMode === "disadvantage" ? "twice and keep the lower result, then" : "and"} add {attackFlow.attack.attackBonus >= 0 ? "+" : "âˆ’"}{Math.abs(attackFlow.attack.attackBonus)}. Meet or beat AC {effectiveArmorClass(encounter, targetAnalysis.target.id) + (targetAnalysis.cover === "half" ? 2 : 0)}.</p></div>
-          <button type="button" onClick={rollSelectedAttack}><small>Roll attack</small><strong>{validateAttackChoice(encounter, attackFlow.attack).rollMode === "disadvantage" ? "2d20 Â· lower" : "d20"} {attackFlow.attack.attackBonus >= 0 ? "+" : "âˆ’"} {Math.abs(attackFlow.attack.attackBonus)}</strong></button>
-        </section>}
-        {attackFlow?.phase === "damage-roll" && targetAnalysis && <section className="roll-coach damage-coach" aria-live="polite">
-          <div><span>{attackFlow.critical ? "Critical hit Â· Double the damage dice" : "Hit confirmed Â· Click to roll damage"}</span><h3>{attackFlow.attack.damage}</h3><p>Damage is rolled separately from the attack. The total will be applied to {targetAnalysis.target.name}&apos;s hit points.</p></div>
-          <button type="button" onClick={rollSelectedDamage}><small>Roll damage</small><strong>{attackFlow.critical ? `Critical Â· ${attackFlow.attack.damage}` : attackFlow.attack.damage}</strong></button>
-        </section>}
-        {spellFlow?.phase === "attack-roll" && targetAnalysis && spellFlow.spell.attackBonus !== undefined && <section className="roll-coach attack-coach" aria-live="polite">
-          <div><span>Spell attack roll Â· Click to roll</span><h3>{spellFlow.spell.name} vs. {targetAnalysis.target.name}</h3><p>Roll a <strong>d20</strong> {validateSpellChoice(encounter, spellFlow.spell).rollMode === "disadvantage" ? "twice and keep the lower result, then" : "and"} add {spellFlow.spell.attackBonus >= 0 ? "+" : "âˆ’"}{Math.abs(spellFlow.spell.attackBonus)}. Meet or beat AC {effectiveArmorClass(encounter, targetAnalysis.target.id) + (targetAnalysis.cover === "half" ? 2 : 0)}.</p></div>
-          <button type="button" onClick={rollSelectedSpellAttack}><small>Roll spell attack</small><strong>{validateSpellChoice(encounter, spellFlow.spell).rollMode === "disadvantage" ? "2d20 Â· lower" : "d20"} {spellFlow.spell.attackBonus >= 0 ? "+" : "âˆ’"} {Math.abs(spellFlow.spell.attackBonus)}</strong></button>
-        </section>}
-        {spellFlow?.phase === "damage-roll" && targetAnalysis && spellFlow.spell.damage && <section className="roll-coach damage-coach" aria-live="polite">
-          <div><span>{spellFlow.critical ? "Critical hit Â· Double the damage dice" : "Spell hit confirmed Â· Click to roll damage"}</span><h3>{spellFlow.spell.damage}</h3><p>Roll the spell&apos;s damage separately. The total will be applied to {targetAnalysis.target.name}&apos;s hit points.</p></div>
-          <button type="button" onClick={rollSelectedSpellDamage}><small>Roll spell damage</small><strong>{spellFlow.critical ? `Critical Â· ${spellFlow.spell.damage}` : spellFlow.spell.damage}</strong></button>
-        </section>}
-
-        <section className="tactical-map-panel">
-          <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span></div></div>
-          <div className={`target-panel ${targetAnalysis ? "has-target" : ""}`}>
-            {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} Â· AC {effectiveArmorClass(encounter, targetAnalysis.target.id)} Â· {targetAnalysis.target.side === "enemy" ? enemyHealthLabel(targetAnalysis.target, experienceMode) : `${targetAnalysis.target.hitPoints.current}/${targetAnalysis.target.hitPoints.maximum} HP`}</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" disabled={activeCombatant.side !== "player"} onClick={() => { setEncounter((state) => selectTarget(state, null)); setAttackFlow(attackFlow ? { ...attackFlow, phase: "target", targetId: undefined } : null); setSpellFlow(spellFlow ? { ...spellFlow, phase: "target", targetId: undefined } : null); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>{attackFlow?.phase === "target" ? `Targeting Â· ${attackFlow.attack.name}` : spellFlow?.phase === "target" ? `Targeting Â· ${spellFlow.spell.name}` : "Choose an action"}</span><strong>{attackFlow?.phase === "target" || spellFlow?.phase === "target" ? "Select a highlighted creature" : "Choose an attack or spell first"}</strong><small>{attackFlow?.phase === "target" ? "Gold rings indicate targets within this weaponâ€™s range and line of sight." : spellFlow?.phase === "target" ? "Gold rings indicate legal targets for the selected spell." : "The selected option determines which targets ADaM highlights."}</small></div>}
-          </div>
-          <div className="map-scroll" role="region" aria-label="Tactical combat map">
-            <div className="battle-grid" style={{ gridTemplateColumns: `repeat(${encounter.map.width}, 46px)` }}>
-              {Array.from({ length: encounter.map.width * encounter.map.height }, (_, index) => {
-                const x = index % encounter.map.width;
-                const y = Math.floor(index / encounter.map.width);
-                const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
-                const occupant = encounter.combatants.find((combatant) => combatant.position.x === x && combatant.position.y === y);
-                const movementCell = legalMovementByCell.get(`${x},${y}`);
-                const reachable = !attackFlow && !spellFlow && initiativeReady && activeCombatant.side === "player" && !occupant && Boolean(movementCell);
-                const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
-                const targeted = occupant?.id === encounter.selectedTargetId;
-                const targetCandidate = Boolean(occupant && (attackFlow?.phase === "target" || spellFlow?.phase === "target"));
-                const legalOptionTarget = Boolean(occupant && (legalAttackTargetIds.has(occupant.id) || legalSpellTargetIds.has(occupant.id)));
-                const targetValidation = occupant && attackFlow?.phase === "target" ? validateAttackTarget(encounter, attackFlow.attack, occupant.id) : occupant && spellFlow?.phase === "target" ? validateSpellTarget(encounter, spellFlow.spell, occupant.id) : null;
-                const targetOptionName = attackFlow?.attack.name ?? spellFlow?.spell.name;
-                return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""} ${targeted ? "targeted" : ""} ${legalOptionTarget ? "legal-target" : targetCandidate ? "illegal-target" : ""}`} onClick={() => handleGridInteraction(x, y, occupant?.id)} aria-pressed={targeted} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${movementCell ? `. Reachable for ${movementCell.cost} feet.` : ""}${occupant ? `. Occupied by ${occupant.name}. ${legalOptionTarget ? `Legal target for ${targetOptionName}.` : "Select as target."}` : ""}`} title={`${coordinate} Â· ${occupant ? legalOptionTarget ? `${occupant.name}: legal target` : targetValidation?.reason ?? `Select ${occupant.name}` : movementCell ? `${movementCell.cost} ft. by legal path` : terrain?.label ?? "Open ground"}`}>
-                  <small>{coordinate}</small>
-                  {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "â– " : terrain.kind === "difficult" ? "â‰ˆ" : terrain.kind === "cover" ? "â—©" : "â—†"}</span>}
-                  {occupant && <span className={`token ${occupant.side} ${occupant.hitPoints.current <= 0 ? occupant.side === "player" && !occupant.stabilized && occupant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.hitPoints.current <= 0 ? occupant.stabilized ? "S" : "0" : occupant.name.slice(0, 2).toUpperCase()}</span>}
-                </button>;
-              })}
-            </div>
-          </div>
-          <div className="map-help"><span>{attackFlow?.phase === "target" || spellFlow?.phase === "target" ? "Gold ring: legal target for selected option" : "Creature token: inspect target"}</span><span>Highlighted empty square: tap once to move there</span><span>ADaM finds a legal path and charges terrain costs</span></div>
-        </section>
-
-        <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${initiativeReady && index === encounter.activeIndex ? "active" : ""} ${combatant.hitPoints.current <= 0 ? combatant.side === "player" && !combatant.stabilized && combatant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""}`}><span>{combatant.initiativeRolled ? combatant.initiative : "â€”"}</span><div><strong>{combatant.name}</strong><small>{combatant.hitPoints.current <= 0 ? combatant.stabilized ? "stabilized" : combatant.deathSaves.failures >= 3 ? "defeated" : `${combatant.deathSaves.successes} saves Â· ${combatant.deathSaves.failures} failures` : combatant.initiativeRolled ? `initiative Â· ${combatant.side}` : combatant.side === "player" ? `d20 ${combatant.initiativeModifier >= 0 ? "+" : "âˆ’"}${Math.abs(combatant.initiativeModifier)} Â· your roll` : "ADaM rolls privately"}</small></div></div>)}</div>
-
-        <div className="turn-dashboard"><div><span>Current turn</span><strong>{activeCombatant.name}</strong></div><div><span>Action</span><strong>{encounter.turn.action ? "Ready" : "Used"}</strong></div><div><span>Bonus action</span><strong>{encounter.turn.bonusAction ? "Ready" : "Used"}</strong></div><div><span>Movement</span><strong>{encounter.turn.movementRemaining} ft.{encounter.turn.disengaged ? " Â· Disengaged" : ""}</strong></div><div><span>Your reaction</span><strong>{playerCombatant.reactionAvailable ? "Ready" : "Used"}</strong></div></div>
-
-        <section className="state-tray" aria-label="Character resources and temporary effects">
-          <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses remaining</h3></div><div className="resource-pills">{playerCombatant.resources.length ? playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>) : <p>No tracked resources imported.</p>}</div></div>
-          <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3></div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.description}</small></div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
-        </section>
-
-        <section className="action-console">
-          <div className="console-heading"><div><span className="eyebrow">{modeCopy[experienceMode].label} mode</span><h3>{targetAnalysis ? `Actions against ${targetAnalysis.target.name}` : "Choose your action"}</h3></div>{lastRoll && <div className="mini-roll"><span>Last roll</span><strong>{lastRoll.total}</strong></div>}</div>
-          <div className="action-category-tabs" aria-label="Action economy categories">{actionCategoryCopy.map((category) => {
-            const actions = visibleActions.filter((action) => action.cost === category.id);
-            const legalCount = actions.filter((action) => validateAction(action, encounter, character).legal).length;
-            return <button type="button" key={category.id} className={actionCategory === category.id ? "active" : ""} onClick={() => setActionCategory(category.id)}><span>{category.label}</span><strong>{legalCount}</strong><small>{category.detail}</small></button>;
-          })}</div>
-          <div className="action-grid">{categorizedActions.length ? categorizedActions.map((action) => {
-            const validation = validateAction(action, encounter, character);
-            const targetingLabel = action.targeting?.mode === "single" ? `${action.targeting.rangeFeet} ft.` : action.targeting?.mode === "area" ? `${action.targeting.shape} Â· ${action.targeting.sizeFeet} ft.` : action.cost.replace("-", " ");
-            return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{targetingLabel}</span>{experienceMode !== "advanced" && <small>{validation.legal || experienceMode === "beginner" ? action.description : validation.reason}</small>}</button>;
-          }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
-          {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 Â· Choose weapon</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.attacks ?? []).map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} Â· {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} Â· {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
-          {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 Â· Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip Â· free" : `Level ${spell.level} Â· 1 slot`}{spell.ritual ? " Â· ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature Â· ${spell.rangeFeet} ft.` : `${spell.rangeFeet} ft.`}{spell.concentration ? " Â· concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
-          <div className="area-effect-note"><span>Area-effect foundation</span><p>Future actions can define cones, cubes, cylinders, lines, spheres, or emanations and specify whether they affect every creature, only hostiles, or chosen creatures.</p></div>
-          <div className="turn-controls"><div><span>Turn control</span><p>{activeCombatant.side === "player" ? "End your turn and let ADaM advance initiative." : "ADaM controls and advances enemy turns automatically."}</p></div><button type="button" disabled={activeCombatant.side !== "player" || outcome !== "active"} onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>{activeCombatant.side === "player" ? "End turn" : "Enemy acting"}</button></div>
-          <form className="command-bar" onSubmit={submitCommand}><label htmlFor="command">Or describe your action</label><div><input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Example: I cast a spell at the scout" /><button>Submit</button></div></form>
-          <div className="feedback" aria-live="polite"><span>ADaM</span><p>{feedback}</p></div>
-        </section>
-
-        <section className="encounter-log"><div><span className="eyebrow">Combat log</span><h3>Encounter state</h3></div><ol>{encounter.log.slice(0, 5).map((entry, index) => <li key={`${entry}-${index}`}>{entry}</li>)}</ol></section>
-      </section>
-    </section>
-  </main>;
-}
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíÛtÕ:-jZ.¶›­–)Ş³R'W6R6Æ–VçB#° ¦–×÷'B²6†ævTWfVçBÂf÷&ÔWfVçBÂW6TVffV7BÂW6TÖVÖòÂW6U&VbÂW6U7FFRÒg&öÒ'&V7B#°¦–×÷'BG—R²&–Æ—G”æÖRÂ6†&7FW"Â6†&7FW$GF6²Â6†&7FW%7VÆÂÒg&öÒ"ââ÷7&2öFöÖ–âö6†&7FW"#°¦–×÷'BG—R²7F–öä6÷7BÂ6öÖ&D7F–öâÂW‡W&–Væ6TÖöFRÒg&öÒ"ââ÷7&2öFöÖ–âö6öÖ&B#°¦–×÷'B²7F–öä6FÆörÂ6öç7VÖT7F–öâÂf–æD7F–öäg&öÕFW‡BÂfÆ–FFT7F–öâÂf—6–&ÆT7F–öç4f÷$ÖöFRÒg&öÒ"ââ÷7&2öVæv–æRö7F–öç2#°¦–×÷'B²W†V7WFU7VÆÄ6†ö–6RÂ&W6öÇfTGF6´FÖvRÂ&W6öÇfTGF6µ&öÆÂÂ&W6öÇfU7VÆÄGF6µ&öÆÂÂ&W6öÇfU7VÆÄFÖvRÂfÆ–FFTGF6´6†ö–6RÂfÆ–FFTGF6µF&vWBÂfÆ–FFU7VÆÄf–Æ&–Æ—G’ÂfÆ–FFU7VÆÄ6†ö–6RÂfÆ–FFU7VÆÅF&vWBÒg&öÒ"ââ÷7&2öVæv–æRö6öÖ&BÖ÷F–öç2#°¦–×÷'B²Ç”VffV7BÂVffV7F—fT&Ö÷$6Æ72ÂVffV7F—fU6f–æuF‡&÷tÖöF–f–W"ÂVffV7G4f÷$6öÖ&FçBÂ&VÖ–æ–ætVffV7E&÷VæG2Òg&öÒ"ââ÷7&2öVæv–æRöVffV7G2#°¦–×÷'B²7&VFTVæ6÷VçFW"ÂVæEGW&âÂ&öÆÅÆ–W$æDVæV×”–æ—F–F—fRÒg&öÒ"ââ÷7&2öVæv–æRöVæ6÷VçFW"#°¦–×÷'B²6öÖ&D÷WF6öÖRÂVæV×”†VÇF„Æ&VÂÂ&W6öÇfTVæV×•GW&âÒg&öÒ"ââ÷7&2öVæv–æRöVæV×’×GW&ç2#°¦–×÷'B²6†ö÷6T÷÷'GVæ—G”GF6²Â&W6öÇfTGF6µ&V7F–öâÂ&W6öÇfT6öæ6VçG&F–öå&W7öç6RÂ&W6öÇfU6f–æuF‡&÷u&W7öç6RÂ&öÆÄFVF…6fRÂ&öÆÄ÷÷'GVæ—G”GF6²Â&öÆÄ÷÷'GVæ—G”FÖvRÒg&öÒ"ââ÷7&2öVæv–æR÷&W7öç6W2#°¦–×÷'B²ÆVvÄÖ÷fVÖVçDFW7F–æF–öç2ÂÖ÷fT7F—fT6öÖ&FçBÒg&öÒ"ââ÷7&2öVæv–æRöÖ÷fVÖVçB#°¦–×÷'B²æÇ—¦UF&vWBÂ6VÆV7EF&vWBÒg&öÒ"ââ÷7&2öVæv–æR÷F&vWF–ær#°¦–×÷'B²&öÆÄC#ÂG—RFÖvU&öÆÂÒg&öÒ"ââ÷7&2öVæv–æRöF–6R#°¦–×÷'B²–×÷'D6†&7FW$f–ÆRÂG—R–×÷'E&W7VÇBÒg&öÒ"ââ÷7&2ö–×÷'FW'2#°¦–×÷'B²'VÆW6WG2ÂG—R'VÆW6WD–BÒg&öÒ"ââ÷7&2÷'VÆW6WG2#°¦–×÷'B²FVfVÇE66Væ&–õ6WGWÂvVæW&FU67&—FVE66Væ&–òÂ66Væ&–õFV×ÆFW2Òg&öÒ"ââ÷7&2÷66Væ&–÷2÷67&—FVBÖvVæW&F÷"#°¦–×÷'BG—R²66Væ&–ôF–ff–7VÇG’Â66Væ&–ôVçf—&öæÖVçBÂ66Væ&–ôö&¦V7F—fRÂ66Væ&–õ6WGWÂ66Væ&–õFV×ÆFRÒg&öÒ"ââ÷7&2÷66Væ&–÷2÷G—W2#°¦–×÷'B²4„$5DU%õ$õ5DU%ôÄ”Ô•BÂ4„$5DU%õ$õ5DU%õ4TTEõdU%4”ôâÂÖW&vT'V–ÇD–ä6†&7FW'2Â&VÖ÷fU&÷7FW$6†&7FW"ÂW6W'E&÷7FW$6†&7FW"Òg&öÒ"ââ÷7&2ö6†&7FW'2÷&÷7FW"#°¦–×÷'B²'V–ÆD6†&7FW$ÖV6†æ–46÷fW&vRÒg&öÒ"ââ÷7&2÷'VÆW2×&Vv—7G'’#° §G—R66Væ&–õ6WGWÖöFRÒ&FW67&–&R"Â&wV–FVB"Â&6öÖ&–æVB"Â'FV×ÆFW2#°§G—R7F–öä6FVv÷'’ÒW‡G&7CÄ7F–öä6÷7BÂ&7F–öâ"Â&&öçW2Ö7F–öâ"Â&Ö÷fVÖVçB#ã°§G—R6†ö–6TÖöFRÒ&GF6²"Â'7VÆÂ"ÂçVÆÃ°§G—RGF6´fÆ÷rÒçVÆÂÂ°¢GF6³¢6†&7FW$GF6³°¢†6S¢'F&vWB"Â&GF6²×&öÆÂ"Â&FÖvR×&öÆÂ#°¢F&vWD–Có¢7G&–æs°¢7&—F–6Ãó¢&ööÆVã°§Ó°§G—R7VÆÄfÆ÷rÒçVÆÂÂ°¢7VÆÃ¢6†&7FW%7VÆÃ°¢†6S¢'F&vWB"Â&GF6²×&öÆÂ"Â&FÖvR×&öÆÂ#°¢F&vWD–Có¢7G&–æs°¢7&—F–6Ãó¢&ööÆVã°§Ó° ¦6öç7B7F–öä6FVv÷'”6÷“¢'&“Ç²–C¢7F–öä6FVv÷'“²Æ&VÃ¢7G&–æs²FWF–Ã¢7G&–ærÓâÒ°¢²–C¢&7F–öâ"ÂÆ&VÃ¢$7F–öâ"ÂFWF–Ã¢$GF6·2ÂÖv–2ÂæB6÷&R7F–öç2"ÒÀ¢²–C¢&&öçW2Ö7F–öâ"ÂÆ&VÃ¢$&öçW27F–öâ"ÂFWF–Ã¢$fVGW&W2v—F‚&öçW2Ö7F–öâ6÷7B"ÒÀ¢²–C¢&Ö÷fVÖVçB"ÂÆ&VÃ¢$Ö÷fVÖVçB"ÂFWF–Ã¢%÷6—F–öæ–æröâF†RF7F–6Âw&–B"ÒÀ¥Ó° ¦6öç7B6WGWÖöFT6÷“¢&V6÷&CÅ66Væ&–õ6WGWÖöFRÂ²Æ&VÃ¢7G&–æs²FWF–Ã¢7G&–ærÓâÒ°¢FW67&–&S¢²Æ&VÃ¢$FW67&–&R"ÂFWF–Ã¢%w&—FRF†RVæ6÷VçFW"–â–÷W"÷vâv÷&G2â"ÒÀ¢wV–FVC¢²Æ&VÃ¢$wV–FVB"ÂFWF–Ã¢$6†ö÷6RVçf—&öæÖVçBÂö&¦V7F—fRÂæBF–ff–7VÇG’â"ÒÀ¢6öÖ&–æVC¢²Æ&VÃ¢$6öÖ&–æVB"ÂFWF–Ã¢%W6R6öçG&öÇ2ÂF†VâFB7W7FöÒFWF–Ç2â"ÒÀ¢FV×ÆFW3¢²Æ&VÃ¢%FV×ÆFW2"ÂFWF–Ã¢%7F'Bg&öÒ6fVB66Væ&–ò6WGWâ"ÒÀ§Ó° ¦6öç7B&–Æ—G”Æ&VÇ3¢'&“Ç²–C¢&–Æ—G”æÖS²Æ&VÃ¢7G&–ærÓâÒ°¢²–C¢'7G&VæwF‚"ÂÆ&VÃ¢%7G&VæwF‚"ÒÀ¢²–C¢&FW‡FW&—G’"ÂÆ&VÃ¢$FW‡FW&—G’"ÒÀ¢²–C¢&6öç7F—GWF–öâ"ÂÆ&VÃ¢$6öç7F—GWF–öâ"ÒÀ¢²–C¢&–çFVÆÆ–vVæ6R"ÂÆ&VÃ¢$–çFVÆÆ–vVæ6R"ÒÀ¢²–C¢'v—6FöÒ"ÂÆ&VÃ¢%v—6FöÒ"ÒÀ¢²–C¢&6†&—6Ö"ÂÆ&VÃ¢$6†&—6Ö"ÒÀ¥Ó° ¦6öç7B6×ÆS¢6†&7FW"Ò°¢–C¢'6×ÆRÖ¶VÂÖVÖ&W'v&B"ÂæÖS¢$¶VÂVÖ&W'v&B"Â6Æ74æÖS¢%6÷&6W&W""ÂÆWfVÃ¢BÂ&Ö÷$6Æ73¢RÀ¢7VVDfVWC¢3Â†—Eö–çG3¢²7W'&VçC¢3BÂÖ†–×VÓ¢3BÒÂ&öf–6–Væ7”&öçW3¢"À¢&–Æ—F–W3¢²7G&VæwFƒ¢‚ÂFW‡FW&—G“¢"Â6öç7F—GWF–öã¢bÂ–çFVÆÆ–vVæ6S¢Âv—6FöÓ¢2Â6†&—6Ö¢‚ÒÀ¢6f–æuF‡&÷tÖöF–f–W'3¢²7G&VæwFƒ¢ÓÂFW‡FW&—G“¢Â6öç7F—GWF–öã¢RÂ–çFVÆÆ–vVæ6S¢Âv—6FöÓ¢Â6†&—6Ö¢bÒÀ¢&W6÷W&6W3¢°¢²–C¢'6÷&6W'’×ö–çG2"ÂæÖS¢%6÷&6W'’ö–çG2"Â¶–æC¢&vVæW&–2"Â7W'&VçC¢BÂÖ†–×VÓ¢BÂ&V6÷fW'“¢&Æöær×&W7B"ÒÀ¢²–C¢'7VÆÂ×6Æ÷BÓ"ÂæÖS¢$ÆWfVÂ7VÆÂ6Æ÷G2"Â¶–æC¢'7VÆÂ×6Æ÷B"ÂÆWfVÃ¢Â7W'&VçC¢BÂÖ†–×VÓ¢BÂ&V6÷fW'“¢&Æöær×&W7B"ÒÀ¢²–C¢'7VÆÂ×6Æ÷BÓ""ÂæÖS¢$ÆWfVÂ"7VÆÂ6Æ÷G2"Â¶–æC¢'7VÆÂ×6Æ÷B"ÂÆWfVÃ¢"Â7W'&VçC¢2ÂÖ†–×VÓ¢2Â&V6÷fW'“¢&Æöær×&W7B"ÒÀ¢ÒÀ¢GF6·3¢°¢²–C¢'V'FW'7Ffb"ÂæÖS¢%V'FW'7Ffb"Â¶–æC¢&ÖVÆVR"ÂGF6´&öçW3¢ÂFÖvS¢#Cb(‰"&ÇVFvVöæ–ær"Âæ÷&ÖÅ&ævTfVWC¢RÂFW67&—F–öã¢$6Æ÷6R×&ævRÖVÆVR7G&–¶Râ"ÒÀ¢²–C¢'F‡&÷vâÖFvvW""ÂæÖS¢%F‡&÷vâFvvW""Â¶–æC¢'&ævVB"ÂGF6´&öçW3¢2ÂFÖvS¢#CB²–W&6–ær"Âæ÷&ÖÅ&ævTfVWC¢#ÂÆöæu&ævTfVWC¢cÂFW67&—F–öã¢$æ÷&ÖÂFò#fVWC²F—6GfçFvRg&öÒ#^(	3cfVWBâ"ÒÀ¢²–C¢&Æ–v‡BÖ7&÷76&÷r"ÂæÖS¢$Æ–v‡B7&÷76&÷r"Â¶–æC¢'&ævVB"ÂGF6´&öçW3¢2ÂFÖvS¢#C‚²–W&6–ær"Âæ÷&ÖÅ&ævTfVWC¢ƒÂÆöæu&ævTfVWC¢3#ÂFW67&—F–öã¢$æ÷&ÖÂFòƒfVWC²F—6GfçFvRg&öÒƒ^(	33#fVWBâ"ÒÀ¢ÒÀ¢7VÆÇ3¢°¢²–C¢'6†–VÆB"ÂæÖS¢%6†–VÆB"ÂÆWfVÃ¢Â67F–æuF–ÖS¢'&V7F–öâ"Â&ævTfVWC¢ÂF&vWC¢'6VÆb"Â&WV—&W4Æ–æTöe6–v‡C¢fÇ6RÂGW&F–öå&÷VæG3¢ÂVffV7C¢²æÖS¢%6†–VÆB"ÂFW67&—F–öã¢"³R2VçF–ÂF†R7F'Böb–÷W"æW‡BGW&ââ"ÂÖöF–f–W'3¢²&Ö÷$6Æ73¢RÒÒÒÀ¢²–C¢&f—&RÖ&öÇB"ÂæÖS¢$f—&R&öÇB"ÂÆWfVÃ¢Â67F–æuF–ÖS¢&7F–öâ"Â&ævTfVWC¢#ÂF&vWC¢'6–ævÆR"Â&WV—&W4Æ–æTöe6–v‡C¢G'VRÂGF6´&öçW3¢bÂFÖvS¢#Cf—&R"ÒÀ¢²–C¢&6‡&öÖF–2Ö÷&""ÂæÖS¢$6‡&öÖF–2÷&""ÂÆWfVÃ¢Â67F–æuF–ÖS¢&7F–öâ"Â&ævTfVWC¢“ÂF&vWC¢'6–ævÆR"Â&WV—&W4Æ–æTöe6–v‡C¢G'VRÂGF6´&öçW3¢bÂFÖvS¢#6C‚6†÷6VâFÖvR"ÒÀ¢²–C¢'66÷&6†–ær×&’"ÂæÖS¢%66÷&6†–ær&’"ÂÆWfVÃ¢"Â67F–æuF–ÖS¢&7F–öâ"Â&ævTfVWC¢#ÂF&vWC¢'6–ævÆR"Â&WV—&W4Æ–æTöe6–v‡C¢G'VRÂGF6´&öçW3¢bÂFÖvS¢#&Cbf—&RW"&’"ÒÀ¢²–C¢&fÇ6RÖÆ–fR"ÂæÖS¢$fÇ6RÆ–fR"ÂÆWfVÃ¢Â67F–æuF–ÖS¢&7F–öâ"Â&ævTfVWC¢ÂF&vWC¢'6VÆb"Â&WV—&W4Æ–æTöe6–v‡C¢fÇ6RÂGW&F–öå&÷VæG3¢cÂVffV7C¢²æÖS¢$fÇ6RÆ–fR"ÂFW67&—F–öã¢#rFV×÷&'’†—Bö–çG2f÷"†÷W"â"ÂFV×÷&'”†—Eö–çG3¢rÒÒÀ¢²–C¢&&ÇW""ÂæÖS¢$&ÇW""ÂÆWfVÃ¢"Â67F–æuF–ÖS¢&7F–öâ"Â&ævTfVWC¢ÂF&vWC¢'6VÆb"Â&WV—&W4Æ–æTöe6–v‡C¢fÇ6RÂ6öæ6VçG&F–öã¢G'VRÂGW&F–öå&÷VæG3¢ÂVffV7C¢²æÖS¢$&ÇW""ÂFW67&—F–öã¢$–æ6öÖ–ærGF6·2†fRF—6GfçFvRv†–ÆR6öæ6VçG&F–öâÆ7G2â"ÂÖöF–f–W'3¢²–æ6öÖ–ætGF6·3¢&F—6GfçFvR"ÒÒÒÀ¢ÒÀ¢7F–öç3¢²$GF6²"Â$Öv–2"Â$67B7VÆÂ"Â$F6‚"Â$F—6VævvR"Â$FöFvR"Â$†VÇ"Â$†–FR"Â%&VG’"Â%6V&6‚"Â%WF–Æ—¦R"Â%W6Râö&¦V7B"Â%7GVG’"Â$–æfÇVVæ6R"Â%V–6¶VæVB7VÆÂ%ÒÀ¢6÷W&6S¢²f÷&ÖC¢'6×ÆR"Â–×÷'FVDC¢æWrFFR‚’çFô•4õ7G&–ær‚’ÒÀ§Ó° ¦6öç7BÖöFT6÷“¢&V6÷&CÄW‡W&–Væ6TÖöFRÂ²Æ&VÃ¢7G&–æs²FWF–Ã¢7G&–ærÓâÒ°¢&Vv–ææW#¢²Æ&VÃ¢$&Vv–ææW""ÂFWF–Ã¢$gVÆÂ6ö6†–æræBW†7BVæV×’†VÇFƒ²VæVÖ–W2W6RF—&V7BÂ&VF–7F&ÆRF7F–72â"ÒÀ¢G&–æ–æs¢²Æ&VÃ¢$–çFW&ÖVF–FR"ÂFWF–Ã¢%'VÆW2fVVF&6²æBFW67&—F—fR†VÇFƒ²VæVÖ–W2&W÷6—F–öâæBW6R6–væGW&R&–Æ—F–W2â"ÒÀ¢Gfæ6VC¢²Æ&VÃ¢$Gfæ6VB"ÂFWF–Ã¢$Ö–æ–ÖÂwV–Fæ6RæB6öæ6VÆVB†VÇFƒ²VæVÖ–W2&–÷&—F—¦RgVÆæW&&ÆRF&vWG2Â7G&öærGF6·2Â&ævRÂæB6÷fW"â"ÒÀ§Ó° ¦gVæ7F–öâv—F„6öÖ&DFVfVÇG2†6†&7FW#¢6†&7FW"“¢6†&7FW"°¢&WGW&â°¢ââæ6†&7FW"À¢7VVDfVWC¢6†&7FW"ç7VVDfVWBóò3À¢&W6÷W&6W3¢†6†&7FW"ç&W6÷W&6W2óòµÒ’æÖ‚‡&W6÷W&6RÂ–æFW‚’Óâ‡°¢–C¢&W6÷W&6Ræ–Bóò&W6÷W&6RÒG¶–æFW‡ÖÀ¢æÖS¢&W6÷W&6RææÖRÀ¢¶–æC¢&W6÷W&6Ræ¶–æBóò&vVæW&–2"À¢ÆWfVÃ¢&W6÷W&6RæÆWfVÂÀ¢7W'&VçC¢&W6÷W&6Ræ7W'&VçBÀ¢Ö†–×VÓ¢&W6÷W&6RæÖ†–×VÒÀ¢&V6÷fW'“¢&W6÷W&6Rç&V6÷fW'’óò&Æöær×&W7B"À¢Ò’’À¢GF6·3¢6†&7FW"æGF6·3òæÆVæwF‚ò6†&7FW"æGF6·2¢·°¢–C¢'Væ&ÖVB×7G&–¶R"À¢æÖS¢%Væ&ÖVB7G&–¶R"À¢¶–æC¢&ÖVÆVR"À¢GF6´&öçW3¢6†&7FW"ç&öf–6–Væ7”&öçW2À¢FÖvS¢#²7G&VæwF‚ÖöF–f–W"&ÇVFvVöæ–ær"À¢æ÷&ÖÅ&ævTfVWC¢RÀ¢FW67&—F–öã¢$fÆÆ&6²GF6²FFVB&V6W6RF†R–×÷'FVB6†VWBF–Bæ÷B–æ6ÇVFRGF6²FFâ"À¢ÕÒÀ¢7VÆÇ3¢6†&7FW"ç7VÆÇ2óòµÒÀ¢Ó°§Ğ ¦W‡÷'BFVfVÇBgVæ7F–öâ†öÖR‚’°¢6öç7B¶6†&7FW"Â6WD6†&7FW%ÒÒW6U7FFR‡6×ÆR“°¢6öç7B·7F÷&VD6†&7FW'2Â6WE7F÷&VD6†&7FW'5ÒÒW6U7FFSÄ6†&7FW%µÓâ…µÒ“°¢6öç7B·'VÆW6WD–BÂ6WE'VÆW6WD–EÒÒW6U7FFSÅ'VÆW6WD–Câ‚&FæBÓ##B"“°¢6öç7B¶W‡W&–Væ6TÖöFRÂ6WDW‡W&–Væ6TÖöFUÒÒW6U7FFSÄW‡W&–Væ6TÖöFSâ‚&&Vv–ææW""“°¢6öç7B¶ÖW76vRÂ6WDÖW76vUÒÒW6U7FFR‚%W6–ærF†R'V–ÇBÖ–â6×ÆR6†&7FW"â–×÷'BDb÷"FÒ¥4ôâç—F–ÖRâ"“°¢6öç7B·VæF–æt–×÷'BÂ6WEVæF–æt–×÷'EÒÒW6U7FFSÄ–×÷'E&W7VÇBÂçVÆÃâ†çVÆÂ“°¢6öç7B·&Wf–Wt6†&7FW"Â6WE&Wf–Wt6†&7FW%ÒÒW6U7FFSÄ6†&7FW"ÂçVÆÃâ†çVÆÂ“°¢6öç7B·6WGWÖöFRÂ6WE6WGWÖöFUÒÒW6U7FFSÅ66Væ&–õ6WGWÖöFSâ‚&6öÖ&–æVB"“°¢6öç7B·66Væ&–õ&ö×BÂ6WE66Væ&–õ&ö×EÒÒW6U7FFR†FVfVÇE66Væ&–õ6WGWç&ö×B“°¢6öç7B¶Vçf—&öæÖVçBÂ6WDVçf—&öæÖVçEÒÒW6U7FFSÅ66Væ&–ôVçf—&öæÖVçCâ†FVfVÇE66Væ&–õ6WGWæVçf—&öæÖVçB“°¢6öç7B¶ö&¦V7F—fRÂ6WDö&¦V7F—fUÒÒW6U7FFSÅ66Væ&–ôö&¦V7F—fSâ†FVfVÇE66Væ&–õ6WGWæö&¦V7F—fR“°¢6öç7B¶F–ff–7VÇG’Â6WDF–ff–7VÇG•ÒÒW6U7FFSÅ66Væ&–ôF–ff–7VÇG“â†FVfVÇE66Væ&–õ6WGWæF–ff–7VÇG’“°¢6öç7B·66Væ&–òÂ6WE66Væ&–õÒÒW6U7FFR‚‚’ÓâvVæW&FU67&—FVE66Væ&–ò†FVfVÇE66Væ&–õ6WGW’“°¢6öç7B–æ—F–Å66Væ&–òÒW6U&Vb‡66Væ&–ò“°¢6öç7B·6fVEFV×ÆFW2Â6WE6fVEFV×ÆFW5ÒÒW6U7FFSÅ66Væ&–õFV×ÆFUµÓâ…µÒ“°¢6öç7B¶Væ6÷VçFW"Â6WDVæ6÷VçFW%ÒÒW6U7FFR‚‚’Óâ7&VFTVæ6÷VçFW"‡6×ÆRÂ66Væ&–ò’“°¢6öç7B¶6öÖÖæBÂ6WD6öÖÖæEÒÒW6U7FFR‚""“°¢6öç7B¶fVVF&6²Â6WDfVVF&6µÒÒW6U7FFR‚%&öÆÂ–÷W"–æ—F–F—fRFò&Vv–ââFÒv–ÆÂ&öÆÂ&—fFVÇ’f÷"F†RVæVÖ–W2â"“°¢6öç7B¶Æ7E&öÆÂÂ6WDÆ7E&öÆÅÒÒW6U7FFSÅ&WGW&åG—SÇG—Vöb&öÆÄC#âÂFÖvU&öÆÂÂçVÆÃâ†çVÆÂ“°¢6öç7B¶7F–öä6FVv÷'’Â6WD7F–öä6FVv÷'•ÒÒW6U7FFSÄ7F–öä6FVv÷'“â‚&7F–öâ"“°¢6öç7B¶6†ö–6TÖöFRÂ6WD6†ö–6TÖöFUÒÒW6U7FFSÄ6†ö–6TÖöFSâ†çVÆÂ“°¢6öç7B¶GF6´fÆ÷rÂ6WDGF6´fÆ÷uÒÒW6U7FFSÄGF6´fÆ÷sâ†çVÆÂ“°¢6öç7B·7VÆÄfÆ÷rÂ6WE7VÆÄfÆ÷uÒÒW6U7FFSÅ7VÆÄfÆ÷sâ†çVÆÂ“°¢6öç7B¶VæV×•GW&å†6RÂ6WDVæV×•GW&å†6UÒÒW6U7FFSÂ&–FÆR"Â'&W6öÇf–ær"Â&v—F–ær×Æ–W""Â'6†÷v–ær#â‚&–FÆR"“° ¢6öç7B7F—fU'VÆW6WBÒ'VÆW6WG2æf–æB‚‡'VÆW6WB’Óâ'VÆW6WBæ–BÓÓÒ'VÆW6WD–B’°¢6öç7Bf—6–&ÆT7F–öç2ÒW6TÖVÖò€¢‚’Óâf—6–&ÆT7F–öç4f÷$ÖöFR†6†&7FW"Â'VÆW6WD–BÂW‡W&–Væ6TÖöFRÂVæ6÷VçFW"’À¢¶6†&7FW"ÂVæ6÷VçFW"ÂW‡W&–Væ6TÖöFRÂ'VÆW6WD–EÒÀ¢“°¢6öç7B6FVv÷&—¦VD7F–öç2ÒW6TÖVÖò‚‚’Óâf—6–&ÆT7F–öç2æf–ÇFW"‚†7F–öâ’Óâ7F–öâæ6÷7BÓÓÒ7F–öä6FVv÷'’’Â¶7F–öä6FVv÷'’Âf—6–&ÆT7F–öç5Ò“°¢6öç7B7F—fT6öÖ&FçBÒVæ6÷VçFW"æ6öÖ&FçG5¶Væ6÷VçFW"æ7F—fT–æFW…Ó°¢6öç7BÆ–W$6öÖ&FçBÒVæ6÷VçFW"æ6öÖ&FçG2æf–æB‚†6öÖ&FçB’Óâ6öÖ&FçBæ–BÓÓÒ6†&7FW"æ–B’óòVæ6÷VçFW"æ6öÖ&FçG5³Ó°¢6öç7BÆ–W$&Ö÷$6Æ72ÒVffV7F—fT&Ö÷$6Æ72†Væ6÷VçFW"ÂÆ–W$6öÖ&FçBæ–B“°¢6öç7BÆ–W$VffV7G2ÒVffV7G4f÷$6öÖ&FçB†Væ6÷VçFW"ÂÆ–W$6öÖ&FçBæ–B“°¢6öç7BF&vWDæÇ—6—2ÒW6TÖVÖò‚‚’ÓâVæ6÷VçFW"ç6VÆV7FVEF&vWD–BòæÇ—¦UF&vWB†Væ6÷VçFW"ÂVæ6÷VçFW"ç6VÆV7FVEF&vWD–B’¢çVÆÂÂ¶Væ6÷VçFW%Ò“°¢6öç7B–æ—F–F—fU&VG’ÒVæ6÷VçFW"æ6öÖ&FçG2æWfW'’‚†6öÖ&FçB’Óâ6öÖ&FçBæ–æ—F–F—fU&öÆÆVB“°¢6öç7BÆ–W$æVVG4–æ—F–F—fRÒVæ6÷VçFW"æ6öÖ&FçG2æf–æB‚†6öÖ&FçB’Óâ6öÖ&FçBç6–FRÓÓÒ'Æ–W""bb6öÖ&FçBæ–æ—F–F—fU&öÆÆVB“°¢6öç7B÷WF6öÖRÒ6öÖ&D÷WF6öÖR†Væ6÷VçFW"“°¢6öç7BFVF…6fU&WV—&VBÒ–æ—F–F—fU&VG’bb7F—fT6öÖ&FçBç6–FRÓÓÒ'Æ–W""bb7F—fT6öÖ&FçBæ†—Eö–çG2æ7W'&VçBÃÒbb7F—fT6öÖ&FçBç7F&–Æ—¦VBbb7F—fT6öÖ&FçBæFVF…6fW2æf–ÇW&W2Â3°¢6öç7BÆVvÄGF6µF&vWD–G2ÒW6TÖVÖò‚‚’ÓâæWr6WB€¢GF6´fÆ÷sòç†6RÓÓÒ'F&vWB ¢òVæ6÷VçFW"æ6öÖ&FçG2æf–ÇFW"‚†6öÖ&FçB’Óâ6öÖ&FçBç6–FRÓÒ7F—fT6öÖ&FçBç6–FRbb6öÖ&FçBæ†—Eö–çG2æ7W'&VçBâbbfÆ–FFTGF6µF&vWB†Væ6÷VçFW"ÂGF6´fÆ÷ræGF6²Â6öÖ&FçBæ–B’æÆVvÂ’æÖ‚†6öÖ&FçB’Óâ6öÖ&FçBæ–B¢¢µÒÀ¢’Â¶7F—fT6öÖ&FçBç6–FRÂGF6´fÆ÷rÂVæ6÷VçFW%Ò“°¢6öç7BÆVvÅ7VÆÅF&vWD–G2ÒW6TÖVÖò‚‚’ÓâæWr6WB€¢7VÆÄfÆ÷sòç†6RÓÓÒ'F&vWB ¢òVæ6÷VçFW"æ6öÖ&FçG2æf–ÇFW"‚†6öÖ&FçB’ÓâfÆ–FFU7VÆÅF&vWB†Væ6÷VçFW"Â7VÆÄfÆ÷rç7VÆÂÂ6öÖ&FçBæ–B’æÆVvÂ’æÖ‚†6öÖ&FçB’Óâ6öÖ&FçBæ–B¢¢µÒÀ¢’Â¶Væ6÷VçFW"Â7VÆÄfÆ÷uÒ“°¢6öç7BÆVvÄÖ÷fVÖVçD6VÆÇ2ÒW6TÖVÖò‚‚’ÓâÆVvÄÖ÷fVÖVçDFW7F–æF–öç2†Væ6÷VçFW"’Â¶Væ6÷VçFW%Ò“°¢6öç7BÆVvÄÖ÷fVÖVçD'”6VÆÂÒW6TÖVÖò‚‚’ÓâæWrÖ†ÆVvÄÖ÷fVÖVçD6VÆÇ2æÖ‚†6VÆÂ’Óâ¶G¶6VÆÂç‡ÒÂG¶6VÆÂç—ÖÂ6VÆÅÒ’’Â¶ÆVvÄÖ÷fVÖVçD6VÆÇ5Ò“°¢6öç7BÖV6†æ–46÷fW&vRÒW6TÖVÖò‚‚’Óâ'V–ÆD6†&7FW$ÖV6†æ–46÷fW&vR†6†&7FW"’Â¶6†&7FW%Ò“°¢6öç7B–×÷'DÖV6†æ–46÷fW&vRÒW6TÖVÖò‚‚’Óâ&Wf–Wt6†&7FW"ò'V–ÆD6†&7FW$ÖV6†æ–46÷fW&vR‡&Wf–Wt6†&7FW"’¢çVÆÂÂ·&Wf–Wt6†&7FW%Ò“° ¢W6TVffV7B‚‚’Óâ°¢6öç7BF–ÖW"Òv–æF÷rç6WEF–ÖV÷WB‚‚’Óâ°¢G'’°¢6öç7B7F÷&VBÒÆö6Å7F÷&vRævWD—FVÒ‚&FÒ×66Væ&–ò×FV×ÆFW2"“°¢–b‡7F÷&VB’6WE6fVEFV×ÆFW2„¥4ôâç'6R‡7F÷&VB’266Væ&–õFV×ÆFUµÒ“°¢6öç7B&÷7FW$§6öâÒÆö6Å7F÷&vRævWD—FVÒ‚&FÒÖ6†&7FW"×&÷7FW""“°¢6öç7B&÷7FW"Ò&÷7FW$§6öâò„¥4ôâç'6R‡&÷7FW$§6öâ’26†&7FW%µÒ’¢µÓ°¢6öç7BfÆ–E&÷7FW"Ò&÷7FW"æf–ÇFW"‚†6æF–FFR’Óâ6æF–FFSòæ–Bbb6æF–FFSòææÖRbb6æF–FFSòæ†—Eö–çG2bb6æF–FFSòæ&–Æ—F–W2’ç6Æ–6RƒÂ4„$5DU%õ$õ5DU%ôÄ”Ô•B’æÖ‡v—F„6öÖ&DFVfVÇG2“°¢6öç7B6VVEfW'6–öâÒçVÖ&W"†Æö6Å7F÷&vRævWD—FVÒ‚&FÒÖ6†&7FW"×&÷7FW"×6VVB×fW'6–öâ"’óò#"“°¢6öç7BæW‡E&÷7FW"Ò6VVEfW'6–öâÂ4„$5DU%õ$õ5DU%õ4TTEõdU%4”ôâòÖW&vT'V–ÇD–ä6†&7FW'2‡fÆ–E&÷7FW"’¢fÆ–E&÷7FW#°¢6WE7F÷&VD6†&7FW'2†æW‡E&÷7FW"“°¢Æö6Å7F÷&vRç6WD—FVÒ‚&FÒÖ6†&7FW"×&÷7FW""Â¥4ôâç7G&–æv–g’†æW‡E&÷7FW"’“°¢–b†æW‡E&÷7FW"ç6öÖR‚†6æF–FFR’Óâ6æF–FFRæ–BÓÓÒ&6ÆV—&ÖöW7Gv–ÆFR"’’Æö6Å7F÷&vRç6WD—FVÒ‚&FÒÖ6†&7FW"×&÷7FW"×6VVB×fW'6–öâ"Â7G&–ær„4„$5DU%õ$õ5DU%õ4TTEõdU%4”ôâ’“°¢6öç7B7F—fT–BÒÆö6Å7F÷&vRævWD—FVÒ‚&FÒÖ7F—fRÖ6†&7FW"Ö–B"“°¢6öç7B7F—fT6†&7FW"ÒæW‡E&÷7FW"æf–æB‚†6æF–FFR’Óâ6æF–FFRæ–BÓÓÒ7F—fT–B’óòæW‡E&÷7FW%³Òóò6×ÆS°¢6WD6†&7FW"†7F—fT6†&7FW"“°¢–b†7F—fT6†&7FW"ç'VÆW6WD–B’6WE'VÆW6WD–B†7F—fT6†&7FW"ç'VÆW6WD–B“°¢6WDÖW76vR†G¶7F—fT6†&7FW"ææÖWÒw27F÷&VB6†&7FW"6†VWB—2ÆöFVBæB&VG’f÷"g&W6‚Væ6÷VçFW"æ“°¢6WDVæ6÷VçFW"†7&VFTVæ6÷VçFW"†7F—fT6†&7FW"Â–æ—F–Å66Væ&–òæ7W'&VçB’“°¢Ò6F6‚°¢6WE6fVEFV×ÆFW2…µÒ“°¢6WE7F÷&VD6†&7FW'2…µÒ“°¢Ğ¢ÒÂ“°¢&WGW&â‚’Óâv–æF÷ræ6ÆV%F–ÖV÷WB‡F–ÖW"“°¢ÒÂµÒ“° ¢W6TVffV7B‚‚’Óâ°¢–b‚–æ—F–F—fU&VG’ÇÂ7F—fT6öÖ&FçCòç6–FRÓÒ&VæV×’"ÇÂ÷WF6öÖRÓÒ&7F—fR"’&WGW&ã°¢–b†Væ6÷VçFW"çVæF–æu&W7öç6RÇÂVæV×•GW&å†6RÓÓÒ&v—F–ær×Æ–W""’&WGW&ã°¢6öç7BFVÆ’ÒVæV×•GW&å†6RÓÓÒ&–FÆR"ò3S¢VæV×•GW&å†6RÓÓÒ'&W6öÇf–ær"òs¢ƒ°¢6öç7BF–ÖW"Òv–æF÷rç6WEF–ÖV÷WB‚‚’Óâ°¢–b†VæV×•GW&å†6RÓÓÒ&–FÆR"’°¢6WDfVVF&6²†G¶7F—fT6öÖ&FçBææÖWÒw2GW&ââFÒ—26†ö÷6–ærÖ÷fVÖVçBÂF&vWBÂæB7F–öâæ“°¢6WDVæV×•GW&å†6R‚'&W6öÇf–ær"“°¢&WGW&ã°¢Ğ¢–b†VæV×•GW&å†6RÓÓÒ'&W6öÇf–ær"’°¢6öç7B&W7VÇBÒ&W6öÇfTVæV×•GW&â†Væ6÷VçFW"ÂW‡W&–Væ6TÖöFR“°¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢6WDÆ7E&öÆÂ‡&W7VÇBæFÖvU&öÆÂóò&W7VÇBæGF6µ&öÆÂ“°¢6WDfVVF&6²‡&W7VÇBç7FW2æÖ‚‡7FW’Óâ7FWç7VÖÖ'’’æ¦ö–â‚""’“°¢6WDVæV×•GW&å†6R‡&W7VÇBæVæ6÷VçFW"çVæF–æu&W7öç6Rò&v—F–ær×Æ–W""¢'6†÷v–ær"“°¢&WGW&ã°¢Ğ¢6WDVæ6÷VçFW"‚‡7FFR’ÓâVæEGW&â‡7FFR’“°¢6WDVæV×•GW&å†6R‚&–FÆR"“°¢6WDfVVF&6²‚$VæV×’GW&â6ö×ÆWFRâ–æ—F–F—fRGfæ6W2FòF†RæW‡BÆ—f–ær6öÖ&FçBâ"“°¢ÒÂFVÆ’“°¢&WGW&â‚’Óâv–æF÷ræ6ÆV%F–ÖV÷WB‡F–ÖW"“°¢ÒÂ¶7F—fT6öÖ&FçCòæ–BÂ7F—fT6öÖ&FçCòææÖRÂ7F—fT6öÖ&FçCòç6–FRÂVæ6÷VçFW"ÂVæV×•GW&å†6RÂW‡W&–Væ6TÖöFRÂ–æ—F–F—fU&VG’Â÷WF6öÖUÒ“° ¢gVæ7F–öâf–æ—6…Æ–W%&W7öç6R†æW‡DVæ6÷VçFW#¢G—VöbVæ6÷VçFW"Â7VÖÖ'“¢7G&–ærÂÆ–W%&öÆÃ¢&WGW&åG—SÇG—Vöb&öÆÄC#âÂçVÆÂ’°¢6WDVæ6÷VçFW"†æW‡DVæ6÷VçFW"“°¢–b‡Æ–W%&öÆÂ’6WDÆ7E&öÆÂ‡Æ–W%&öÆÂ“°¢6WDfVVF&6²‡7VÖÖ'’“°¢6WDVæV×•GW&å†6R†7F—fT6öÖ&FçBç6–FRÓÓÒ&VæV×’"ò†æW‡DVæ6÷VçFW"çVæF–æu&W7öç6Rò&v—F–ær×Æ–W""¢'6†÷v–ær"’¢&–FÆR"“°¢Ğ ¢gVæ7F–öâ&öÆÅVæF–æu6f–æuF‡&÷r‚’°¢6öç7B&W7VÇBÒ&W6öÇfU6f–æuF‡&÷u&W7öç6R†Væ6÷VçFW"“°¢f–æ—6…Æ–W%&W7öç6R‡&W7VÇBæVæ6÷VçFW"Â&W7VÇBç7VÖÖ'’Â&W7VÇBçÆ–W%&öÆÂ“°¢Ğ ¢gVæ7F–öâ6†ö÷6UVæF–æu&V7F–öâ‡&V7F–öä–C¢7G&–ærÂçVÆÂ’°¢6öç7B&W7VÇBÒ&W6öÇfTGF6µ&V7F–öâ†Væ6÷VçFW"Â&V7F–öä–B“°¢f–æ—6…Æ–W%&W7öç6R‡&W7VÇBæVæ6÷VçFW"Â&W7VÇBç7VÖÖ'’Â&W7VÇBçÆ–W%&öÆÂ“°¢Ğ ¢gVæ7F–öâ6†ö÷6UVæF–æt÷÷'GVæ—G”GF6²†GF6´–C¢7G&–ærÂçVÆÂ’°¢6öç7B&W7VÇBÒ6†ö÷6T÷÷'GVæ—G”GF6²†Væ6÷VçFW"ÂGF6´–B“°¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢6WDfVVF&6²‡&W7VÇBç7VÖÖ'’“°¢6WDVæV×•GW&å†6R‡&W7VÇBæVæ6÷VçFW"çVæF–æu&W7öç6Rò&v—F–ær×Æ–W""¢'&W6öÇf–ær"“°¢Ğ ¢gVæ7F–öâ&öÆÅVæF–æt÷÷'GVæ—G”GF6²‚’°¢6öç7B&W7VÇBÒ&öÆÄ÷÷'GVæ—G”GF6²†Væ6÷VçFW"“°¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢–b‡&W7VÇBçÆ–W%&öÆÂ’6WDÆ7E&öÆÂ‡&W7VÇBçÆ–W%&öÆÂ“°¢6WDfVVF&6²‡&W7VÇBç7VÖÖ'’“°¢6WDVæV×•GW&å†6R‡&W7VÇBæVæ6÷VçFW"çVæF–æu&W7öç6Rò&v—F–ær×Æ–W""¢'&W6öÇf–ær"“°¢Ğ ¢gVæ7F–öâ&öÆÅVæF–æt÷÷'GVæ—G”FÖvR‚’°¢6öç7B&W7VÇBÒ&öÆÄ÷÷'GVæ—G”FÖvR†Væ6÷VçFW"“°¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢–b‡&W7VÇBæFÖvU&öÆÂ’6WDÆ7E&öÆÂ‡&W7VÇBæFÖvU&öÆÂ“°¢6WDfVVF&6²‡&W7VÇBç7VÖÖ'’“°¢6WDVæV×•GW&å†6R‚'&W6öÇf–ær"“°¢Ğ ¢gVæ7F–öâ&öÆÅVæF–æt6öæ6VçG&F–öâ‚’°¢6öç7B&W7VÇBÒ&W6öÇfT6öæ6VçG&F–öå&W7öç6R†Væ6÷VçFW"“°¢f–æ—6…Æ–W%&W7öç6R‡&W7VÇBæVæ6÷VçFW"Â&W7VÇBç7VÖÖ'’Â&W7VÇBçÆ–W%&öÆÂ“°¢Ğ ¢gVæ7F–öâ&öÆÅVæF–ætFVF…6fR‚’°¢6öç7B&W7VÇBÒ&öÆÄFVF…6fR†Væ6÷VçFW"Â7F—fT6öÖ&FçBæ–B“°¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢–b‡&W7VÇBçÆ–W%&öÆÂ’6WDÆ7E&öÆÂ‡&W7VÇBçÆ–W%&öÆÂ“°¢6WDfVVF&6²‡&W7VÇBç7VÖÖ'’“°¢Ğ ¢7–æ2gVæ7F–öâ†æFÆT–×÷'B†WfVçC¢6†ævTWfVçCÄ…DÔÄ–çWDVÆVÖVçCâ’°¢6öç7Bf–ÆRÒWfVçBçF&vWBæf–ÆW3òå³Ó²–b‚f–ÆR’&WGW&ã°¢6WDÖW76vR†&VF–ærG¶f–ÆRææÖWÒââæ“°¢G'’°¢6öç7B–×÷'FVBÒv—B–×÷'D6†&7FW$f–ÆR†f–ÆR“°¢–b†–×÷'FVBç&WV—&W5&Wf–Wr’°¢6WEVæF–æt–×÷'B†–×÷'FVB“°¢6WE&Wf–Wt6†&7FW"†–×÷'FVBæ6†&7FW"“°¢6WDÖW76vR†G¶f–ÆRææÖWÒ&VBâ&Wf–WrF†RW‡G&7FVBfÇVW2&Vf÷&RW6–ærF†—26†&7FW"æ“°¢ÒVÇ6R°¢Ç”–×÷'FVD6†&7FW"†–×÷'FVBæ6†&7FW"Â–×÷'FVBçv&æ–æw2“°¢Ğ¢Ò6F6‚†W'&÷"’²6WDÖW76vR†W'&÷"–ç7Fæ6VöbW'&÷"òW'&÷"æÖW76vR¢%F†R6†VWB6÷VÆBæ÷B&R–×÷'FVBâ"“²Ğ¢f–æÆÇ’²WfVçBçF&vWBçfÇVRÒ"#²Ğ¢Ğ ¢gVæ7F–öâW'6—7D6†&7FW%&÷7FW"†æW‡E&÷7FW#¢6†&7FW%µÒ’°¢6WE7F÷&VD6†&7FW'2†æW‡E&÷7FW"“°¢Æö6Å7F÷&vRç6WD—FVÒ‚&FÒÖ6†&7FW"×&÷7FW""Â¥4ôâç7G&–æv–g’†æW‡E&÷7FW"’“°¢Ğ ¢gVæ7F–öâ7F—fFT6†&7FW"†æW‡D6†&7FW#¢6†&7FW"Âææ÷Væ6VÖVçC¢7G&–ær’°¢6WD6†&7FW"†æW‡D6†&7FW"“°¢–b†æW‡D6†&7FW"ç'VÆW6WD–B’6WE'VÆW6WD–B†æW‡D6†&7FW"ç'VÆW6WD–B“°¢6WDVæ6÷VçFW"†7&VFTVæ6÷VçFW"†æW‡D6†&7FW"Â66Væ&–ò’“°¢6WD6†ö–6TÖöFR†çVÆÂ“°¢6WDGF6´fÆ÷r†çVÆÂ“°¢6WE7VÆÄfÆ÷r†çVÆÂ“°¢6WDVæV×•GW&å†6R‚&–FÆR"“°¢Æö6Å7F÷&vRç6WD—FVÒ‚&FÒÖ7F—fRÖ6†&7FW"Ö–B"ÂæW‡D6†&7FW"æ–B“°¢6WDÖW76vR†ææ÷Væ6VÖVçB“°¢Ğ ¢gVæ7F–öâÇ”–×÷'FVD6†&7FW"†–×÷'FVD6†&7FW#¢6†&7FW"Âv&æ–æw3¢7G&–æuµÒ“¢&ööÆVâ°¢6öç7Bæ÷&ÖÆ—¦VBÒv—F„6öÖ&DFVfVÇG2†–×÷'FVD6†&7FW"“°¢6öç7BWFFRÒW6W'E&÷7FW$6†&7FW"‡7F÷&VD6†&7FW'2Âæ÷&ÖÆ—¦VB“°¢–b‚WFFRç7F÷&VB’°¢6WDÖW76vR‡WFFRç&V6öâóò%F†R6†&7FW"6÷VÆBæ÷B&R7F÷&VBâ"“°¢&WGW&âfÇ6S°¢Ğ¢W'6—7D6†&7FW%&÷7FW"‡WFFRæ6†&7FW'2“°¢7F—fFT6†&7FW"†æ÷&ÖÆ—¦VBÂG¶æ÷&ÖÆ—¦VBææÖWÒ–×÷'FVBæB6fVBâG·v&æ–æw2æ¦ö–â‚""’ÇÂ%&VG’f÷"6öÖ&Bâ'Ò&öÆÂ–÷W"–æ—F–F—fRFò&Vv–âæ“°¢&WGW&âG'VS°¢Ğ ¢gVæ7F–öâ6VÆV7E7F÷&VD6†&7FW"†6†&7FW$–C¢7G&–ær’°¢6öç7B6VÆV7FVBÒ7F÷&VD6†&7FW'2æf–æB‚†6æF–FFR’Óâ6æF–FFRæ–BÓÓÒ6†&7FW$–B“°¢–b‚6VÆV7FVB’&WGW&ã°¢7F—fFT6†&7FW"‡6VÆV7FVBÂG·6VÆV7FVBææÖWÒw27F÷&VB7FF—7F–72&RÆöFVB–çFòg&W6‚Væ6÷VçFW"â&öÆÂ–æ—F–F—fRv†Vâ&VG’æ“°¢Ğ ¢gVæ7F–öâFVÆWFU7F÷&VD6†&7FW"†6†&7FW$–C¢7G&–ær’°¢6öç7BæW‡E&÷7FW"Ò&VÖ÷fU&÷7FW$6†&7FW"‡7F÷&VD6†&7FW'2Â6†&7FW$–B“°¢W'6—7D6†&7FW%&÷7FW"†æW‡E&÷7FW"“°¢–b†6†&7FW"æ–BÓÓÒ6†&7FW$–B’°¢6öç7BæW‡D7F—fRÒæW‡E&÷7FW%³Òóò6×ÆS°¢7F—fFT6†&7FW"†æW‡D7F—fRÂG¶æW‡D7F—fRææÖWÒ—2æ÷r7F—fRâF†R&VÖ÷fVB6†&7FW"—2æòÆöævW"7F÷&VBöâF†—2FWf–6Ræ“°¢Ğ¢VÇ6R6WDÖW76vR‚$6†&7FW"&VÖ÷fVBg&öÒF†R7F÷&VB&÷7FW"â"“°¢Ğ ¢gVæ7F–öâWFFU&Wf–WtçVÖ&W"†f–VÆC¢&ÆWfVÂ"Â&&Ö÷$6Æ72"Â'&öf–6–Væ7”&öçW2"Â'7VVDfVWB"ÂfÇVS¢7G&–ær’°¢6WE&Wf–Wt6†&7FW"‚†7W'&VçB’Óâ7W'&VçBò²ââæ7W'&VçBÂ¶f–VÆEÓ¢çVÖ&W"‡fÇVR’Ò¢7W'&VçB“°¢Ğ ¢gVæ7F–öâWFFU&Wf–Wt†—Eö–çG2†f–VÆC¢&7W'&VçB"Â&Ö†–×VÒ"ÂfÇVS¢7G&–ær’°¢6WE&Wf–Wt6†&7FW"‚†7W'&VçB’Óâ7W'&VçBò²ââæ7W'&VçBÂ†—Eö–çG3¢²ââæ7W'&VçBæ†—Eö–çG2Â¶f–VÆEÓ¢çVÖ&W"‡fÇVR’ÒÒ¢7W'&VçB“°¢Ğ ¢gVæ7F–öâWFFU&Wf–Wt&–Æ—G’†&–Æ—G“¢&–Æ—G”æÖRÂfÇVS¢7G&–ær’°¢6WE&Wf–Wt6†&7FW"‚†7W'&VçB’Óâ7W'&VçBò²ââæ7W'&VçBÂ&–Æ—F–W3¢²ââæ7W'&VçBæ&–Æ—F–W2Â¶&–Æ—G•Ó¢çVÖ&W"‡fÇVR’ÒÒ¢7W'&VçB“°¢Ğ ¢gVæ7F–öâ6öæf—&Õ&Wf–WvVD–×÷'B†WfVçC¢f÷&ÔWfVçB’°¢WfVçBç&WfVçDFVfVÇB‚“°¢–b‚&Wf–Wt6†&7FW"’&WGW&ã°¢–b‚Ç”–×÷'FVD6†&7FW"‡&Wf–Wt6†&7FW"ÂVæF–æt–×÷'Còçv&æ–æw2óòµÒ’’&WGW&ã°¢6WEVæF–æt–×÷'B†çVÆÂ“°¢6WE&Wf–Wt6†&7FW"†çVÆÂ“°¢Ğ ¢gVæ7F–öâ'Vä7F–öâ†7F–öã¢6öÖ&D7F–öâ’°¢–b‚–æ—F–F—fU&VG’’²6WDfVVF&6²‚%&öÆÂ–÷W"–æ—F–F—fR&Vf÷&RF¶–ær7F–öç2âFÒ&öÆÇ2f÷"F†RVæVÖ–W2WFöÖF–6ÆÇ’â"“²&WGW&ã²Ğ¢–b†÷WF6öÖRÓÒ&7F—fR"’²6WDfVVF&6²‚%F†—2Væ6÷VçFW"—26ö×ÆWFRâ'V–ÆBæWrVæ6÷VçFW"Fò6öçF–çVRG&–æ–ærâ"“²&WGW&ã²Ğ¢–b†Væ6÷VçFW"çVæF–æu&W7öç6R’²6WDfVVF&6²‚%&W6öÇfRF†RVæF–ær6f–ærF‡&÷r÷"&V7F–öâ&Vf÷&R6öçF–çV–ærâ"“²&WGW&ã²Ğ¢–b†7F—fT6öÖ&FçBç6–FRÓÒ'Æ–W""’²6WDfVVF&6²‚$FÒ—2&W6öÇf–ærF†RVæV×’GW&ââ"“²&WGW&ã²Ğ¢–b†FVF…6fU&WV—&VBbbVæ6÷VçFW"çGW&âæ7F–öâ’²6WDfVVF&6²‚%&öÆÂF†R&WV—&VBFVF‚6f–ærF‡&÷r&Vf÷&RVæF–ærF†—2GW&ââ"“²&WGW&ã²Ğ¢–b†7F—fT6öÖ&FçBæ†—Eö–çG2æ7W'&VçBÃÒbb7F–öâæ–BÓÒ&VæB×GW&â"’²6WDfVVF&6²‚$âVæ6öç66–÷W26†&7FW"6ææ÷BF¶R7F–öç2â"“²&WGW&ã²Ğ¢–b†7F–öâæ–BÓÓÒ&VæB×GW&â"’²6WDVæ6÷VçFW"‚‡7FFR’ÓâVæEGW&â‡7FFR’“²6WD6†ö–6TÖöFR†çVÆÂ“²6WDGF6´fÆ÷r†çVÆÂ“²6WE7VÆÄfÆ÷r†çVÆÂ“²6WDfVVF&6²‚%GW&âVæFVBâ–æ—F–F—fRGfæ6VBâ"“²&WGW&ã²Ğ¢–b†7F–öâæ–BÓÓÒ&GF6²"’°¢6WD6†ö–6TÖöFR‚&GF6²"“°¢6WDGF6´fÆ÷r†çVÆÂ“°¢6WE7VÆÄfÆ÷r†çVÆÂ“°¢6WDfVVF&6²†G¶6†&7FW"æGF6·3òæÆVæwF‚óòÒvVöâGF6·2&R&VG’â6†ö÷6RvVöâFò&WfVÂ—G2ÆVvÂF&vWG2æ“°¢&WGW&ã°¢Ğ¢6öç7BfÆ–FF–öâÒfÆ–FFT7F–öâ†7F–öâÂVæ6÷VçFW"Â6†&7FW"“°¢–b‚fÆ–FF–öâæÆVvÂ’°¢6WDfVVF&6²†W‡W&–Væ6TÖöFRÓÓÒ'G&–æ–ær"òfÆ–FF–öâç&V6öâóò%F†B7F–öâ—2æ÷B7W'&VçFÇ’ÆVvÂâ"¢$7F–öâF—6ÆÆ÷vVBâ"“²&WGW&ã°¢Ğ¢–b†7F–öâæ–BÓÓÒ&Ö÷fR"’²6WDfVVF&6²‚$6†ö÷6R†–v†Æ–v‡FVBF¦6VçB7V&Râ–÷R6â7Æ—B–÷W"Ö÷fVÖVçB&Vf÷&RæBgFW"7F–öç3²ÆVf–ærâVæV×’w2&V6‚Ö’G&–vvW"â÷÷'GVæ—G’GF6²â"“²&WGW&ã²Ğ¢–b†7F–öâæ–BÓÓÒ&Öv–2"ÇÂ7F–öâæ–BÓÓÒ&67B×7VÆÂ"’²6WD6†ö–6TÖöFR‚'7VÆÂ"“²6WDGF6´fÆ÷r†çVÆÂ“²6WE7VÆÄfÆ÷r†çVÆÂ“²6WDfVVF&6²‚$6†ö÷6R7VÆÂf—'7BâFÒv–ÆÂF†Vâ†–v†Æ–v‡BWfW'’ÆVvÂF&vWBf÷"—G2&ævRæBÆ–æRöb6–v‡Bâ"“²&WGW&ã²Ğ¢ÆWBæW‡BÒ6öç7VÖT7F–öâ†7F–öâÂVæ6÷VçFW"“°¢–b†7F–öâæ–BÓÓÒ&FöFvR"’°¢æW‡BÒÇ”VffV7B†æW‡BÂ°¢æÖS¢$FöFvR"À¢FW67&—F–öã¢$–æ6öÖ–ærGF6·2†fRF—6GfçFvRVçF–ÂF†R7F'Böb–÷W"æW‡BGW&ââ"À¢6÷W&6T6öÖ&FçD–C¢7F—fT6öÖ&FçBæ–BÀ¢F&vWD6öÖ&FçD–C¢7F—fT6öÖ&FçBæ–BÀ¢GW&F–öå&÷VæG3¢À¢ÖöF–f–W'3¢²–æ6öÖ–ætGF6·3¢&F—6GfçFvR"ÒÀ¢Ò“°¢Ğ¢6WDVæ6÷VçFW"†æW‡B“°¢6WD6†ö–6TÖöFR†çVÆÂ“°¢6öç7BF&vWD6÷’Ò7F–öâçF&vWF–æsòæÖöFRÓÓÒ'6–ævÆR"bbF&vWDæÇ—6—2òv–ç7BG·F&vWDæÇ—6—2çF&vWBææÖWÖ¢"#°¢6öç7BF7F–6Ä6÷’Ò7F–öâæ–BÓÓÒ&F6‚ ¢ò–÷W"f–Æ&ÆRÖ÷fVÖVçB—2æ÷rG¶æW‡BçGW&âæÖ÷fVÖVçE&VÖ–æ–æwÒfVWBæBÖ’&R7Æ—B&÷VæB÷F†W"6†ö–6W2æ ¢¢7F–öâæ–BÓÓÒ&F—6VævvR ¢ò"–÷W"Ö÷fVÖVçBv–ÆÂæ÷B&÷fö¶R÷÷'GVæ—G’GF6·2f÷"F†R&W7BöbF†—2GW&ââ ¢¢"#°¢6WDfVVF&6²†G¶7F–öâææÖWÒG·F&vWD6÷—Ò66WFVBâF†—27F–öâFöW2æ÷B&WV—&RF–6R&öÆÂâG·F7F–6Ä6÷—Ö“°¢Ğ ¢gVæ7F–öâ6†ö÷6TGF6²†GF6³¢6†&7FW$GF6²’°¢–b‚Væ6÷VçFW"çGW&âæ7F–öâ’²6WDfVVF&6²‚%–÷W"7F–öâ†2Ç&VG’&VVâW6VBF†—2GW&ââ"“²&WGW&ã²Ğ¢6WDVæ6÷VçFW"‚‡7FFR’Óâ6VÆV7EF&vWB‡7FFRÂçVÆÂ’“°¢6WDGF6´fÆ÷r‡²GF6²Â†6S¢'F&vWB"Ò“°¢6WE7VÆÄfÆ÷r†çVÆÂ“°¢6WDfVVF&6²†G¶GF6²ææÖWÒ6VÆV7FVBâ6†ö÷6RöæRöbF†R†–v†Æ–v‡FVBVæV×’F&vWG2öâF†RF7F–6ÂÖæ“°¢Ğ ¢gVæ7F–öâ&öÆÄ–æ—F–F—fR‚’°¢–b‚Æ–W$æVVG4–æ—F–F—fR’&WGW&ã°¢6öç7B&W7VÇBÒ&öÆÅÆ–W$æDVæV×”–æ—F–F—fR†Væ6÷VçFW"ÂÆ–W$æVVG4–æ—F–F—fRæ–B“°¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢6WDÆ7E&öÆÂ‡&W7VÇBçÆ–W%&öÆÂ“°¢6WDfVVF&6²†–÷R&öÆÆVBG·&W7VÇBçÆ–W%&öÆÂçF÷FÇÒâFÒ&öÆÆVB–æ—F–F—fRf÷"G·&W7VÇBæVæV×•&öÆÇ2æÆVæwF‡ÒG·&W7VÇBæVæV×•&öÆÇ2æÆVæwF‚ÓÓÒò&VæV×’"¢&VæVÖ–W2'ÒâG·&W7VÇBæVæ6÷VçFW"æ6öÖ&FçG5³ÒææÖWÒ7G2f—'7Bæ“°¢Ğ ¢gVæ7F–öâ&öÆÅ6VÆV7FVDGF6²‚’°¢–b‚GF6´fÆ÷rÇÂGF6´fÆ÷rç†6RÓÒ&GF6²×&öÆÂ"’&WGW&ã°¢6öç7B&W7VÇBÒ&W6öÇfTGF6µ&öÆÂ†Væ6÷VçFW"ÂGF6´fÆ÷ræGF6²“°¢–b‚&W7VÇBæÆVvÂ’²6WDfVVF&6²†W‡W&–Væ6TÖöFRÓÓÒ&Gfæ6VB"ò$7F–öâF—6ÆÆ÷vVBâ"¢&W7VÇBç&V6öâ“²&WGW&ã²Ğ¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢6WDÆ7E&öÆÂ‡&W7VÇBç&öÆÂ“°¢6öç7BWFFVEF&vWBÒ&W7VÇBæVæ6÷VçFW"æ6öÖ&FçG2æf–æB‚†6öÖ&FçB’Óâ6öÖ&FçBæ–BÓÓÒGF6´fÆ÷rçF&vWD–B“°¢6öç7B†VÇF„6÷’ÒWFFVEF&vWCòç6–FRÓÓÒ&VæV×’"bbW‡W&–Væ6TÖöFRÓÒ&Gfæ6VB"òG·WFFVEF&vWBææÖWÓ¢G¶VæV×”†VÇF„Æ&VÂ‡WFFVEF&vWBÂW‡W&–Væ6TÖöFR—Òæ¢"#°¢6WDfVVF&6²†G·&W7VÇBç7VÖÖ'—ÒG¶†VÇF„6÷—Ö“°¢–b‡&W7VÇBæ†—B’6WDGF6´fÆ÷r‡²ââæGF6´fÆ÷rÂ†6S¢&FÖvR×&öÆÂ"Â7&—F–6Ã¢&W7VÇBæ7&—F–6ÂÒ“°¢VÇ6R²6WDGF6´fÆ÷r†çVÆÂ“²6WD6†ö–6TÖöFR†çVÆÂ“²Ğ¢Ğ ¢gVæ7F–öâ&öÆÅ6VÆV7FVDFÖvR‚’°¢–b‚GF6´fÆ÷rÇÂGF6´fÆ÷rç†6RÓÒ&FÖvR×&öÆÂ"ÇÂGF6´fÆ÷rçF&vWD–B’&WGW&ã°¢6öç7B&W7VÇBÒ&W6öÇfTGF6´FÖvR†Væ6÷VçFW"ÂGF6´fÆ÷ræGF6²ÂGF6´fÆ÷rçF&vWD–BÂGF6´fÆ÷ræ7&—F–6Â“°¢–b‚&W7VÇBæÆVvÂ’²6WDfVVF&6²‡&W7VÇBç&V6öâ“²&WGW&ã²Ğ¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢6WDÆ7E&öÆÂ‡&W7VÇBç&öÆÂ“°¢6WDfVVF&6²†G·&W7VÇBç7VÖÖ'—Ò–÷R7F–ÆÂ†fRG·&W7VÇBæVæ6÷VçFW"çGW&âæÖ÷fVÖVçE&VÖ–æ–æwÒfVWBöbÖ÷fVÖVçBæBÖ’W6R—B&Vf÷&RVæF–ær–÷W"GW&âæ“°¢6WDGF6´fÆ÷r†çVÆÂ“°¢6WD6†ö–6TÖöFR†çVÆÂ“°¢Ğ ¢gVæ7F–öâ6†ö÷6U7VÆÂ‡7VÆÃ¢6†&7FW%7VÆÂ’°¢6öç7Bf–Æ&–Æ—G’ÒfÆ–FFU7VÆÄf–Æ&–Æ—G’†Væ6÷VçFW"Â7VÆÂ“°¢–b‚f–Æ&–Æ—G’æÆVvÂ’²6WDfVVF&6²†W‡W&–Væ6TÖöFRÓÓÒ&Gfæ6VB"ò$7F–öâF—6ÆÆ÷vVBâ"¢f–Æ&–Æ—G’ç&V6öâóò%F†B7VÆÂ—2æ÷Bf–Æ&ÆRâ"“²&WGW&ã²Ğ¢6öç7B†4÷F†W$g&–VæFÇ•F&vWBÒVæ6÷VçFW"æ6öÖ&FçG2ç6öÖR‚†6öÖ&FçB’Óâ6öÖ&FçBæ–BÓÒ7F—fT6öÖ&FçBæ–Bbb6öÖ&FçBç6–FRÓÓÒ7F—fT6öÖ&FçBç6–FRbb6öÖ&FçBæ†—Eö–çG2æ7W'&VçBâ“°¢–b‡7VÆÂçF&vWBÓÓÒ'6VÆbÖ÷"×6–ævÆR"bb7VÆÂçF&vWE6–FRÓÓÒ&g&–VæFÇ’"bb†4÷F†W$g&–VæFÇ•F&vWB’°¢6öç7B&W7VÇBÒW†V7WFU7VÆÄ6†ö–6R‡²ââæVæ6÷VçFW"Â6VÆV7FVEF&vWD–C¢7F—fT6öÖ&FçBæ–BÒÂ7VÆÂ“°¢–b‚&W7VÇBæÆVvÂ’²6WDfVVF&6²†W‡W&–Væ6TÖöFRÓÓÒ&Gfæ6VB"ò$7F–öâF—6ÆÆ÷vVBâ"¢&W7VÇBç&V6öâ“²&WGW&ã²Ğ¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“²6WDÆ7E&öÆÂ‡&W7VÇBç&öÆÂ“²6WD6†ö–6TÖöFR†çVÆÂ“²6WE7VÆÄfÆ÷r†çVÆÂ“²6WDfVVF&6²‡&W7VÇBç7VÖÖ'’“°¢&WGW&ã°¢Ğ¢–b‡7VÆÂçF&vWBÓÓÒ'6–ævÆR"ÇÂ7VÆÂçF&vWBÓÓÒ'6VÆbÖ÷"×6–ævÆR"’°¢6WDVæ6÷VçFW"‚‡7FFR’Óâ6VÆV7EF&vWB‡7FFRÂçVÆÂ’“°¢6WE7VÆÄfÆ÷r‡²7VÆÂÂ†6S¢'F&vWB"Ò“°¢6WDGF6´fÆ÷r†çVÆÂ“°¢6WDfVVF&6²†G·7VÆÂææÖWÒ6VÆV7FVBâ6†ö÷6RöæRöbF†R†–v†Æ–v‡FVBÆVvÂF&vWG2öâF†RF7F–6ÂÖæ“°¢&WGW&ã°¢Ğ¢6öç7B&W7VÇBÒW†V7WFU7VÆÄ6†ö–6R†Væ6÷VçFW"Â7VÆÂ“°¢–b‚&W7VÇBæÆVvÂ’²6WDfVVF&6²†W‡W&–Væ6TÖöFRÓÓÒ&Gfæ6VB"ò$7F–öâF—6ÆÆ÷vVBâ"¢&W7VÇBç&V6öâ“²&WGW&ã²Ğ¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“²6WDÆ7E&öÆÂ‡&W7VÇBç&öÆÂ“²6WD6†ö–6TÖöFR†çVÆÂ“²6WE7VÆÄfÆ÷r†çVÆÂ“²6WDfVVF&6²‡&W7VÇBç7VÖÖ'’“°¢Ğ ¢gVæ7F–öâ&öÆÅ6VÆV7FVE7VÆÄGF6²‚’°¢–b‚7VÆÄfÆ÷rÇÂ7VÆÄfÆ÷rç†6RÓÒ&GF6²×&öÆÂ"’&WGW&ã°¢6öç7B&W7VÇBÒ&W6öÇfU7VÆÄGF6µ&öÆÂ†Væ6÷VçFW"Â7VÆÄfÆ÷rç7VÆÂ“°¢–b‚&W7VÇBæÆVvÂ’²6WDfVVF&6²†W‡W&–Væ6TÖöFRÓÓÒ&Gfæ6VB"ò$7F–öâF—6ÆÆ÷vVBâ"¢&W7VÇBç&V6öâ“²&WGW&ã²Ğ¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢6WDÆ7E&öÆÂ‡&W7VÇBç&öÆÂ“°¢6WDfVVF&6²‡&W7VÇBç7VÖÖ'’“°¢–b‡&W7VÇBæ†—Bbb7VÆÄfÆ÷rç7VÆÂæFÖvR’6WE7VÆÄfÆ÷r‡²ââç7VÆÄfÆ÷rÂ†6S¢&FÖvR×&öÆÂ"Â7&—F–6Ã¢&W7VÇBæ7&—F–6ÂÒ“°¢VÇ6R²6WE7VÆÄfÆ÷r†çVÆÂ“²6WD6†ö–6TÖöFR†çVÆÂ“²Ğ¢Ğ ¢gVæ7F–öâ&öÆÅ6VÆV7FVE7VÆÄFÖvR‚’°¢–b‚7VÆÄfÆ÷rÇÂ7VÆÄfÆ÷rç†6RÓÒ&FÖvR×&öÆÂ"ÇÂ7VÆÄfÆ÷rçF&vWD–B’&WGW&ã°¢6öç7B&W7VÇBÒ&W6öÇfU7VÆÄFÖvR†Væ6÷VçFW"Â7VÆÄfÆ÷rç7VÆÂÂ7VÆÄfÆ÷rçF&vWD–BÂ7VÆÄfÆ÷ræ7&—F–6Â“°¢–b‚&W7VÇBæÆVvÂ’²6WDfVVF&6²‡&W7VÇBç&V6öâ“²&WGW&ã²Ğ¢6WDVæ6÷VçFW"‡&W7VÇBæVæ6÷VçFW"“°¢6WDÆ7E&öÆÂ‡&W7VÇBç&öÆÂ“°¢6WDfVVF&6²†G·&W7VÇBç7VÖÖ'—Ò–÷R7F–ÆÂ†fRG·&W7VÇBæVæ6÷VçFW"çGW&âæÖ÷fVÖVçE&VÖ–æ–æwÒfVWBöbÖ÷fVÖVçBæBÖ’W6R—B&Vf÷&RVæF–ær–÷W"GW&âæ“°¢6WE7VÆÄfÆ÷r†çVÆÂ“°¢6WD6†ö–6TÖöFR†çVÆÂ“°¢Ğ ¢gVæ7F–öâ7V&Ö—D6öÖÖæB†WfVçC¢f÷&ÔWfVçB’°¢WfVçBç&WfVçDFVfVÇB‚“°¢6öç7B7F–öâÒf–æD7F–öäg&öÕFW‡B†6öÖÖæBÂ'VÆW6WD–B“°¢–b‚7F–öâ’²6WDfVVF&6²†W‡W&–Væ6TÖöFRÓÓÒ&Gfæ6VB"ò$7F–öâF—6ÆÆ÷vVBâ"¢$’6÷VÆBæ÷BÖF6‚F†B&WVW7BFò7W÷'FVB7F–öâ–WBâG'’æÖ–ærF†R7F–öâF—&V7FÇ’â"“²&WGW&ã²Ğ¢'Vä7N9Ó[h‘éì¶»§q«^u±¥¬õì ¤€ôøÍ•ÑIÕ±•Í•Ñ%¡ÉÕ±•Í•Ğ¹¥¥ôøñÍÑÉ½¹œùíÉÕ±•Í•Ğ¹¹…µ•ôğ½ÍÑÉ½¹œøñÍµ…±°ùíÉÕ±•Í•Ğ¹‘•ÍÉ¥ÁÑ¥½¹ôğ½Íµ…±°øğ½‰ÕÑÑ½¸ø¥ôğ½‘¥Øøğ½‘¥Øø(€€€€€€ğ½…Í¥‘”ø((€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰½µ‰…Ğµ…É•„ˆø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰½µ‰…Ğµ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰•å•‰É½ÜˆùMÉ¥ÁÑ•Í•¹…É¥¼•¹¥¹”ğ½ÍÁ…¸øñ ÈùíÍ•¹…É¥¼¹Ñ¥Ñ±•ôğ½ Èøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰ÉÕ±•Ìµ‰…‘”ˆùí…Ñ¥Ù•IÕ±•Í•Ğ¹±…‰•±ôğ½‘¥Øøğ½‘¥Øø(€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰Í•¹…É¥¼µÍÑÕ‘¥¼ˆø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰Í•ÑÕÀµÑ…‰Ìˆ…É¥„µ±…‰•°ô‰M•¹…É¥¼Í•ÑÕÀµ•Ñ¡½ˆùì¡=‰©•Ğ¹­•åÌ¡Í•ÑÕÁ5½‘•½Áä¤…ÌM•¹…É¥½M•ÑÕÁ5½‘•mt¤¹µ…À ¡µ½‘”¤€ôø€ñ‰ÕÑÑ½¸­•äõíµ½‘•ôÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”õíÍ•ÑÕÁ5½‘”€ôôôµ½‘”€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÍ•ÑM•ÑÕÁ5½‘”¡µ½‘”¥ôøñÍÑÉ½¹œùíÍ•ÑÕÁ5½‘•½Áåmµ½‘•t¹±…‰•±ôğ½ÍÑÉ½¹œøñÍµ…±°ùíÍ•ÑÕÁ5½‘•½Áåmµ½‘•t¹‘•Ñ…¥±ôğ½Íµ…±°øğ½‰ÕÑÑ½¸ø¥ôğ½‘¥Øø(€€€€€€€€€íÍ•ÑÕÁ5½‘”€ôôô€‰Ñ•µÁ±…Ñ•Ìˆ€ü€ñ‘¥Ø±…ÍÍ9…µ”ô‰Ñ•µÁ±…Ñ”µÉ¥ˆùíl¸¸¹Í•¹…É¥½Q•µÁ±…Ñ•Ì°€¸¸¹Í…Ù•‘Q•µÁ±…Ñ•Ít¹µ…À ¡Ñ•µÁ±…Ñ”¤€ôø€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ­•äõíÑ•µÁ±…Ñ”¹¥‘ô½¹±¥¬õì ¤€ôø±½…‘Q•µÁ±…Ñ”¡Ñ•µÁ±…Ñ”¥ôøñÍÁ…¸ùíÑ•µÁ±…Ñ”¹Í•ÑÕÀ¹‘¥™™¥Õ±Ñåôğ½ÍÁ…¸øñÍÑÉ½¹œùíÑ•µÁ±…Ñ”¹¹…µ•ôğ½ÍÑÉ½¹œøñÍµ…±°ùíÑ•µÁ±…Ñ”¹‘•ÍÉ¥ÁÑ¥½¹ôğ½Íµ…±°øğ½‰ÕÑÑ½¸ø¥ôğ½‘¥Øø€è€ñ™½É´±…ÍÍ9…µ”ô‰Í•¹…É¥¼µ‰Õ¥±‘•Èˆ½¹MÕ‰µ¥Ğõí‰Õ¥±‘M•¹…É¥½ôø(€€€€€€€€€€€ì¡Í•ÑÕÁ5½‘”€ôôô€‰‘•ÍÉ¥‰”ˆñğÍ•ÑÕÁ5½‘”€ôôô€‰½µ‰¥¹•ˆ¤€˜˜€ñ±…‰•°±…ÍÍ9…µ”ô‰ÁÉ½µÁĞµ™¥•±ˆù•ÍÉ¥‰”Ñ¡”•¹½Õ¹Ñ•Èå½Ôİ…¹Ğñ¥¹ÁÕĞÙ…±Õ”õíÍ•¹…É¥½AÉ½µÁÑô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•ÑM•¹…É¥½AÉ½µÁĞ¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ôÁ±…•¡½±‘•Èô‰ÉÕ¥¹•ÉåÁĞİ¡•É”$µÕÍĞÉ•ÍÕ”„ÑÉ…ÁÁ•Í¡½±…Èˆ€¼øğ½±…‰•°ùô(€€€€€€€€€€€ì¡Í•ÑÕÁ5½‘”€ôôô€‰Õ¥‘•ˆñğÍ•ÑÕÁ5½‘”€ôôô€‰½µ‰¥¹•ˆ¤€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰Õ¥‘•µ½¹ÑÉ½±Ìˆø(€€€€€€€€€€€€€€ñ±…‰•°ù¹Ù¥É½¹µ•¹ĞñÍ•±•ĞÙ…±Õ”õí•¹Ù¥É½¹µ•¹Ñô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•Ñ¹Ù¥É½¹µ•¹Ğ¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”…ÌM•¹…É¥½¹Ù¥É½¹µ•¹Ğ¥ôøñ½ÁÑ¥½¸Ù…±Õ”ô‰ÉåÁĞˆùIÕ¥¹•ÉåÁĞğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ô‰™½É•ÍĞˆù•¹Í”™½É•ÍĞğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ô‰µ…É­•Ğˆù‰…¹‘½¹•µ…É­•Ğğ½½ÁÑ¥½¸øğ½Í•±•Ğøğ½±…‰•°ø(€€€€€€€€€€€€€€ñ±…‰•°ù=‰©•Ñ¥Ù”ñÍ•±•ĞÙ…±Õ”õí½‰©•Ñ¥Ù•ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•Ñ=‰©•Ñ¥Ù”¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”…ÌM•¹…É¥½=‰©•Ñ¥Ù”¥ôøñ½ÁÑ¥½¸Ù…±Õ”ô‰‘•™•…Ğˆù•™•…Ğ•¹•µ¥•Ìğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ô‰É•ÍÕ”ˆùI•ÍÕ”„¥Ù¥±¥…¸ğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ô‰•Í…Á”ˆùI•… Ñ¡”•á¥Ğğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ô‰¡½±ˆù!½±„Á½Í¥Ñ¥½¸ğ½½ÁÑ¥½¸øğ½Í•±•Ğøğ½±…‰•°ø(€€€€€€€€€€€€€€ñ±…‰•°ù¥™™¥Õ±ÑäñÍ•±•ĞÙ…±Õ”õí‘¥™™¥Õ±Ñåô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•Ñ¥™™¥Õ±Ñä¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”…ÌM•¹…É¥½¥™™¥Õ±Ñä¥ôøñ½ÁÑ¥½¸Ù…±Õ”ô‰•…Íäˆù…Íäğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ô‰ÍÑ…¹‘…ÉˆùMÑ…¹‘…Éğ½½ÁÑ¥½¸øñ½ÁÑ¥½¸Ù…±Õ”ô‰¡…Éˆù!…Éğ½½ÁÑ¥½¸øğ½Í•±•Ğøğ½±…‰•°ø(€€€€€€€€€€€€ğ½‘¥Øùô(€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰Í•¹…É¥¼µ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸±…ÍÍ9…µ”ô‰•¹•É…Ñ”µ‰ÕÑÑ½¸ˆù	Õ¥±•¹½Õ¹Ñ•Èğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰Í…Ù”µ‰ÕÑÑ½¸ˆ½¹±¥¬õíÍ…Ù•Q•µÁ±…Ñ•ôùM…Ù”Í•ÑÕÀğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€€€€€€€ğ½™½É´ùô(€€€€€€€€ğ½Í•Ñ¥½¸ø(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰Í•¹…É¥¼µÍÕµµ…Éäˆøñ‘¥ØøñÍÁ…¸ù=‰©•Ñ¥Ù”ğ½ÍÁ…¸øñÍÑÉ½¹œùíÍ•¹…É¥¼¹½‰©•Ñ¥Ù•ôğ½ÍÑÉ½¹œøğ½‘¥Øøñ‘¥ØøñÍÁ…¸ùQ•ÉÉ…¥¸ğ½ÍÁ…¸øñÍÑÉ½¹œùíÍ•¹…É¥¼¹™•…ÑÕÉ•Ì¹©½¥¸ ˆƒ
+Ü€ˆ¥ôğ½ÍÑÉ½¹œøğ½‘¥Øøñ‘¥ØøñÍÁ…¸ù¥™™¥Õ±Ñäğ½ÍÁ…¸øñÍÑÉ½¹œùíÍ•¹…É¥¼¹‘¥™™¥Õ±Ñåôğ½ÍÑÉ½¹œøğ½‘¥Øøğ½‘¥Øø((€€€€€€€ì…¥¹¥Ñ¥…Ñ¥Ù•I•…‘ä€˜˜Á±…å•É9••‘Í%¹¥Ñ¥…Ñ¥Ù”€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… ¥¹¥Ñ¥…Ñ¥Ù”µ½… ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùe½ÕÈ¥¹¥Ñ¥…Ñ¥Ù”ƒ
+Ü±¥¬Ñ¼É½±°ğ½ÍÁ…¸øñ ÌùíÁ±…å•É9••‘Í%¹¥Ñ¥…Ñ¥Ù”¹¹…µ•ôğ½ ÌøñÀùI½±°„€ñÍÑÉ½¹œùÈÀğ½ÍÑÉ½¹œø…¹…‘å½ÕÈ¥¹¥Ñ¥…Ñ¥Ù”µ½‘¥™¥•È€¡íÁ±…å•É9••‘Í%¹¥Ñ¥…Ñ¥Ù”¹¥¹¥Ñ¥…Ñ¥Ù•5½‘¥™¥•È€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰õí5…Ñ ¹…‰Ì¡Á±…å•É9••‘Í%¹¥Ñ¥…Ñ¥Ù”¹¥¹¥Ñ¥…Ñ¥Ù•5½‘¥™¥•È¥ô¤¸…4É½±±Ì•¹•µä¥¹¥Ñ¥…Ñ¥Ù”ÁÉ¥Ù…Ñ•±ä…¹Ñ¡•¸É•Ù•…±ÌÑÕÉ¸½É‘•È¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±%¹¥Ñ¥…Ñ¥Ù•ôøñÍµ…±°ùI½±°å½ÕÈ¥¹¥Ñ¥…Ñ¥Ù”ğ½Íµ…±°øñÍÑÉ½¹œùÈÀíÁ±…å•É9••‘Í%¹¥Ñ¥…Ñ¥Ù”¹¥¹¥Ñ¥…Ñ¥Ù•5½‘¥™¥•È€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰ôí5…Ñ ¹…‰Ì¡Á±…å•É9••‘Í%¹¥Ñ¥…Ñ¥Ù”¹¥¹¥Ñ¥…Ñ¥Ù•5½‘¥™¥•È¥ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ø(€€€€€€€€ğ½Í•Ñ¥½¸ùô(€€€€€€€í¥¹¥Ñ¥…Ñ¥Ù•I•…‘ä€˜˜…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹Í¥‘”€ôôô€‰•¹•µäˆ€˜˜½ÕÑ½µ”€ôôô€‰…Ñ¥Ù”ˆ€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… •¹•µäµ½… ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ù4µ½¹ÑÉ½±±•ÑÕÉ¸ƒ
+Üíµ½‘•½Áåm•áÁ•É¥•¹•5½‘•t¹±…‰•±ôÑ…Ñ¥Ìƒ
+Üí•¹•µåQÕÉ¹A¡…Í•ôğ½ÍÁ…¸øñ Ìùí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹¹…µ•ôğ½ ÌøñÀù…4½¹ÑÉ½±ÌÑ¡¥ÌÉ•…ÑÕÉ”™…Á½ÌíÌµ½Ù•µ•¹Ğ°Ñ…É•Ñ¥¹œ°…Ñ¥½¸Í•±•Ñ¥½¸°…ÑÑ…¬É½±°°…¹‘…µ…”É½±°¸Q…Ñ¥…°‘•¥Í¥½¸ÅÕ…±¥ÑäÍ…±•Ìİ¥Ñ Ñ¡”Í•±•Ñ••áÁ•É¥•¹”µ½‘”¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰‘´µÑÕÉ¸µ‰…‘”ˆøñÍÑÉ½¹œù…4ğ½ÍÑÉ½¹œøñÍµ…±°ùÉ•Í½±Ù¥¹œ•¹•µäğ½Íµ…±°øğ½‘¥Øø(€€€€€€€€ğ½Í•Ñ¥½¸ùô(€€€€€€€í•¹½Õ¹Ñ•È¹Á•¹‘¥¹I•ÍÁ½¹Í”ü¹ÑåÁ”€ôôô€‰Í…Ù¥¹œµÑ¡É½Üˆ€˜˜€  ¤€ôøì(€€€€€€€€€½¹ÍĞÁ•¹‘¥¹œ€ô•¹½Õ¹Ñ•È¹Á•¹‘¥¹I•ÍÁ½¹Í”ì(€€€€€€€€€½¹ÍĞµ½‘¥™¥•È€ô•™™•Ñ¥Ù•M…Ù¥¹Q¡É½İ5½‘¥™¥•È¡•¹½Õ¹Ñ•È°Á•¹‘¥¹œ¹Ñ…É•Ñ½µ‰…Ñ…¹Ñ%°Á•¹‘¥¹œ¹…‰¥±¥Ñä¹Í…Ù•‰¥±¥Ñä¤ì(€€€€€€€€€É•ÑÕÉ¸€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… É•ÍÁ½¹Í”µ½… ˆ…É¥„µ±¥Ù”ô‰…ÍÍ•ÉÑ¥Ù”ˆø(€€€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùA±…å•ÈÉ•ÍÁ½¹Í”ƒ
+ÜM…Ù¥¹œÑ¡É½Üğ½ÍÁ…¸øñ ÌùíÁ•¹‘¥¹œ¹…‰¥±¥Ñä¹¹…µ•ôğ½ ÌøñÀùI½±°„€ñÍÑÉ½¹œùÈÀğ½ÍÑÉ½¹œø…¹…‘å½ÕÈíÁ•¹‘¥¹œ¹…‰¥±¥Ñä¹Í…Ù•‰¥±¥ÑåôÍ…Ù¥¹œÑ¡É½Üµ½‘¥™¥•È€¡íµ½‘¥™¥•È€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰õí5…Ñ ¹…‰Ì¡µ½‘¥™¥•È¥ô¤¸5••Ğ½È‰•…ĞíÁ•¹‘¥¹œ¹…‰¥±¥Ñä¹Í…Ù•ô¸…4É½±±ÌÑ¡”‘…µ…”…™Ñ•Èå½ÕÈÍ…Ù”¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±A•¹‘¥¹M…Ù¥¹Q¡É½İôøñÍµ…±°ùI½±°íÁ•¹‘¥¹œ¹…‰¥±¥Ñä¹Í…Ù•‰¥±¥ÑåôÍ…Ù”ğ½Íµ…±°øñÍÑÉ½¹œùÈÀíµ½‘¥™¥•È€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰ôí5…Ñ ¹…‰Ì¡µ½‘¥™¥•È¥ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ø(€€€€€€€€€€ğ½Í•Ñ¥½¸øì(€€€€€€€ô¤ ¥ô(€€€€€€€í•¹½Õ¹Ñ•È¹Á•¹‘¥¹I•ÍÁ½¹Í”ü¹ÑåÁ”€ôôô€‰…ÑÑ…¬µÉ•…Ñ¥½¸ˆ€˜˜€  ¤€ôøì(€€€€€€€€€½¹ÍĞÁ•¹‘¥¹œ€ô•¹½Õ¹Ñ•È¹Á•¹‘¥¹I•ÍÁ½¹Í”ì(€€€€€€€€€½¹ÍĞÑ…É•Ğ€ô•¹½Õ¹Ñ•È¹½µ‰…Ñ…¹ÑÌ¹™¥¹ ¡½µ‰…Ñ…¹Ğ¤€ôø½µ‰…Ñ…¹Ğ¹¥€ôôôÁ•¹‘¥¹œ¹Ñ…É•Ñ½µ‰…Ñ…¹Ñ%¤„ì(€€€€€€€€€É•ÑÕÉ¸€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… É•ÍÁ½¹Í”µ½… É•…Ñ¥½¸µ½… ˆ…É¥„µ±¥Ù”ô‰…ÍÍ•ÉÑ¥Ù”ˆø(€€€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùA±…å•ÈÉ•ÍÁ½¹Í”ƒ
+ÜI•…Ñ¥½¸İ¥¹‘½Üğ½ÍÁ…¸øñ Ìù…4É½±±•íÁ•¹‘¥¹œ¹…ÑÑ…­Q½Ñ…±ô……¥¹ÍĞíÁ•¹‘¥¹œ¹Ñ…É•ÑÉµ½É±…ÍÍôğ½ ÌøñÀùQ¡”…ÑÑ…¬İ½Õ±¡¥Ğ¸¡½½Í”…¸…Ù…¥±…‰±”É•…Ñ¥½¸‰•™½É”…4É½±±Ì‘…µ…”¸I•…Ñ¥½¹ÌÉ•Í•Ğ…ĞÑ¡”ÍÑ…ÉĞ½˜å½ÕÈ¹•áĞÑÕÉ¸¸ğ½Àøñ‘¥Ø±…ÍÍ9…µ”ô‰É•ÍÁ½¹Í”µ…Ñ¥½¹ÌˆùíÑ…É•Ğ¹É•…Ñ¥½¹=ÁÑ¥½¹Ì¹™¥±Ñ•È ¡½ÁÑ¥½¸¤€ôøÁ•¹‘¥¹œ¹…Ù…¥±…‰±•I•…Ñ¥½¹%‘Ì¹¥¹±Õ‘•Ì¡½ÁÑ¥½¸¹¥¤¤¹µ…À ¡½ÁÑ¥½¸¤€ôø€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ­•äõí½ÁÑ¥½¸¹¥‘ô½¹±¥¬õì ¤€ôø¡½½Í•A•¹‘¥¹I•…Ñ¥½¸¡½ÁÑ¥½¸¹¥¥ôøñÍµ…±°ùUÍ”É•…Ñ¥½¸ğ½Íµ…±°øñÍÑÉ½¹œùí½ÁÑ¥½¸¹¹…µ•ôğ½ÍÑÉ½¹œøñ•´ùí½ÁÑ¥½¸¹‘•ÍÉ¥ÁÑ¥½¹ôğ½•´øğ½‰ÕÑÑ½¸ø¥ôñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰‘•±¥¹”µÉ•ÍÁ½¹Í”ˆ½¹±¥¬õì ¤€ôø¡½½Í•A•¹‘¥¹I•…Ñ¥½¸¡¹Õ±°¥ôøñÍµ…±°ù9¼É•…Ñ¥½¸ğ½Íµ…±°øñÍÑÉ½¹œùQ…­”Ñ¡”¡¥Ğğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸øğ½‘¥Øøğ½‘¥Øø(€€€€€€€€€€ğ½Í•Ñ¥½¸øì(€€€€€€€ô¤ ¥ô(€€€€€€€í•¹½Õ¹Ñ•È¹Á•¹‘¥¹I•ÍÁ½¹Í”ü¹ÑåÁ”€ôôô€‰½ÁÁ½ÉÑÕ¹¥Ñäµ…ÑÑ…¬ˆ€˜˜€  ¤€ôøì(€€€€€€€€€½¹ÍĞÁ•¹‘¥¹œ€ô•¹½Õ¹Ñ•È¹Á•¹‘¥¹I•ÍÁ½¹Í”ì(€€€€€€€€€½¹ÍĞÍ½ÕÉ”€ô•¹½Õ¹Ñ•È¹½µ‰…Ñ…¹ÑÌ¹™¥¹ ¡½µ‰…Ñ…¹Ğ¤€ôø½µ‰…Ñ…¹Ğ¹¥€ôôôÁ•¹‘¥¹œ¹Í½ÕÉ•½µ‰…Ñ…¹Ñ%¤„ì(€€€€€€€€€½¹ÍĞÑ…É•Ğ€ô•¹½Õ¹Ñ•È¹½µ‰…Ñ…¹ÑÌ¹™¥¹ ¡½µ‰…Ñ…¹Ğ¤€ôø½µ‰…Ñ…¹Ğ¹¥€ôôôÁ•¹‘¥¹œ¹Ñ…É•Ñ½µ‰…Ñ…¹Ñ%¤„ì(€€€€€€€€€½¹ÍĞ…ÑÑ…¬€ôÍ½ÕÉ”¹…ÑÑ…­Ì¹™¥¹ ¡…¹‘¥‘…Ñ”¤€ôø…¹‘¥‘…Ñ”¹¥€ôôôÁ•¹‘¥¹œ¹…ÑÑ…­%¤ì(€€€€€€€€€É•ÑÕÉ¸€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… É•ÍÁ½¹Í”µ½… É•…Ñ¥½¸µ½… ½ÁÁ½ÉÑÕ¹¥Ñäµ½… ˆ…É¥„µ±¥Ù”ô‰…ÍÍ•ÉÑ¥Ù”ˆø(€€€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùA±…å•ÈÉ•ÍÁ½¹Í”ƒ
+Ü=ÁÁ½ÉÑÕ¹¥Ñä…ÑÑ…¬ğ½ÍÁ…¸øñ ÌùíÑ…É•Ğ¹¹…µ•ô¥Ì±•…Ù¥¹œå½ÕÈÉ•… ğ½ Ìø(€€€€€€€€€€€€€íÁ•¹‘¥¹œ¹Á¡…Í”€ôôô€‰¡½¥”ˆ€˜˜€ğøñÀùe½Ôµ…äÍÁ•¹å½ÕÈÉ•…Ñ¥½¸Ñ¼µ…­”½¹”µ•±•”…ÑÑ…¬‰•™½É”íÑ…É•Ğ¹¹…µ•ôµ½Ù•Ì°½ÈÍ…Ù”Ñ¡”É•…Ñ¥½¸™½È…¹½Ñ¡•ÈÑÉ¥•È¸ğ½Àøñ‘¥Ø±…ÍÍ9…µ”ô‰É•ÍÁ½¹Í”µ…Ñ¥½¹ÌˆùíÍ½ÕÉ”¹…ÑÑ…­Ì¹™¥±Ñ•È ¡…¹‘¥‘…Ñ”¤€ôøÁ•¹‘¥¹œ¹…Ù…¥±…‰±•ÑÑ…­%‘Ì¹¥¹±Õ‘•Ì¡…¹‘¥‘…Ñ”¹¥¤¤¹µ…À ¡…¹‘¥‘…Ñ”¤€ôø€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ­•äõí…¹‘¥‘…Ñ”¹¥‘ô½¹±¥¬õì ¤€ôø¡½½Í•A•¹‘¥¹=ÁÁ½ÉÑÕ¹¥ÑåÑÑ…¬¡…¹‘¥‘…Ñ”¹¥¥ôøñÍµ…±°ùUÍ”É•…Ñ¥½¸ğ½Íµ…±°øñÍÑÉ½¹œùí…¹‘¥‘…Ñ”¹¹…µ•ôğ½ÍÑÉ½¹œøñ•´ùí…¹‘¥‘…Ñ”¹‘…µ…•ôƒ
+Üí…¹‘¥‘…Ñ”¹…ÑÑ…­	½¹ÕÌ€øô€À€ü€ˆ¬ˆ€è€ˆ‰õí…¹‘¥‘…Ñ”¹…ÑÑ…­	½¹ÕÍôÑ¼¡¥Ğğ½•´øğ½‰ÕÑÑ½¸ø¥ôñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰‘•±¥¹”µÉ•ÍÁ½¹Í”ˆ½¹±¥¬õì ¤€ôø¡½½Í•A•¹‘¥¹=ÁÁ½ÉÑÕ¹¥ÑåÑÑ…¬¡¹Õ±°¥ôøñÍµ…±°ùM…Ù”É•…Ñ¥½¸ğ½Íµ…±°øñÍÑÉ½¹œù1•ĞÑ¡•´µ½Ù”ğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸øğ½‘¥Øøğ¼ùô(€€€€€€€€€€€€€íÁ•¹‘¥¹œ¹Á¡…Í”€ôôô€‰…ÑÑ…¬µÉ½±°ˆ€˜˜…ÑÑ…¬€˜˜€ñÀùI½±°„€ñÍÑÉ½¹œùÈÀğ½ÍÑÉ½¹œø…¹…‘í…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰õí5…Ñ ¹…‰Ì¡…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ¥ô¸Q¡¥ÌÉ•…Ñ¥½¸¥ÌÍ•Á…É…Ñ”™É½´å½ÕÈÑ¥½¸½¸å½ÕÈ½İ¸ÑÕÉ¸¸ğ½Àùô(€€€€€€€€€€€€€íÁ•¹‘¥¹œ¹Á¡…Í”€ôôô€‰‘…µ…”µÉ½±°ˆ€˜˜…ÑÑ…¬€˜˜€ñÀùQ¡”½ÁÁ½ÉÑÕ¹¥Ñä…ÑÑ…¬¡¥Ğ¸I½±°€ñÍÑÉ½¹œùí…ÑÑ…¬¹‘…µ…•ôğ½ÍÑÉ½¹œùíÁ•¹‘¥¹œ¹É¥Ñ¥…°€ü€ˆİ¥Ñ ‘½Õ‰±•‘…µ…”‘¥”™½ÈÑ¡”É¥Ñ¥…°¡¥Ğˆ€è€ˆ‰ô‰•™½É”µ½Ù•µ•¹Ğ½¹Ñ¥¹Õ•Ì¸ğ½Àùô(€€€€€€€€€€€€ğ½‘¥Øø(€€€€€€€€€€€íÁ•¹‘¥¹œ¹Á¡…Í”€ôôô€‰…ÑÑ…¬µÉ½±°ˆ€˜˜…ÑÑ…¬€˜˜€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±A•¹‘¥¹=ÁÁ½ÉÑÕ¹¥ÑåÑÑ…­ôøñÍµ…±°ùI½±°½ÁÁ½ÉÑÕ¹¥Ñä…ÑÑ…¬ğ½Íµ…±°øñÍÑÉ½¹œùÈÀí…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰ôí5…Ñ ¹…‰Ì¡…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ¥ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ùô(€€€€€€€€€€€íÁ•¹‘¥¹œ¹Á¡…Í”€ôôô€‰‘…µ…”µÉ½±°ˆ€˜˜…ÑÑ…¬€˜˜€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±A•¹‘¥¹=ÁÁ½ÉÑÕ¹¥Ñå…µ…•ôøñÍµ…±°ùI½±°½ÁÁ½ÉÑÕ¹¥Ñä‘…µ…”ğ½Íµ…±°øñÍÑÉ½¹œùí…ÑÑ…¬¹‘…µ…•ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ùô(€€€€€€€€€€ğ½Í•Ñ¥½¸øì(€€€€€€€ô¤ ¥ô(€€€€€€€í•¹½Õ¹Ñ•È¹Á•¹‘¥¹I•ÍÁ½¹Í”ü¹ÑåÁ”€ôôô€‰½¹•¹ÑÉ…Ñ¥½¸µ¡•¬ˆ€˜˜€  ¤€ôøì(€€€€€€€€€½¹ÍĞÁ•¹‘¥¹œ€ô•¹½Õ¹Ñ•È¹Á•¹‘¥¹I•ÍÁ½¹Í”ì(€€€€€€€€€½¹ÍĞµ½‘¥™¥•È€ô•™™•Ñ¥Ù•M…Ù¥¹Q¡É½İ5½‘¥™¥•È¡•¹½Õ¹Ñ•È°Á•¹‘¥¹œ¹Ñ…É•Ñ½µ‰…Ñ…¹Ñ%°€‰½¹ÍÑ¥ÑÕÑ¥½¸ˆ¤ì(€€€€€€€€€É•ÑÕÉ¸€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… É•ÍÁ½¹Í”µ½… ½¹•¹ÑÉ…Ñ¥½¸µ½… ˆ…É¥„µ±¥Ù”ô‰…ÍÍ•ÉÑ¥Ù”ˆø(€€€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùA±…å•ÈÉ•ÍÁ½¹Í”ƒ
+Ü½¹•¹ÑÉ…Ñ¥½¸ğ½ÍÁ…¸øñ Ìù5…¥¹Ñ…¥¸½¹•¹ÑÉ…Ñ¥½¸ğ½ ÌøñÀùe½ÔÑ½½¬íÁ•¹‘¥¹œ¹‘…µ…•Q…­•¹ô‘…µ…”İ¡¥±”½¹•¹ÑÉ…Ñ¥¹œ¸I½±°„€ñÍÑÉ½¹œù½¹ÍÑ¥ÑÕÑ¥½¸Í…Ù¥¹œÑ¡É½Üğ½ÍÑÉ½¹œø……¥¹ÍĞíÁ•¹‘¥¹œ¹‘ô¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±A•¹‘¥¹½¹•¹ÑÉ…Ñ¥½¹ôøñÍµ…±°ùI½±°½¹•¹ÑÉ…Ñ¥½¸ğ½Íµ…±°øñÍÑÉ½¹œùÈÀíµ½‘¥™¥•È€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰ôí5…Ñ ¹…‰Ì¡µ½‘¥™¥•È¥ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ø(€€€€€€€€€€ğ½Í•Ñ¥½¸øì(€€€€€€€ô¤ ¥ô(€€€€€€€í‘•…Ñ¡M…Ù•I•ÅÕ¥É•€˜˜•¹½Õ¹Ñ•È¹ÑÕÉ¸¹…Ñ¥½¸€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… É•ÍÁ½¹Í”µ½… ‘•…Ñ µÍ…Ù”µ½… ˆ…É¥„µ±¥Ù”ô‰…ÍÍ•ÉÑ¥Ù”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùMÑ…ÉĞ½˜ÑÕÉ¸ƒ
+Ü•…Ñ Í…Ù¥¹œÑ¡É½Üğ½ÍÁ…¸øñ Ìùí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹¹…µ•ô¥ÌÕ¹½¹Í¥½ÕÌğ½ ÌøñÀùI½±°„€ñÍÑÉ½¹œùÈÀğ½ÍÑÉ½¹œøİ¥Ñ ¹¼µ½‘¥™¥•È¸€ÄÀ½È¡¥¡•ÈÍÕ••‘Ìì„¹…ÑÕÉ…°€Ä…ÕÍ•ÌÑİ¼™…¥±ÕÉ•Ìì„¹…ÑÕÉ…°€ÈÀÉ•ÍÑ½É•Ì€Ä!@¸Q¡É•”ÍÕ•ÍÍ•ÌÍÑ…‰¥±¥é”å½Ô…¹Ñ¡É•”™…¥±ÕÉ•Ìµ•…¸‘•…Ñ ¸ğ½Àøñ‘¥Ø±…ÍÍ9…µ”ô‰‘•…Ñ µÍ…Ù”µÑÉ…¬ˆøñÍÁ…¸ùMÕ•ÍÍ•Ì€ñÍÑÉ½¹œùí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹‘•…Ñ¡M…Ù•Ì¹ÍÕ•ÍÍ•Íô¼Ìğ½ÍÑÉ½¹œøğ½ÍÁ…¸øñÍÁ…¸ù…¥±ÕÉ•Ì€ñÍÑÉ½¹œùí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹‘•…Ñ¡M…Ù•Ì¹™…¥±ÕÉ•Íô¼Ìğ½ÍÑÉ½¹œøğ½ÍÁ…¸øğ½‘¥Øøğ½‘¥Øø(€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±A•¹‘¥¹•…Ñ¡M…Ù•ôøñÍµ…±°ùI½±°‘•…Ñ Í…Ù”ğ½Íµ…±°øñÍÑÉ½¹œùÈÀğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ø(€€€€€€€€ğ½Í•Ñ¥½¸ùô(€€€€€€€í½ÕÑ½µ”€„ôô€‰…Ñ¥Ù”ˆ€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”õí½µ‰…Ğµ½ÕÑ½µ”€‘í½ÕÑ½µ•õô…É¥„µ±¥Ù”ô‰…ÍÍ•ÉÑ¥Ù”ˆøñÍÁ…¸ù¹½Õ¹Ñ•È½µÁ±•Ñ”ğ½ÍÁ…¸øñ Ìùí½ÕÑ½µ”€ôôô€‰Ù¥Ñ½Éäˆ€ü€‰Y¥Ñ½Éäˆ€è½ÕÑ½µ”€ôôô€‰ÍÑ…‰¥±¥é•ˆ€ü€‰e½ÕÈ¡…É…Ñ•È¥ÌÍÑ…‰¥±¥é•ˆ€è€‰e½ÕÈ¡…É…Ñ•È¥Ì‘•™•…Ñ•‰ôğ½ ÌøñÀùí½ÕÑ½µ”€ôôô€‰Ù¥Ñ½Éäˆ€ü€‰±°¡½ÍÑ¥±”É•…ÑÕÉ•Ì¡…Ù”‰••¸‘•™•…Ñ•¸ˆ€è½ÕÑ½µ”€ôôô€‰ÍÑ…‰¥±¥é•ˆ€ü€‰e½Ô…É”Õ¹½¹Í¥½ÕÌ‰ÕĞ¹¼±½¹•Èµ…­¥¹œ‘•…Ñ Í…Ù¥¹œÑ¡É½İÌ¸Q¡¥ÌÍ½±¼Í•¹…É¥¼•¹‘Ì¡•É”¸ˆ€è€‰	Õ¥±„¹•Ü•¹½Õ¹Ñ•È½È¥µÁ½ÉĞ…¹½Ñ¡•È¡…É…Ñ•ÈÑ¼ÑÉä……¥¸¸‰ôğ½Àøğ½Í•Ñ¥½¸ùô(€€€€€€€í¥¹¥Ñ¥…Ñ¥Ù•I•…‘ä€˜˜…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… Ñ…É•Ğµ½… ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ù]•…Á½¸Í•±•Ñ•ƒ
+Ü¡½½Í”Ñ…É•Ğğ½ÍÁ…¸øñ Ìùí…ÑÑ…­±½Ü¹…ÑÑ…¬¹¹…µ•ôğ½ ÌøñÀùQ…É•ÑÌ¡¥¡±¥¡Ñ•¥¸½±…É”İ¥Ñ¡¥¸É…¹”…¹±¥¹”½˜Í¥¡Ğ¸1½¹œµÉ…¹”Ñ…É•ÑÌÉ•µ…¥¸±•…°…¹İ¥±°É½±°İ¥Ñ ‘¥Í…‘Ù…¹Ñ…”¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰Ñ…É•Ğµ½Õ¹ĞˆøñÍÑÉ½¹œùí±•…±ÑÑ…­Q…É•Ñ%‘Ì¹Í¥é•ôğ½ÍÑÉ½¹œøñÍµ…±°ù±•…°Ñ…É•ÑÌğ½Íµ…±°øğ½‘¥Øø(€€€€€€€€ğ½Í•Ñ¥½¸ùô(€€€€€€€í¥¹¥Ñ¥…Ñ¥Ù•I•…‘ä€˜˜ÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… Ñ…É•Ğµ½… ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùMÁ•±°Í•±•Ñ•ƒ
+Ü¡½½Í”Ñ…É•Ğğ½ÍÁ…¸øñ ÌùíÍÁ•±±±½Ü¹ÍÁ•±°¹¹…µ•ôğ½ ÌøñÀùQ…É•ÑÌ¡¥¡±¥¡Ñ•¥¸½±…É”±•…°™½ÈÑ¡¥ÌÍÁ•±°™…Á½ÌíÌÉ…¹”°±¥¹”½˜Í¥¡Ğ°…¹Ñ…É•ĞÑåÁ”¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰Ñ…É•Ğµ½Õ¹ĞˆøñÍÑÉ½¹œùí±•…±MÁ•±±Q…É•Ñ%‘Ì¹Í¥é•ôğ½ÍÑÉ½¹œøñÍµ…±°ù±•…°Ñ…É•ÑÌğ½Íµ…±°øğ½‘¥Øø(€€€€€€€€ğ½Í•Ñ¥½¸ùô(€€€€€€€í…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰…ÑÑ…¬µÉ½±°ˆ€˜˜Ñ…É•Ñ¹…±åÍ¥Ì€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… …ÑÑ…¬µ½… ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùÑÑ…¬É½±°ƒ
+Ü±¥¬Ñ¼É½±°ğ½ÍÁ…¸øñ Ìùí…ÑÑ…­±½Ü¹…ÑÑ…¬¹¹…µ•ôÙÌ¸íÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¹…µ•ôğ½ ÌøñÀùI½±°„€ñÍÑÉ½¹œùÈÀğ½ÍÑÉ½¹œøíÙ…±¥‘…Ñ•ÑÑ…­¡½¥”¡•¹½Õ¹Ñ•È°…ÑÑ…­±½Ü¹…ÑÑ…¬¤¹É½±±5½‘”€ôôô€‰‘¥Í…‘Ù…¹Ñ…”ˆ€ü€‰Ñİ¥”…¹­••ÀÑ¡”±½İ•ÈÉ•ÍÕ±Ğ°Ñ¡•¸ˆ€è€‰…¹‰ô…‘í…ÑÑ…­±½Ü¹…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰õí5…Ñ ¹…‰Ì¡…ÑÑ…­±½Ü¹…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ¥ô¸5••Ğ½È‰•…Ğí•™™•Ñ¥Ù•Éµ½É±…ÍÌ¡•¹½Õ¹Ñ•È°Ñ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¥¤€¬€¡Ñ…É•Ñ¹…±åÍ¥Ì¹½Ù•È€ôôô€‰¡…±˜ˆ€ü€È€è€À¥ô¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±M•±•Ñ•‘ÑÑ…­ôøñÍµ…±°ùI½±°…ÑÑ…¬ğ½Íµ…±°øñÍÑÉ½¹œùíÙ…±¥‘…Ñ•ÑÑ…­¡½¥”¡•¹½Õ¹Ñ•È°…ÑÑ…­±½Ü¹…ÑÑ…¬¤¹É½±±5½‘”€ôôô€‰‘¥Í…‘Ù…¹Ñ…”ˆ€ü€ˆÉÈÀƒ
+Ü±½İ•Èˆ€è€‰ÈÀ‰ôí…ÑÑ…­±½Ü¹…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰ôí5…Ñ ¹…‰Ì¡…ÑÑ…­±½Ü¹…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ¥ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ø(€€€€€€€€ğ½Í•Ñ¥½¸ùô(€€€€€€€í…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰‘…µ…”µÉ½±°ˆ€˜˜Ñ…É•Ñ¹…±åÍ¥Ì€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… ‘…µ…”µ½… ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùí…ÑÑ…­±½Ü¹É¥Ñ¥…°€ü€‰É¥Ñ¥…°¡¥Ğƒ
+Ü½Õ‰±”Ñ¡”‘…µ…”‘¥”ˆ€è€‰!¥Ğ½¹™¥Éµ•ƒ
+Ü±¥¬Ñ¼É½±°‘…µ…”‰ôğ½ÍÁ…¸øñ Ìùí…ÑÑ…­±½Ü¹…ÑÑ…¬¹‘…µ…•ôğ½ ÌøñÀù…µ…”¥ÌÉ½±±•Í•Á…É…Ñ•±ä™É½´Ñ¡”…ÑÑ…¬¸Q¡”Ñ½Ñ…°İ¥±°‰”…ÁÁ±¥•Ñ¼íÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¹…µ•ô™…Á½ÌíÌ¡¥ĞÁ½¥¹ÑÌ¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±M•±•Ñ•‘…µ…•ôøñÍµ…±°ùI½±°‘…µ…”ğ½Íµ…±°øñÍÑÉ½¹œùí…ÑÑ…­±½Ü¹É¥Ñ¥…°€üÉ¥Ñ¥…°ƒ
+Ü€‘í…ÑÑ…­±½Ü¹…ÑÑ…¬¹‘…µ…•õ€€è…ÑÑ…­±½Ü¹…ÑÑ…¬¹‘…µ…•ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ø(€€€€€€€€ğ½Í•Ñ¥½¸ùô(€€€€€€€íÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰…ÑÑ…¬µÉ½±°ˆ€˜˜Ñ…É•Ñ¹…±åÍ¥Ì€˜˜ÍÁ•±±±½Ü¹ÍÁ•±°¹…ÑÑ…­	½¹ÕÌ€„ôôÕ¹‘•™¥¹•€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… …ÑÑ…¬µ½… ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùMÁ•±°…ÑÑ…¬É½±°ƒ
+Ü±¥¬Ñ¼É½±°ğ½ÍÁ…¸øñ ÌùíÍÁ•±±±½Ü¹ÍÁ•±°¹¹…µ•ôÙÌ¸íÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¹…µ•ôğ½ ÌøñÀùI½±°„€ñÍÑÉ½¹œùÈÀğ½ÍÑÉ½¹œøíÙ…±¥‘…Ñ•MÁ•±±¡½¥”¡•¹½Õ¹Ñ•È°ÍÁ•±±±½Ü¹ÍÁ•±°¤¹É½±±5½‘”€ôôô€‰‘¥Í…‘Ù…¹Ñ…”ˆ€ü€‰Ñİ¥”…¹­••ÀÑ¡”±½İ•ÈÉ•ÍÕ±Ğ°Ñ¡•¸ˆ€è€‰…¹‰ô…‘íÍÁ•±±±½Ü¹ÍÁ•±°¹…ÑÑ…­	½¹ÕÌ€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰õí5…Ñ ¹…‰Ì¡ÍÁ•±±±½Ü¹ÍÁ•±°¹…ÑÑ…­	½¹ÕÌ¥ô¸5••Ğ½È‰•…Ğí•™™•Ñ¥Ù•Éµ½É±…ÍÌ¡•¹½Õ¹Ñ•È°Ñ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¥¤€¬€¡Ñ…É•Ñ¹…±åÍ¥Ì¹½Ù•È€ôôô€‰¡…±˜ˆ€ü€È€è€À¥ô¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±M•±•Ñ•‘MÁ•±±ÑÑ…­ôøñÍµ…±°ùI½±°ÍÁ•±°…ÑÑ…¬ğ½Íµ…±°øñÍÑÉ½¹œùíÙ…±¥‘…Ñ•MÁ•±±¡½¥”¡•¹½Õ¹Ñ•È°ÍÁ•±±±½Ü¹ÍÁ•±°¤¹É½±±5½‘”€ôôô€‰‘¥Í…‘Ù…¹Ñ…”ˆ€ü€ˆÉÈÀƒ
+Ü±½İ•Èˆ€è€‰ÈÀ‰ôíÍÁ•±±±½Ü¹ÍÁ•±°¹…ÑÑ…­	½¹ÕÌ€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰ôí5…Ñ ¹…‰Ì¡ÍÁ•±±±½Ü¹ÍÁ•±°¹…ÑÑ…­	½¹ÕÌ¥ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ø(€€€€€€€€ğ½Í•Ñ¥½¸ùô(€€€€€€€íÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰‘…µ…”µÉ½±°ˆ€˜˜Ñ…É•Ñ¹…±åÍ¥Ì€˜˜ÍÁ•±±±½Ü¹ÍÁ•±°¹‘…µ…”€˜˜€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰É½±°µ½… ‘…µ…”µ½… ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆø(€€€€€€€€€€ñ‘¥ØøñÍÁ…¸ùíÍÁ•±±±½Ü¹É¥Ñ¥…°€ü€‰É¥Ñ¥…°¡¥Ğƒ
+Ü½Õ‰±”Ñ¡”‘…µ…”‘¥”ˆ€è€‰MÁ•±°¡¥Ğ½¹™¥Éµ•ƒ
+Ü±¥¬Ñ¼É½±°‘…µ…”‰ôğ½ÍÁ…¸øñ ÌùíÍÁ•±±±½Ü¹ÍÁ•±°¹‘…µ…•ôğ½ ÌøñÀùI½±°Ñ¡”ÍÁ•±°™…Á½ÌíÌ‘…µ…”Í•Á…É…Ñ•±ä¸Q¡”Ñ½Ñ…°İ¥±°‰”…ÁÁ±¥•Ñ¼íÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¹…µ•ô™…Á½ÌíÌ¡¥ĞÁ½¥¹ÑÌ¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õíÉ½±±M•±•Ñ•‘MÁ•±±…µ…•ôøñÍµ…±°ùI½±°ÍÁ•±°‘…µ…”ğ½Íµ…±°øñÍÑÉ½¹œùíÍÁ•±±±½Ü¹É¥Ñ¥…°€üÉ¥Ñ¥…°ƒ
+Ü€‘íÍÁ•±±±½Ü¹ÍÁ•±°¹‘…µ…•õ€€èÍÁ•±±±½Ü¹ÍÁ•±°¹‘…µ…•ôğ½ÍÑÉ½¹œøğ½‰ÕÑÑ½¸ø(€€€€€€€€ğ½Í•Ñ¥½¸ùô((€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰Ñ…Ñ¥…°µµ…ÀµÁ…¹•°ˆø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰µ…Àµ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰•å•‰É½ÜˆøÔµ™½½ĞÍÅÕ…É”É¥ğ½ÍÁ…¸øñ ÌùQ…Ñ¥…°µ…Àğ½ Ìøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰µ…Àµ±••¹ˆøñÍÁ…¸±…ÍÍ9…µ”ô‰±••¹µÁ±…å•ÈˆùA±…å•Èğ½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰±••¹µ•¹•µäˆù¹•µäğ½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰±••¹µ‘¥™™¥Õ±Ğˆù¥™™¥Õ±Ğğ½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰±••¹µ½Ù•Èˆù½Ù•Èğ½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰±••¹µ½‰©•Ñ¥Ù”ˆù=‰©•Ñ¥Ù”ğ½ÍÁ…¸øğ½‘¥Øøğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”õíÑ…É•ĞµÁ…¹•°€‘íÑ…É•Ñ¹…±åÍ¥Ì€ü€‰¡…ÌµÑ…É•Ğˆ€è€ˆ‰õôø(€€€€€€€€€€€íÑ…É•Ñ¹…±åÍ¥Ì€ü€ğøñ‘¥ØøñÍÁ…¸ùM•±•Ñ•Ñ…É•Ğğ½ÍÁ…¸øñÍÑÉ½¹œùíÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¹…µ•ôğ½ÍÑÉ½¹œøñÍµ…±°ùíÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹Í¥‘•ôƒ
+Üí•™™•Ñ¥Ù•Éµ½É±…ÍÌ¡•¹½Õ¹Ñ•È°Ñ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¥¥ôƒ
+ÜíÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹Í¥‘”€ôôô€‰•¹•µäˆ€ü•¹•µå!•…±Ñ¡1…‰•°¡Ñ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ°•áÁ•É¥•¹•5½‘”¤€è€‘íÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¡¥ÑA½¥¹ÑÌ¹ÕÉÉ•¹Ñô¼‘íÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¡¥ÑA½¥¹ÑÌ¹µ…á¥µÕµô!Aôğ½Íµ…±°øğ½‘¥Øøñ‘¥ØøñÍÁ…¸ù¥ÍÑ…¹”ğ½ÍÁ…¸øñÍÑÉ½¹œùíÑ…É•Ñ¹…±åÍ¥Ì¹‘¥ÍÑ…¹•••Ñô™Ğ¸ğ½ÍÑÉ½¹œøğ½‘¥Øøñ‘¥ØøñÍÁ…¸ùM¥¡Ñ±¥¹”ğ½ÍÁ…¸øñÍÑÉ½¹œùíÑ…É•Ñ¹…±åÍ¥Ì¹±¥¹•=™M¥¡Ğ€ü€‰±•…Èˆ€è€‰	±½­•‰ôğ½ÍÑÉ½¹œøğ½‘¥Øøñ‘¥ØøñÍÁ…¸ù½Ù•Èğ½ÍÁ…¸øñÍÑÉ½¹œùíÑ…É•Ñ¹…±åÍ¥Ì¹½Ù•È€ôôô€‰¡…±˜ˆ€ü€‰!…±˜€ ¬È¤ˆ€è€‰9½¹”‰ôğ½ÍÑÉ½¹œøğ½‘¥Øøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ‘¥Í…‰±•õí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹Í¥‘”€„ôô€‰Á±…å•È‰ô½¹±¥¬õì ¤€ôøìÍ•Ñ¹½Õ¹Ñ•È ¡ÍÑ…Ñ”¤€ôøÍ•±•ÑQ…É•Ğ¡ÍÑ…Ñ”°¹Õ±°¤¤ìÍ•ÑÑÑ…­±½Ü¡…ÑÑ…­±½Ü€üì€¸¸¹…ÑÑ…­±½Ü°Á¡…Í”è€‰Ñ…É•Ğˆ°Ñ…É•Ñ%èÕ¹‘•™¥¹•ô€è¹Õ±°¤ìÍ•ÑMÁ•±±±½Ü¡ÍÁ•±±±½Ü€üì€¸¸¹ÍÁ•±±±½Ü°Á¡…Í”è€‰Ñ…É•Ğˆ°Ñ…É•Ñ%èÕ¹‘•™¥¹•ô€è¹Õ±°¤ìÍ•Ñ••‘‰…¬ ‰Q…É•Ğ±•…É•¸ˆ¤ìõôù±•…ÈÑ…É•Ğğ½‰ÕÑÑ½¸øğ¼ø€è€ñ‘¥Ø±…ÍÍ9…µ”ô‰Ñ…É•Ğµ•µÁÑäˆøñÍÁ…¸ùí…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€üQ…É•Ñ¥¹œƒ
+Ü€‘í…ÑÑ…­±½Ü¹…ÑÑ…¬¹¹…µ•õ€€èÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€üQ…É•Ñ¥¹œƒ
+Ü€‘íÍÁ•±±±½Ü¹ÍÁ•±°¹¹…µ•õ€€è€‰¡½½Í”…¸…Ñ¥½¸‰ôğ½ÍÁ…¸øñÍÑÉ½¹œùí…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•ĞˆñğÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€ü€‰M•±•Ğ„¡¥¡±¥¡Ñ•É•…ÑÕÉ”ˆ€è€‰¡½½Í”…¸…ÑÑ…¬½ÈÍÁ•±°™¥ÉÍĞ‰ôğ½ÍÑÉ½¹œøñÍµ…±°ùí…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€ü€‰½±É¥¹Ì¥¹‘¥…Ñ”Ñ…É•ÑÌİ¥Ñ¡¥¸Ñ¡¥Ìİ•…Á½»ŠeÌÉ…¹”…¹±¥¹”½˜Í¥¡Ğ¸ˆ€èÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€ü€‰½±É¥¹Ì¥¹‘¥…Ñ”±•…°Ñ…É•ÑÌ™½ÈÑ¡”Í•±•Ñ•ÍÁ•±°¸ˆ€è€‰Q¡”Í•±•Ñ•½ÁÑ¥½¸‘•Ñ•Éµ¥¹•Ìİ¡¥ Ñ…É•ÑÌ…4¡¥¡±¥¡ÑÌ¸‰ôğ½Íµ…±°øğ½‘¥Øùô(€€€€€€€€€€ğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰µ…ÀµÍÉ½±°ˆÉ½±”ô‰É•¥½¸ˆ…É¥„µ±…‰•°ô‰Q…Ñ¥…°½µ‰…Ğµ…Àˆø(€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰‰…ÑÑ±”µÉ¥ˆÍÑå±”õíìÉ¥‘Q•µÁ±…Ñ•½±Õµ¹ÌèÉ•Á•…Ğ ‘í•¹½Õ¹Ñ•È¹µ…À¹İ¥‘Ñ¡ô°€ĞÙÁà¥€õôø(€€€€€€€€€€€€€íÉÉ…ä¹™É½´¡ì±•¹Ñ è•¹½Õ¹Ñ•È¹µ…À¹İ¥‘Ñ €¨•¹½Õ¹Ñ•È¹µ…À¹¡•¥¡Ğô°€¡|°¥¹‘•à¤€ôøì(€€€€€€€€€€€€€€€½¹ÍĞà€ô¥¹‘•à€”•¹½Õ¹Ñ•È¹µ…À¹İ¥‘Ñ ì(€€€€€€€€€€€€€€€½¹ÍĞä€ô5…Ñ ¹™±½½È¡¥¹‘•à€¼•¹½Õ¹Ñ•È¹µ…À¹İ¥‘Ñ ¤ì(€€€€€€€€€€€€€€€½¹ÍĞÑ•ÉÉ…¥¸€ô•¹½Õ¹Ñ•È¹µ…À¹Ñ•ÉÉ…¥¸¹™¥¹ ¡•±°¤€ôø•±°¹à€ôôôà€˜˜•±°¹ä€ôôôä¤ì(€€€€€€€€€€€€€€€½¹ÍĞ½ÕÁ…¹Ğ€ô•¹½Õ¹Ñ•È¹½µ‰…Ñ…¹ÑÌ¹™¥¹ ¡½µ‰…Ñ…¹Ğ¤€ôø½µ‰…Ñ…¹Ğ¹Á½Í¥Ñ¥½¸¹à€ôôôà€˜˜½µ‰…Ñ…¹Ğ¹Á½Í¥Ñ¥½¸¹ä€ôôôä¤ì(€€€€€€€€€€€€€€€½¹ÍĞµ½Ù•µ•¹Ñ•±°€ô±•…±5½Ù•µ•¹Ñ	å•±°¹•Ğ¡€‘íáô°‘íåõ€¤ì(€€€€€€€€€€€€€€€½¹ÍĞÉ•…¡…‰±”€ô€……ÑÑ…­±½Ü€˜˜€…ÍÁ•±±±½Ü€˜˜¥¹¥Ñ¥…Ñ¥Ù•I•…‘ä€˜˜…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹Í¥‘”€ôôô€‰Á±…å•Èˆ€˜˜€…½ÕÁ…¹Ğ€˜˜	½½±•…¸¡µ½Ù•µ•¹Ñ•±°¤ì(€€€€€€€€€€€€€€€½¹ÍĞ½½É‘¥¹…Ñ”€ô€‘íMÑÉ¥¹œ¹™É½µ¡…É½‘” ØÔ€¬à¥ô‘íä€¬€Åõ€ì(€€€€€€€€€€€€€€€½¹ÍĞÑ…É•Ñ•€ô½ÕÁ…¹Ğü¹¥€ôôô•¹½Õ¹Ñ•È¹Í•±•Ñ•‘Q…É•Ñ%ì(€€€€€€€€€€€€€€€½¹ÍĞÑ…É•Ñ…¹‘¥‘…Ñ”€ô	½½±•…¸¡½ÕÁ…¹Ğ€˜˜€¡…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•ĞˆñğÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ¤¤ì(€€€€€€€€€€€€€€€½¹ÍĞ±•…±=ÁÑ¥½¹Q…É•Ğ€ô	½½±•…¸¡½ÕÁ…¹Ğ€˜˜€¡±•…±ÑÑ…­Q…É•Ñ%‘Ì¹¡…Ì¡½ÕÁ…¹Ğ¹¥¤ñğ±•…±MÁ•±±Q…É•Ñ%‘Ì¹¡…Ì¡½ÕÁ…¹Ğ¹¥¤¤¤ì(€€€€€€€€€€€€€€€½¹ÍĞÑ…É•ÑY…±¥‘…Ñ¥½¸€ô½ÕÁ…¹Ğ€˜˜…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€üÙ…±¥‘…Ñ•ÑÑ…­Q…É•Ğ¡•¹½Õ¹Ñ•È°…ÑÑ…­±½Ü¹…ÑÑ…¬°½ÕÁ…¹Ğ¹¥¤€è½ÕÁ…¹Ğ€˜˜ÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€üÙ…±¥‘…Ñ•MÁ•±±Q…É•Ğ¡•¹½Õ¹Ñ•È°ÍÁ•±±±½Ü¹ÍÁ•±°°½ÕÁ…¹Ğ¹¥¤€è¹Õ±°ì(€€€€€€€€€€€€€€€½¹ÍĞÑ…É•Ñ=ÁÑ¥½¹9…µ”€ô…ÑÑ…­±½Üü¹…ÑÑ…¬¹¹…µ”€üüÍÁ•±±±½Üü¹ÍÁ•±°¹¹…µ”ì(€€€€€€€€€€€€€€€É•ÑÕÉ¸€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ­•äõí€‘íáô´‘íåõô±…ÍÍ9…µ”õíÉ¥µ•±°Ñ•ÉÉ…¥¸´‘íÑ•ÉÉ…¥¸ü¹­¥¹€üü€‰½Á•¸‰ô€‘íÉ•…¡…‰±”€ü€‰É•…¡…‰±”ˆ€è€ˆ‰ô€‘íÑ…É•Ñ•€ü€‰Ñ…É•Ñ•ˆ€è€ˆ‰ô€‘í±•…±=ÁÑ¥½¹Q…É•Ğ€ü€‰±•…°µÑ…É•Ğˆ€èÑ…É•Ñ…¹‘¥‘…Ñ”€ü€‰¥±±•…°µÑ…É•Ğˆ€è€ˆ‰õô½¹±¥¬õì ¤€ôø¡…¹‘±•É¥‘%¹Ñ•É…Ñ¥½¸¡à°ä°½ÕÁ…¹Ğü¹¥¥ô…É¥„µÁÉ•ÍÍ•õíÑ…É•Ñ•‘ô…É¥„µ±…‰•°õí€‘í½½É‘¥¹…Ñ•ô¸€‘íÑ•ÉÉ…¥¸ü¹±…‰•°€üü€‰=Á•¸É½Õ¹‰ô‘íµ½Ù•µ•¹Ñ•±°€ü€¸I•…¡…‰±”™½È€‘íµ½Ù•µ•¹Ñ•±°¹½ÍÑô™••Ğ¹€€è€ˆ‰ô‘í½ÕÁ…¹Ğ€ü€¸=ÕÁ¥•‰ä€‘í½ÕÁ…¹Ğ¹¹…µ•ô¸€‘í±•…±=ÁÑ¥½¹Q…É•Ğ€ü1•…°Ñ…É•Ğ™½È€‘íÑ…É•Ñ=ÁÑ¥½¹9…µ•ô¹€€è€‰M•±•Ğ…ÌÑ…É•Ğ¸‰õ€€è€ˆ‰õôÑ¥Ñ±”õí€‘í½½É‘¥¹…Ñ•ôƒ
+Ü€‘í½ÕÁ…¹Ğ€ü±•…±=ÁÑ¥½¹Q…É•Ğ€ü€‘í½ÕÁ…¹Ğ¹¹…µ•ôè±•…°Ñ…É•Ñ€€èÑ…É•ÑY…±¥‘…Ñ¥½¸ü¹É•…Í½¸€üüM•±•Ğ€‘í½ÕÁ…¹Ğ¹¹…µ•õ€€èµ½Ù•µ•¹Ñ•±°€ü€‘íµ½Ù•µ•¹Ñ•±°¹½ÍÑô™Ğ¸‰ä±•…°Á…Ñ¡€€èÑ•ÉÉ…¥¸ü¹±…‰•°€üü€‰=Á•¸É½Õ¹‰õôø(€€€€€€€€€€€€€€€€€€ñÍµ…±°ùí½½É‘¥¹…Ñ•ôğ½Íµ…±°ø(€€€€€€€€€€€€€€€€€íÑ•ÉÉ…¥¸€˜˜€ñÍÁ…¸±…ÍÍ9…µ”ô‰Ñ•ÉÉ…¥¸µµ…É¬ˆ…É¥„µ¡¥‘‘•¸ô‰ÑÉÕ”ˆùíÑ•ÉÉ…¥¸¹­¥¹€ôôô€‰İ…±°ˆ€ü€‹ŠZ€ˆ€èÑ•ÉÉ…¥¸¹­¥¹€ôôô€‰‘¥™™¥Õ±Ğˆ€ü€‹Š& ˆ€èÑ•ÉÉ…¥¸¹­¥¹€ôôô€‰½Ù•Èˆ€ü€‹Š^¤ˆ€è€‹Š^‰ôğ½ÍÁ…¸ùô(€€€€€€€€€€€€€€€€€í½ÕÁ…¹Ğ€˜˜€ñÍÁ…¸±…ÍÍ9…µ”õíÑ½­•¸€‘í½ÕÁ…¹Ğ¹Í¥‘•ô€‘í½ÕÁ…¹Ğ¹¡¥ÑA½¥¹ÑÌ¹ÕÉÉ•¹Ğ€ğô€À€ü½ÕÁ…¹Ğ¹Í¥‘”€ôôô€‰Á±…å•Èˆ€˜˜€…½ÕÁ…¹Ğ¹ÍÑ…‰¥±¥é•€˜˜½ÕÁ…¹Ğ¹‘•…Ñ¡M…Ù•Ì¹™…¥±ÕÉ•Ì€ğ€Ì€ü€‰Õ¹½¹Í¥½ÕÌˆ€è€‰‘•™•…Ñ•ˆ€è€ˆ‰ô€‘íÑ…É•Ñ•€ü€‰Í•±•Ñ•ˆ€è€ˆ‰õôÑ¥Ñ±”õí½ÕÁ…¹Ğ¹¹…µ•ôùí½ÕÁ…¹Ğ¹¡¥ÑA½¥¹ÑÌ¹ÕÉÉ•¹Ğ€ğô€À€ü½ÕÁ…¹Ğ¹ÍÑ…‰¥±¥é•€ü€‰Lˆ€è€ˆÀˆ€è½ÕÁ…¹Ğ¹¹…µ”¹Í±¥” À°€È¤¹Ñ½UÁÁ•É…Í” ¥ôğ½ÍÁ…¸ùô(€€€€€€€€€€€€€€€€ğ½‰ÕÑÑ½¸øì(€€€€€€€€€€€€€ô¥ô(€€€€€€€€€€€€ğ½‘¥Øø(€€€€€€€€€€ğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰µ…Àµ¡•±ÀˆøñÍÁ…¸ùí…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•ĞˆñğÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€ü€‰½±É¥¹œè±•…°Ñ…É•Ğ™½ÈÍ•±•Ñ•½ÁÑ¥½¸ˆ€è€‰É•…ÑÕÉ”Ñ½­•¸è¥¹ÍÁ•ĞÑ…É•Ğ‰ôğ½ÍÁ…¸øñÍÁ…¸ù!¥¡±¥¡Ñ••µÁÑäÍÅÕ…É”èÑ…À½¹”Ñ¼µ½Ù”Ñ¡•É”ğ½ÍÁ…¸øñÍÁ…¸ù…4™¥¹‘Ì„±•…°Á…Ñ …¹¡…É•ÌÑ•ÉÉ…¥¸½ÍÑÌğ½ÍÁ…¸øğ½‘¥Øø(€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰¥¹¥Ñ¥…Ñ¥Ù”µÍÑÉ¥Àˆøñ‘¥Ø±…ÍÍ9…µ”ô‰É½Õ¹ˆùI½Õ¹€ñÍÑÉ½¹œùí•¹½Õ¹Ñ•È¹É½Õ¹‘ôğ½ÍÑÉ½¹œøğ½‘¥Øùí•¹½Õ¹Ñ•È¹½µ‰…Ñ…¹ÑÌ¹µ…À ¡½µ‰…Ñ…¹Ğ°¥¹‘•à¤€ôø€ñ‘¥Ø­•äõí½µ‰…Ñ…¹Ğ¹¥‘ô±…ÍÍ9…µ”õí¥¹¥Ñ¥…Ñ¥Ù”µ…É€‘í¥¹¥Ñ¥…Ñ¥Ù•I•…‘ä€˜˜¥¹‘•à€ôôô•¹½Õ¹Ñ•È¹…Ñ¥Ù•%¹‘•à€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô€‘í½µ‰…Ñ…¹Ğ¹¡¥ÑA½¥¹ÑÌ¹ÕÉÉ•¹Ğ€ğô€À€ü½µ‰…Ñ…¹Ğ¹Í¥‘”€ôôô€‰Á±…å•Èˆ€˜˜€…½µ‰…Ñ…¹Ğ¹ÍÑ…‰¥±¥é•€˜˜½µ‰…Ñ…¹Ğ¹‘•…Ñ¡M…Ù•Ì¹™…¥±ÕÉ•Ì€ğ€Ì€ü€‰Õ¹½¹Í¥½ÕÌˆ€è€‰‘•™•…Ñ•ˆ€è€ˆ‰õôøñÍÁ…¸ùí½µ‰…Ñ…¹Ğ¹¥¹¥Ñ¥…Ñ¥Ù•I½±±•€ü½µ‰…Ñ…¹Ğ¹¥¹¥Ñ¥…Ñ¥Ù”€è€‹ŠP‰ôğ½ÍÁ…¸øñ‘¥ØøñÍÑÉ½¹œùí½µ‰…Ñ…¹Ğ¹¹…µ•ôğ½ÍÑÉ½¹œøñÍµ…±°ùí½µ‰…Ñ…¹Ğ¹¡¥ÑA½¥¹ÑÌ¹ÕÉÉ•¹Ğ€ğô€À€ü½µ‰…Ñ…¹Ğ¹ÍÑ…‰¥±¥é•€ü€‰ÍÑ…‰¥±¥é•ˆ€è½µ‰…Ñ…¹Ğ¹‘•…Ñ¡M…Ù•Ì¹™…¥±ÕÉ•Ì€øô€Ì€ü€‰‘•™•…Ñ•ˆ€è€‘í½µ‰…Ñ…¹Ğ¹‘•…Ñ¡M…Ù•Ì¹ÍÕ•ÍÍ•ÍôÍ…Ù•Ìƒ
+Ü€‘í½µ‰…Ñ…¹Ğ¹‘•…Ñ¡M…Ù•Ì¹™…¥±ÕÉ•Íô™…¥±ÕÉ•Í€€è½µ‰…Ñ…¹Ğ¹¥¹¥Ñ¥…Ñ¥Ù•I½±±•€ü¥¹¥Ñ¥…Ñ¥Ù”ƒ
+Ü€‘í½µ‰…Ñ…¹Ğ¹Í¥‘•õ€€è½µ‰…Ñ…¹Ğ¹Í¥‘”€ôôô€‰Á±…å•Èˆ€üÈÀ€‘í½µ‰…Ñ…¹Ğ¹¥¹¥Ñ¥…Ñ¥Ù•5½‘¥™¥•È€øô€À€ü€ˆ¬ˆ€è€‹Š"H‰ô‘í5…Ñ ¹…‰Ì¡½µ‰…Ñ…¹Ğ¹¥¹¥Ñ¥…Ñ¥Ù•5½‘¥™¥•È¥ôƒ
+Üå½ÕÈÉ½±±€€è€‰…4É½±±ÌÁÉ¥Ù…Ñ•±ä‰ôğ½Íµ…±°øğ½‘¥Øøğ½‘¥Øø¥ôğ½‘¥Øø((€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰ÑÕÉ¸µ‘…Í¡‰½…Éˆøñ‘¥ØøñÍÁ…¸ùÕÉÉ•¹ĞÑÕÉ¸ğ½ÍÁ…¸øñÍÑÉ½¹œùí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹¹…µ•ôğ½ÍÑÉ½¹œøğ½‘¥Øøñ‘¥ØøñÍÁ…¸ùÑ¥½¸ğ½ÍÁ…¸øñÍÑÉ½¹œùí•¹½Õ¹Ñ•È¹ÑÕÉ¸¹…Ñ¥½¸€ü€‰I•…‘äˆ€è€‰UÍ•‰ôğ½ÍÑÉ½¹œøğ½‘¥Øøñ‘¥ØøñÍÁ…¸ù	½¹ÕÌ…Ñ¥½¸ğ½ÍÁ…¸øñÍÑÉ½¹œùí•¹½Õ¹Ñ•È¹ÑÕÉ¸¹‰½¹ÕÍÑ¥½¸€ü€‰I•…‘äˆ€è€‰UÍ•‰ôğ½ÍÑÉ½¹œøğ½‘¥Øøñ‘¥ØøñÍÁ…¸ù5½Ù•µ•¹Ğğ½ÍÁ…¸øñÍÑÉ½¹œùí•¹½Õ¹Ñ•È¹ÑÕÉ¸¹µ½Ù•µ•¹ÑI•µ…¥¹¥¹ô™Ğ¹í•¹½Õ¹Ñ•È¹ÑÕÉ¸¹‘¥Í•¹…•€ü€ˆƒ
+Ü¥Í•¹…•ˆ€è€ˆ‰ôğ½ÍÑÉ½¹œøğ½‘¥Øøñ‘¥ØøñÍÁ…¸ùe½ÕÈÉ•…Ñ¥½¸ğ½ÍÁ…¸øñÍÑÉ½¹œùíÁ±…å•É½µ‰…Ñ…¹Ğ¹É•…Ñ¥½¹Ù…¥±…‰±”€ü€‰I•…‘äˆ€è€‰UÍ•‰ôğ½ÍÑÉ½¹œøğ½‘¥Øøğ½‘¥Øø((€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰ÍÑ…Ñ”µÑÉ…äˆ…É¥„µ±…‰•°ô‰¡…É…Ñ•ÈÉ•Í½ÕÉ•Ì…¹Ñ•µÁ½É…Éä•™™•ÑÌˆø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰É•Í½ÕÉ”µÑÉ…­•Èˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰•å•‰É½Üˆù½µ‰…ĞÉ•Í½ÕÉ•Ìğ½ÍÁ…¸øñ ÌùUÍ•ÌÉ•µ…¥¹¥¹œğ½ Ìøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰É•Í½ÕÉ”µÁ¥±±ÌˆùíÁ±…å•É½µ‰…Ñ…¹Ğ¹É•Í½ÕÉ•Ì¹±•¹Ñ €üÁ±…å•É½µ‰…Ñ…¹Ğ¹É•Í½ÕÉ•Ì¹µ…À ¡É•Í½ÕÉ”¤€ôø€ñ‘¥Ø­•äõíÉ•Í½ÕÉ”¹¥‘ôøñÍÁ…¸ùíÉ•Í½ÕÉ”¹­¥¹€ôôô€‰ÍÁ•±°µÍ±½Ğˆ€ü1•Ù•°€‘íÉ•Í½ÕÉ”¹±•Ù•±ôÍ±½ÑÍ€€èÉ•Í½ÕÉ”¹¹…µ•ôğ½ÍÁ…¸øñÍÑÉ½¹œùíÉ•Í½ÕÉ”¹ÕÉÉ•¹Ñô½íÉ•Í½ÕÉ”¹µ…á¥µÕµôğ½ÍÑÉ½¹œøğ½‘¥Øø¤€è€ñÀù9¼ÑÉ…­•É•Í½ÕÉ•Ì¥µÁ½ÉÑ•¸ğ½Àùôğ½‘¥Øøğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰•™™•ĞµÑÉ…­•Èˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰•å•‰É½Üˆù•É¥Ù•ÍÑ…Ñ¥ÍÑ¥Ìğ½ÍÁ…¸øñ ÌùÑ¥Ù”•™™•ÑÌğ½ Ìøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰•™™•ĞµÁ¥±±ÌˆùíÁ±…å•É™™•ÑÌ¹±•¹Ñ €üÁ±…å•É™™•ÑÌ¹µ…À ¡•™™•Ğ¤€ôøì½¹ÍĞÉ•µ…¥¹¥¹œ€ôÉ•µ…¥¹¥¹™™•ÑI½Õ¹‘Ì¡•¹½Õ¹Ñ•È°•™™•Ğ¤ìÉ•ÑÕÉ¸€ñ‘¥Ø­•äõí•™™•Ğ¹¥‘ôøñÍÁ…¸ùí•™™•Ğ¹½¹•¹ÑÉ…Ñ¥½¸€ü€‰½¹•¹ÑÉ…Ñ¥½¸ˆ€èÉ•µ…¥¹¥¹œ€ôôô€Ä€ü€‰U¹Ñ¥°¹•áĞÑÕÉ¸ˆ€èÉ•µ…¥¹¥¹œ€ôôô¹Õ±°€ü€‰=¹½¥¹œˆ€è€‘íÉ•µ…¥¹¥¹ôÉ½Õ¹‘Íôğ½ÍÁ…¸øñÍÑÉ½¹œùí•™™•Ğ¹¹…µ•ôğ½ÍÑÉ½¹œøñÍµ…±°ùí•™™•Ğ¹‘•ÍÉ¥ÁÑ¥½¹ôğ½Íµ…±°øğ½‘¥Øøìô¤€è€ñÀù	…Í”ÍÑ…Ñ¥ÍÑ¥Ì½¹±äì¹¼Ñ•µÁ½É…Éäµ½‘¥™¥•ÉÌ…É”…Ñ¥Ù”¸ğ½Àùôğ½‘¥Øøğ½‘¥Øø(€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…Ñ¥½¸µ½¹Í½±”ˆø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰½¹Í½±”µ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰•å•‰É½Üˆùíµ½‘•½Áåm•áÁ•É¥•¹•5½‘•t¹±…‰•±ôµ½‘”ğ½ÍÁ…¸øñ ÌùíÑ…É•Ñ¹…±åÍ¥Ì€üÑ¥½¹Ì……¥¹ÍĞ€‘íÑ…É•Ñ¹…±åÍ¥Ì¹Ñ…É•Ğ¹¹…µ•õ€€è€‰¡½½Í”å½ÕÈ…Ñ¥½¸‰ôğ½ Ìøğ½‘¥Øùí±…ÍÑI½±°€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰µ¥¹¤µÉ½±°ˆøñÍÁ…¸ù1…ÍĞÉ½±°ğ½ÍÁ…¸øñÍÑÉ½¹œùí±…ÍÑI½±°¹Ñ½Ñ…±ôğ½ÍÑÉ½¹œøğ½‘¥Øùôğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…Ñ¥½¸µ…Ñ•½ÉäµÑ…‰Ìˆ…É¥„µ±…‰•°ô‰Ñ¥½¸•½¹½µä…Ñ•½É¥•Ìˆùí…Ñ¥½¹…Ñ•½Éå½Áä¹µ…À ¡…Ñ•½Éä¤€ôøì(€€€€€€€€€€€½¹ÍĞ…Ñ¥½¹Ì€ôÙ¥Í¥‰±•Ñ¥½¹Ì¹™¥±Ñ•È ¡…Ñ¥½¸¤€ôø…Ñ¥½¸¹½ÍĞ€ôôô…Ñ•½Éä¹¥¤ì(€€€€€€€€€€€½¹ÍĞ±•…±½Õ¹Ğ€ô…Ñ¥½¹Ì¹™¥±Ñ•È ¡…Ñ¥½¸¤€ôøÙ…±¥‘…Ñ•Ñ¥½¸¡…Ñ¥½¸°•¹½Õ¹Ñ•È°¡…É…Ñ•È¤¹±•…°¤¹±•¹Ñ ì(€€€€€€€€€€€É•ÑÕÉ¸€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ­•äõí…Ñ•½Éä¹¥‘ô±…ÍÍ9…µ”õí…Ñ¥½¹…Ñ•½Éä€ôôô…Ñ•½Éä¹¥€ü€‰…Ñ¥Ù”ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÍ•ÑÑ¥½¹…Ñ•½Éä¡…Ñ•½Éä¹¥¥ôøñÍÁ…¸ùí…Ñ•½Éä¹±…‰•±ôğ½ÍÁ…¸øñÍÑÉ½¹œùí±•…±½Õ¹Ñôğ½ÍÑÉ½¹œøñÍµ…±°ùí…Ñ•½Éä¹‘•Ñ…¥±ôğ½Íµ…±°øğ½‰ÕÑÑ½¸øì(€€€€€€€€€ô¥ôğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…Ñ¥½¸µÉ¥ˆùí…Ñ•½É¥é•‘Ñ¥½¹Ì¹±•¹Ñ €ü…Ñ•½É¥é•‘Ñ¥½¹Ì¹µ…À ¡…Ñ¥½¸¤€ôøì(€€€€€€€€€€€½¹ÍĞÙ…±¥‘…Ñ¥½¸€ôÙ…±¥‘…Ñ•Ñ¥½¸¡…Ñ¥½¸°•¹½Õ¹Ñ•È°¡…É…Ñ•È¤ì(€€€€€€€€€€€½¹ÍĞÑ…É•Ñ¥¹1…‰•°€ô…Ñ¥½¸¹Ñ…É•Ñ¥¹œü¹µ½‘”€ôôô€‰Í¥¹±”ˆ€ü€‘í…Ñ¥½¸¹Ñ…É•Ñ¥¹œ¹É…¹•••Ñô™Ğ¹€€è…Ñ¥½¸¹Ñ…É•Ñ¥¹œü¹µ½‘”€ôôô€‰…É•„ˆ€ü€‘í…Ñ¥½¸¹Ñ…É•Ñ¥¹œ¹Í¡…Á•ôƒ
+Ü€‘í…Ñ¥½¸¹Ñ…É•Ñ¥¹œ¹Í¥é•••Ñô™Ğ¹€€è…Ñ¥½¸¹½ÍĞ¹É•Á±…” ˆ´ˆ°€ˆ€ˆ¤ì(€€€€€€€€€€€É•ÑÕÉ¸€ñ‰ÕÑÑ½¸­•äõí…Ñ¥½¸¹¥‘ô±…ÍÍ9…µ”õì…Ù…±¥‘…Ñ¥½¸¹±•…°€ü€‰¥±±•…°ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôøÉÕ¹Ñ¥½¸¡…Ñ¥½¸¥ôÑ¥Ñ±”õí•áÁ•É¥•¹•5½‘”€ôôô€‰ÑÉ…¥¹¥¹œˆ€ü€¡Ù…±¥‘…Ñ¥½¸¹±•…°€ü…Ñ¥½¸¹‘•ÍÉ¥ÁÑ¥½¸€èÙ…±¥‘…Ñ¥½¸¹É•…Í½¸¤€èÕ¹‘•™¥¹•‘ôøñÍÑÉ½¹œùí…Ñ¥½¸¹¹…µ•ôğ½ÍÑÉ½¹œøñÍÁ…¸ùíÑ…É•Ñ¥¹1…‰•±ôğ½ÍÁ…¸ùí•áÁ•É¥•¹•5½‘”€„ôô€‰…‘Ù…¹•ˆ€˜˜€ñÍµ…±°ùíÙ…±¥‘…Ñ¥½¸¹±•…°ñğ•áÁ•É¥•¹•5½‘”€ôôô€‰‰•¥¹¹•Èˆ€ü…Ñ¥½¸¹‘•ÍÉ¥ÁÑ¥½¸€èÙ…±¥‘…Ñ¥½¸¹É•…Í½¹ôğ½Íµ…±°ùôğ½‰ÕÑÑ½¸øì(€€€€€€€€€ô¤€è€ñ‘¥Ø±…ÍÍ9…µ”ô‰…Ñ•½Éäµ•µÁÑäˆøñÍÑÉ½¹œù9¼…Ñ¥½¹Ì…Ù…¥±…‰±”ğ½ÍÑÉ½¹œøñÀùe½ÕÈ¥µÁ½ÉÑ•Í¡••Ğ…¹ÕÉÉ•¹ĞÑÕÉ¸ÍÑ…Ñ”‘¼¹½ĞÁÉ½Ù¥‘”…¸½ÁÑ¥½¸¥¸Ñ¡¥Ì…Ñ•½Éä¸ğ½Àøğ½‘¥Øùôğ½‘¥Øø(€€€€€€€€€í¡½¥•5½‘”€ôôô€‰…ÑÑ…¬ˆ€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡½¥”µÁ…¹•°ˆøñ‘¥Ø±…ÍÍ9…µ”ô‰¡½¥”µ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸ùMÑ•À€Äƒ
+Ü¡½½Í”İ•…Á½¸ğ½ÍÁ…¸øñÍÑÉ½¹œù]•…Á½¸…¹…ÑÑ…¬½ÁÑ¥½¹Ìğ½ÍÑÉ½¹œøğ½‘¥Øøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøìÍ•Ñ¡½¥•5½‘”¡¹Õ±°¤ìÍ•ÑÑÑ…­±½Ü¡¹Õ±°¤ìõôù…¹•°ğ½‰ÕÑÑ½¸øğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰¡½¥”µÉ¥ˆùì¡¡…É…Ñ•È¹…ÑÑ…­Ì€üümt¤¹µ…À ¡…ÑÑ…¬¤€ôøì½¹ÍĞÍ•±•Ñ•€ô…ÑÑ…­±½Üü¹…ÑÑ…¬¹¥€ôôô…ÑÑ…¬¹¥ìÉ•ÑÕÉ¸€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ­•äõí…ÑÑ…¬¹¥‘ô±…ÍÍ9…µ”õíÍ•±•Ñ•€ü€‰Í•±•Ñ•ˆ€è€ˆ‰ô½¹±¥¬õì ¤€ôø¡½½Í•ÑÑ…¬¡…ÑÑ…¬¥ôøñÍÁ…¸ùí…ÑÑ…¬¹­¥¹‘ôƒ
+Üí…ÑÑ…¬¹¹½Éµ…±I…¹•••Ñõí…ÑÑ…¬¹±½¹I…¹•••Ğ€ü€¼‘í…ÑÑ…¬¹±½¹I…¹•••Ñõ€€è€ˆ‰ô™Ğ¸ğ½ÍÁ…¸øñÍÑÉ½¹œùí…ÑÑ…¬¹¹…µ•ôğ½ÍÑÉ½¹œøñÍµ…±°ùí…ÑÑ…¬¹‘…µ…•ôƒ
+Üí…ÑÑ…¬¹…ÑÑ…­	½¹ÕÌ€øô€À€ü€ˆ¬ˆ€è€ˆ‰õí…ÑÑ…¬¹…ÑÑ…­	½¹ÕÍôÑ¼¡¥Ğğ½Íµ…±°øñÀùíÍ•±•Ñ•€˜˜…ÑÑ…­±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€ü€‘í±•…±ÑÑ…­Q…É•Ñ%‘Ì¹Í¥é•ô±•…°Ñ…É•Ğ‘í±•…±ÑÑ…­Q…É•Ñ%‘Ì¹Í¥é”€ôôô€Ä€ü€ˆˆ€è€‰Ì‰ô¡¥¡±¥¡Ñ•½¸Ñ¡”µ…À¹€€è…ÑÑ…¬¹‘•ÍÉ¥ÁÑ¥½¹ôğ½Àøğ½‰ÕÑÑ½¸øìô¥ôğ½‘¥Øøğ½‘¥Øùô(€€€€€€€€€í¡½¥•5½‘”€ôôô€‰ÍÁ•±°ˆ€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰¡½¥”µÁ…¹•°ˆøñ‘¥Ø±…ÍÍ9…µ”ô‰¡½¥”µ¡•…‘¥¹œˆøñ‘¥ØøñÍÁ…¸ùMÑ•À€Äƒ
+Ü¡½½Í”ÍÁ•±°ğ½ÍÁ…¸øñÍÑÉ½¹œùMÁ•±±‰½½¬…¹Í±½Ğ½ÍÑÌğ½ÍÑÉ½¹œøğ½‘¥Øøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøìÍ•Ñ¡½¥•5½‘”¡¹Õ±°¤ìÍ•ÑMÁ•±±±½Ü¡¹Õ±°¤ìõôù…¹•°ğ½‰ÕÑÑ½¸øğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰¡½¥”µÉ¥ˆùì¡¡…É…Ñ•È¹ÍÁ•±±Ì€üümt¤¹±•¹Ñ €ü€¡¡…É…Ñ•È¹ÍÁ•±±Ì€üümt¤¹µ…À ¡ÍÁ•±°¤€ôøì½¹ÍĞÙ…±¥‘…Ñ¥½¸€ôÙ…±¥‘…Ñ•MÁ•±±Ù…¥±…‰¥±¥Ñä¡•¹½Õ¹Ñ•È°ÍÁ•±°¤ì½¹ÍĞÍ•±•Ñ•€ôÍÁ•±±±½Üü¹ÍÁ•±°¹¥€ôôôÍÁ•±°¹¥ìÉ•ÑÕÉ¸€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ­•äõíÍÁ•±°¹¥‘ô±…ÍÍ9…µ”õí€‘ì…Ù…±¥‘…Ñ¥½¸¹±•…°€ü€‰¥±±•…°ˆ€è€ˆ‰ô€‘íÍ•±•Ñ•€ü€‰Í•±•Ñ•ˆ€è€ˆ‰õô½¹±¥¬õì ¤€ôø¡½½Í•MÁ•±°¡ÍÁ•±°¥ôøñÍÁ…¸ùíÍÁ•±°¹±•Ù•°€ôôô€À€ü€‰…¹ÑÉ¥Àƒ
+Ü™É•”ˆ€è1•Ù•°€‘íÍÁ•±°¹±•Ù•±ôƒ
+Ü€ÄÍ±½ÑõíÍÁ•±°¹É¥ÑÕ…°€ü€ˆƒ
+ÜÉ¥ÑÕ…°ˆ€è€ˆ‰ôğ½ÍÁ…¸øñÍÑÉ½¹œùíÍÁ•±°¹¹…µ•ôğ½ÍÑÉ½¹œøñÍµ…±°ùíÍÁ•±°¹Ñ…É•Ğ€ôôô€‰Í•±˜ˆ€ü€‰M•±˜ˆ€èÍÁ•±°¹Ñ…É•Ğ€ôôô€‰Í•±˜µ½ÈµÍ¥¹±”ˆ€üM•±˜½ÈÉ•…ÑÕÉ”ƒ
+Ü€‘íÍÁ•±°¹É…¹•••Ñô™Ğ¹€€è€‘íÍÁ•±°¹É…¹•••Ñô™Ğ¹õíÍÁ•±°¹½¹•¹ÑÉ…Ñ¥½¸€ü€ˆƒ
+Ü½¹•¹ÑÉ…Ñ¥½¸ˆ€è€ˆ‰ôğ½Íµ…±°øñÀùíÍ•±•Ñ•€˜˜ÍÁ•±±±½Üü¹Á¡…Í”€ôôô€‰Ñ…É•Ğˆ€ü€‘í±•…±MÁ•±±Q…É•Ñ%‘Ì¹Í¥é•ô±•…°Ñ…É•Ğ‘í±•…±MÁ•±±Q…É•Ñ%‘Ì¹Í¥é”€ôôô€Ä€ü€ˆˆ€è€‰Ì‰ô¡¥¡±¥¡Ñ•½¸Ñ¡”µ…À¹€€èÙ…±¥‘…Ñ¥½¸¹±•…°€üÍÁ•±°¹‘…µ…”€üüÍÁ•±°¹¡•…±¥¹œ€üüÍÁ•±°¹•™™•Ğü¹‘•ÍÉ¥ÁÑ¥½¸€üüÍÁ•±°¹‘•ÍÉ¥ÁÑ¥½¸€üü€‰MÁ•±°É•…‘ä¸ˆ€èÙ…±¥‘…Ñ¥½¸¹É•…Í½¹ôğ½Àøğ½‰ÕÑÑ½¸øìô¤€è€ñ‘¥Ø±…ÍÍ9…µ”ô‰…Ñ•½Éäµ•µÁÑäˆøñÍÑÉ½¹œù9¼ÍÁ•±±Ì¥µÁ½ÉÑ•ğ½ÍÑÉ½¹œøñÀùQ¡¥Ì¡…É…Ñ•ÈÍ¡••Ğ‘½•Ì¹½Ğ½¹Ñ…¥¸ÍÁ•±°¡½¥•Ìå•Ğ¸ğ½Àøğ½‘¥Øùôğ½‘¥Øøğ½‘¥Øùô(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…É•„µ•™™•Ğµ¹½Ñ”ˆøñÍÁ…¸ùÉ•„µ•™™•Ğ™½Õ¹‘…Ñ¥½¸ğ½ÍÁ…¸øñÀùÕÑÕÉ”…Ñ¥½¹Ì…¸‘•™¥¹”½¹•Ì°Õ‰•Ì°å±¥¹‘•ÉÌ°±¥¹•Ì°ÍÁ¡•É•Ì°½È•µ…¹…Ñ¥½¹Ì…¹ÍÁ•¥™äİ¡•Ñ¡•ÈÑ¡•ä…™™•Ğ•Ù•ÉäÉ•…ÑÕÉ”°½¹±ä¡½ÍÑ¥±•Ì°½È¡½Í•¸É•…ÑÕÉ•Ì¸ğ½Àøğ½‘¥Øø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰ÑÕÉ¸µ½¹ÑÉ½±Ìˆøñ‘¥ØøñÍÁ…¸ùQÕÉ¸½¹ÑÉ½°ğ½ÍÁ…¸øñÀùí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹Í¥‘”€ôôô€‰Á±…å•Èˆ€ü€‰¹å½ÕÈÑÕÉ¸…¹±•Ğ…4…‘Ù…¹”¥¹¥Ñ¥…Ñ¥Ù”¸ˆ€è€‰…4½¹ÑÉ½±Ì…¹…‘Ù…¹•Ì•¹•µäÑÕÉ¹Ì…ÕÑ½µ…Ñ¥…±±ä¸‰ôğ½Àøğ½‘¥Øøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ‘¥Í…‰±•õí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹Í¥‘”€„ôô€‰Á±…å•Èˆñğ½ÕÑ½µ”€„ôô€‰…Ñ¥Ù”‰ô½¹±¥¬õì ¤€ôøÉÕ¹Ñ¥½¸¡…Ñ¥½¹…Ñ…±½œ¹™¥¹ ¡…Ñ¥½¸¤€ôø…Ñ¥½¸¹¥€ôôô€‰•¹µÑÕÉ¸ˆ¤„¥ôùí…Ñ¥Ù•½µ‰…Ñ…¹Ğ¹Í¥‘”€ôôô€‰Á±…å•Èˆ€ü€‰¹ÑÕÉ¸ˆ€è€‰¹•µä…Ñ¥¹œ‰ôğ½‰ÕÑÑ½¸øğ½‘¥Øø(€€€€€€€€€€ñ™½É´±…ÍÍ9…µ”ô‰½µµ…¹µ‰…Èˆ½¹MÕ‰µ¥ĞõíÍÕ‰µ¥Ñ½µµ…¹‘ôøñ±…‰•°¡Ñµ±½Èô‰½µµ…¹ˆù=È‘•ÍÉ¥‰”å½ÕÈ…Ñ¥½¸ğ½±…‰•°øñ‘¥Øøñ¥¹ÁÕĞ¥ô‰½µµ…¹ˆÙ…±Õ”õí½µµ…¹‘ô½¹¡…¹”õì¡•Ù•¹Ğ¤€ôøÍ•Ñ½µµ…¹¡•Ù•¹Ğ¹Ñ…É•Ğ¹Ù…±Õ”¥ôÁ±…•¡½±‘•Èô‰á…µÁ±”è$…ÍĞ„ÍÁ•±°…ĞÑ¡”Í½ÕĞˆ€¼øñ‰ÕÑÑ½¸ùMÕ‰µ¥Ğğ½‰ÕÑÑ½¸øğ½‘¥Øøğ½™½É´ø(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™••‘‰…¬ˆ…É¥„µ±¥Ù”ô‰Á½±¥Ñ”ˆøñÍÁ…¸ù…4ğ½ÍÁ…¸øñÀùí™••‘‰…­ôğ½Àøğ½‘¥Øø(€€€€€€€€ğ½Í•Ñ¥½¸ø((€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰•¹½Õ¹Ñ•Èµ±½œˆøñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰•å•‰É½Üˆù½µ‰…Ğ±½œğ½ÍÁ…¸øñ Ìù¹½Õ¹Ñ•ÈÍÑ…Ñ”ğ½ Ìøğ½‘¥Øøñ½°ùí•¹½Õ¹Ñ•È¹±½œ¹Í±¥” À°€Ô¤¹µ…À ¡•¹ÑÉä°¥¹‘•à¤€ôø€ñ±¤­•äõí€‘í•¹ÑÉåô´‘í¥¹‘•áõôùí•¹ÑÉåôğ½±¤ø¥ôğ½½°øğ½Í•Ñ¥½¸ø(€€€€€€ğ½Í•Ñ¥½¸ø(€€€€ğ½Í•Ñ¥½¸ø(€€ğ½µ…¥¸øì)ô(
