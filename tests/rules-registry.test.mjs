@@ -66,6 +66,24 @@ test("triggered feature coverage records Stone's Endurance as an executable 2024
   assert.deepEqual(stonesEndurance.components, ["trigger", "reaction", "dice-roll", "damage-reduction", "resource-spend", "resource-recovery"]);
 });
 
+test("Lay on Hands healing is executable with edition-specific provenance", () => {
+  const legacy = BUILT_IN_CHARACTERS.find((character) => character.id === "surina-daardendrian");
+  const current = BUILT_IN_CHARACTERS.find((character) => character.id === "irven-weber");
+  const legacyEntry = buildCharacterMechanicCoverage(legacy).entries.find((entry) => entry.entityId === "lay-on-hands" && entry.kind === "feature");
+  const currentEntry = buildCharacterMechanicCoverage(current).entries.find((entry) => entry.entityId === "lay-on-hands" && entry.kind === "feature");
+  assert.equal(legacyEntry.rulesetId, "dnd-2014");
+  assert.equal(legacyEntry.sourceId, "srd-5.1");
+  assert.equal(currentEntry.rulesetId, "dnd-2024");
+  assert.equal(currentEntry.sourceId, "srd-5.2.1");
+  for (const entry of [legacyEntry, currentEntry]) {
+    assert.equal(entry.status, "partial");
+    assert.equal(entry.executable, true);
+    assert.deepEqual(entry.components, ["action-economy", "targeting", "range", "resource-spend", "resource-recovery", "hit-point-restoration"]);
+  }
+  assert.match(legacyEntry.missingCapabilities.join(" "), /disease/i);
+  assert.match(currentEntry.missingCapabilities.join(" "), /Poisoned/i);
+});
+
 test("coverage separates executable cores from unresolved riders", () => {
   const cleira = BUILT_IN_CHARACTERS.find((character) => character.id === "cleira-oestwilde");
   const report = buildCharacterMechanicCoverage(cleira);

@@ -115,6 +115,8 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
       const unresolved = unresolvedPattern.test(feature.description);
       const components: MechanicComponent[] = executableAction?.resolution.type === "dash-and-temporary-hit-points"
         ? ["action-economy", "movement", "resource-spend", "resource-recovery", "temporary-hit-points"]
+        : executableAction?.resolution.type === "healing-pool"
+          ? ["action-economy", "targeting", "range", "resource-spend", "resource-recovery", "hit-point-restoration"]
         : executableTrigger?.resolution.type === "drop-to-one-hit-point"
           ? ["trigger", "replacement-effect", "resource-spend", "resource-recovery"]
           : executableTrigger?.resolution.type === "reduce-damage-by-roll"

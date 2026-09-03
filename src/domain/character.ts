@@ -63,11 +63,16 @@ export type CharacterFeatureAction = {
   cost: "action" | "bonus-action" | "reaction";
   description: string;
   resourceName: string;
-  resourceCost: number;
-  resolution: {
-    type: "dash-and-temporary-hit-points";
-    temporaryHitPoints: "proficiency-bonus";
-  };
+  resourceCost: number | "variable";
+  resolution:
+    | {
+        type: "dash-and-temporary-hit-points";
+        temporaryHitPoints: "proficiency-bonus";
+      }
+    | {
+        type: "healing-pool";
+        rangeFeet: 5;
+      };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;
 };

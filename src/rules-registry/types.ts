@@ -20,6 +20,7 @@ export type MechanicComponent =
   | "attack-roll"
   | "damage-roll"
   | "healing-roll"
+  | "hit-point-restoration"
   | "saving-throw"
   | "targeting"
   | "range"
