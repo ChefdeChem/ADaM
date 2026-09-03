@@ -43,6 +43,29 @@ test("feature provenance can cross the character's base edition without changing
   assert.deepEqual(adrenalineRush.components, ["action-economy", "movement", "resource-spend", "temporary-hit-points"]);
 });
 
+test("triggered feature coverage records Relentless Endurance as an executable 2024 replacement", () => {
+  const pharos = BUILT_IN_CHARACTERS.find((character) => character.id === "pharos");
+  const report = buildCharacterMechanicCoverage(pharos);
+  const relentlessEndurance = report.entries.find((entry) => entry.entityId === "relentless-endurance" && entry.kind === "feature");
+  assert.equal(relentlessEndurance.rulesetId, "dnd-2024");
+  assert.equal(relentlessEndurance.sourceId, "srd-5.2.1");
+  assert.equal(relentlessEndurance.status, "supported");
+  assert.equal(relentlessEndurance.executable, true);
+  assert.deepEqual(relentlessEndurance.components, ["trigger", "replacement-effect", "resource-spend"]);
+});
+
+test("triggered feature coverage records Stone's Endurance as an executable 2024 damage reaction", () => {
+  const barbarian = BUILT_IN_CHARACTERS.find((character) => character.id === "goliath-barbarian");
+  const report = buildCharacterMechanicCoverage(barbarian);
+  const stonesEndurance = report.entries.find((entry) => entry.entityId === "stones-endurance" && entry.kind === "feature");
+  assert.equal(stonesEndurance.rulesetId, "dnd-2024");
+  assert.equal(stonesEndurance.sourceId, "srd-5.2.1");
+  assert.equal(stonesEndurance.status, "partial");
+  assert.equal(stonesEndurance.executable, true);
+  assert.match(stonesEndurance.missingCapabilities.join(" "), /Long Rest recovery/i);
+  assert.deepEqual(stonesEndurance.components, ["trigger", "reaction", "dice-roll", "damage-reduction", "resource-spend"]);
+});
+
 test("coverage separates executable cores from unresolved riders", () => {
   const cleira = BUILT_IN_CHARACTERS.find((character) => character.id === "cleira-oestwilde");
   const report = buildCharacterMechanicCoverage(cleira);

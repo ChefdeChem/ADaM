@@ -29,6 +29,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Mode-scaled enemy tactics: predictable direct play for Beginner, signature abilities and repositioning for Intermediate, and vulnerable-target, strongest-attack, range, and cover priorities for Advanced
 - Player-controlled saving throws, Shield and opportunity-attack reaction windows, concentration checks, and death saves
 - Automated enemy opportunity attacks when the player leaves reach, with movement resolved in the correct sequence
+- Optional zero-HP replacement prompts, including Relentless Endurance, with instant-death and resource checks
 - Mode-based enemy health visibility with exact, descriptive, and concealed states
 
 ## Run locally

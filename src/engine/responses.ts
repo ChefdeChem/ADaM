@@ -3,7 +3,7 @@ import { applyDamageToCombatant, resolveAttackDamage, resolveReactionAttackRoll 
 import { rollD20, rollDamage, type D20Result, type DamageRoll } from "./dice";
 import { applyEffect, effectiveSavingThrowModifier, endConcentration } from "./effects";
 import { queueConcentrationCheck } from "./defensive-responses";
-import { spendSpellSlot, validateSpellSlot } from "./resources";
+import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { resumeMovementContinuation } from "./movement";
 
 export { queueConcentrationCheck } from "./defensive-responses";
@@ -14,6 +14,85 @@ export type PlayerResponseResolution = {
   damageRoll: DamageRoll | null;
   summary: string;
 };
+
+export function resolveDamageReductionReaction(encounter: EncounterState, useFeature: boolean, random = Math.random): PlayerResponseResolution {
+  const pending = encounter.pendingResponse;
+  if (!pending || pending.type !== "damage-reduction-reaction") return { encounter, playerRoll: null, damageRoll: null, summary: "No damage-reduction reaction is pending." };
+  const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId);
+  const feature = target?.triggeredFeatures.find((candidate) => candidate.id === pending.featureId && candidate.resolution.type === "reduce-damage-by-roll");
+  if (!target || !feature || feature.resolution.type !== "reduce-damage-by-roll") return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The damage-reduction reaction can no longer be resolved." };
+
+  let next: EncounterState = { ...encounter, pendingResponse: null };
+  let reductionRoll: DamageRoll | null = null;
+  let damageApplied = pending.damageTaken;
+  let summary = `${target.name} saves their reaction and takes ${damageApplied} damage.`;
+  if (useFeature) {
+    const resource = validateNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
+    if (!target.reactionAvailable || !resource.legal) return { encounter, playerRoll: null, damageRoll: null, summary: !target.reactionAvailable ? `${target.name}'s Reaction is unavailable.` : resource.reason ?? `${feature.name} is unavailable.` };
+    reductionRoll = rollDamage(`${feature.resolution.die} + ${feature.resolution.modifier}`, { random });
+    if (!reductionRoll) return { encounter, playerRoll: null, damageRoll: null, summary: `ADaM could not roll ${feature.name}.` };
+    damageApplied = Math.max(0, pending.damageTaken - reductionRoll.total);
+    next = spendNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
+    next = { ...next, combatants: next.combatants.map((combatant) => combatant.id === target.id ? { ...combatant, reactionAvailable: false } : combatant) };
+    summary = `${target.name} uses ${feature.name}, rolls ${reductionRoll.rolls[0]} + ${feature.resolution.modifier} = ${reductionRoll.total}, and reduces ${pending.damageTaken} damage to ${damageApplied}.`;
+  }
+
+  next = applyDamageToCombatant(next, target.id, damageApplied, { critical: pending.critical, allowDamageReduction: false });
+  if (next.pendingResponse?.type === "zero-hit-point-replacement" && pending.continuation) {
+    next = { ...next, pendingResponse: { ...next.pendingResponse, continuation: pending.continuation } };
+  }
+  next = { ...next, log: [summary, ...next.log] };
+  if (!next.pendingResponse) next = queueConcentrationCheck(next, target.id, damageApplied, pending.continuation);
+  const updatedTarget = next.combatants.find((combatant) => combatant.id === target.id);
+  if (!next.pendingResponse && pending.continuation && (updatedTarget?.hitPoints.current ?? 0) > 0) {
+    const resumed = resumeMovementContinuation(next, pending.continuation, random);
+    return { encounter: resumed.encounter, playerRoll: null, damageRoll: reductionRoll ?? resumed.damageRoll, summary: `${summary} ${resumed.reason}` };
+  }
+  const followUp = next.pendingResponse?.type === "concentration-check"
+    ? " Resolve concentration before continuing."
+    : next.pendingResponse?.type === "zero-hit-point-replacement"
+      ? ` Decide whether to use ${target.name}'s zero-HP replacement feature.`
+      : "";
+  return { encounter: next, playerRoll: null, damageRoll: reductionRoll, summary: `${summary}${followUp}` };
+}
+
+export function resolveZeroHitPointReplacement(encounter: EncounterState, useFeature: boolean, random = Math.random): PlayerResponseResolution {
+  const pending = encounter.pendingResponse;
+  if (!pending || pending.type !== "zero-hit-point-replacement") return { encounter, playerRoll: null, damageRoll: null, summary: "No zero-hit-point replacement is pending." };
+  const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId);
+  const feature = target?.triggeredFeatures.find((candidate) => candidate.id === pending.featureId);
+  if (!target || !feature) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The zero-hit-point replacement can no longer be resolved." };
+
+  let next: EncounterState = { ...encounter, pendingResponse: null };
+  let summary: string;
+  if (useFeature) {
+    const resource = validateNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
+    if (!resource.legal) return { encounter, playerRoll: null, damageRoll: null, summary: resource.reason ?? `${feature.name} is unavailable.` };
+    next = spendNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
+    next = {
+      ...next,
+      combatants: next.combatants.map((combatant) => combatant.id === target.id ? {
+        ...combatant,
+        hitPoints: { ...combatant.hitPoints, current: 1 },
+        deathSaves: { successes: 0, failures: 0 },
+        stabilized: false,
+      } : combatant),
+    };
+    summary = `${target.name} uses ${feature.name}, spends one use, and drops to 1 HP instead of 0.`;
+    next = { ...next, log: [summary, ...next.log] };
+    next = queueConcentrationCheck(next, target.id, pending.damageTaken, pending.continuation);
+    if (!next.pendingResponse && pending.continuation) {
+      const resumed = resumeMovementContinuation(next, pending.continuation, random);
+      return { encounter: resumed.encounter, playerRoll: null, damageRoll: resumed.damageRoll, summary: `${summary} ${resumed.reason}` };
+    }
+    return { encounter: next, playerRoll: null, damageRoll: null, summary: `${summary}${next.pendingResponse?.type === "concentration-check" ? " Now resolve the concentration check caused by the damage." : ""}` };
+  }
+
+  summary = `${target.name} declines ${feature.name} and falls unconscious at 0 HP.`;
+  next = { ...next, log: [summary, ...next.log] };
+  next = queueConcentrationCheck(next, target.id, pending.damageTaken);
+  return { encounter: next, playerRoll: null, damageRoll: null, summary };
+}
 
 export function resolveSavingThrowResponse(encounter: EncounterState, random = Math.random): PlayerResponseResolution {
   const pending = encounter.pendingResponse;
@@ -72,13 +151,18 @@ export function resolveAttackReaction(encounter: EncounterState, reactionId: str
   }
   const damageResult = resolveAttackDamage(next, pending.attack, target.id, pending.critical, random);
   if (!damageResult.legal) return { encounter: next, playerRoll: null, damageRoll: null, summary: damageResult.reason };
-  const updatedTarget = damageResult.encounter.combatants.find((combatant) => combatant.id === target.id)!;
-  const damageSummary = `${damageResult.summary} ${updatedTarget.name} has ${updatedTarget.hitPoints.current}/${updatedTarget.hitPoints.maximum} HP remaining.`;
-  next = queueConcentrationCheck(damageResult.encounter, target.id, damageResult.damageApplied, updatedTarget.hitPoints.current > 0 ? pending.continuation : undefined);
-  const resumed = pending.continuation && updatedTarget.hitPoints.current > 0 && next.pendingResponse?.type !== "concentration-check"
+  const damageEncounter = (damageResult.encounter.pendingResponse?.type === "zero-hit-point-replacement" || damageResult.encounter.pendingResponse?.type === "damage-reduction-reaction") && pending.continuation
+    ? { ...damageResult.encounter, pendingResponse: { ...damageResult.encounter.pendingResponse, continuation: pending.continuation } }
+    : damageResult.encounter;
+  const updatedTarget = damageEncounter.combatants.find((combatant) => combatant.id === target.id)!;
+  const damageSummary = damageEncounter.pendingResponse?.type === "damage-reduction-reaction"
+    ? `${damageResult.summary} ${updatedTarget.name} can react before the damage is applied.`
+    : `${damageResult.summary} ${updatedTarget.name} has ${updatedTarget.hitPoints.current}/${updatedTarget.hitPoints.maximum} HP remaining.`;
+  next = queueConcentrationCheck(damageEncounter, target.id, damageResult.damageApplied, updatedTarget.hitPoints.current > 0 ? pending.continuation : undefined);
+  const resumed = pending.continuation && updatedTarget.hitPoints.current > 0 && !next.pendingResponse
     ? resumeMovementContinuation(next, pending.continuation, random)
     : null;
-  return { encounter: resumed?.encounter ?? next, playerRoll: null, damageRoll: resumed?.damageRoll ?? damageResult.roll, summary: `${reactionSummary} ${damageSummary}${resumed ? ` ${resumed.reason}` : next.pendingResponse?.type === "concentration-check" ? " Resolve concentration before movement continues." : ""}` };
+  return { encounter: resumed?.encounter ?? next, playerRoll: null, damageRoll: resumed?.damageRoll ?? damageResult.roll, summary: `${reactionSummary} ${damageSummary}${resumed ? ` ${resumed.reason}` : next.pendingResponse?.type === "concentration-check" ? " Resolve concentration before movement continues." : next.pendingResponse?.type === "zero-hit-point-replacement" ? ` Decide whether to use ${target.name}'s zero-HP replacement feature.` : next.pendingResponse?.type === "damage-reduction-reaction" ? ` Decide whether to use ${target.name}'s damage-reduction reaction.` : ""}` };
 }
 
 export function chooseOpportunityAttack(encounter: EncounterState, attackId: string | null): PlayerResponseResolution {

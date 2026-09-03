@@ -245,6 +245,8 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   if (!damageResult.legal) return { encounter: next, steps: [...steps, { kind: "wait", summary: damageResult.reason }], attackRoll: attackResult.roll, damageRoll: null };
   next = queueConcentrationCheck(damageResult.encounter, target.id, damageResult.damageApplied);
   const updatedTarget = next.combatants.find((combatant) => combatant.id === target.id)!;
-  steps.push({ kind: "damage", summary: `${damageResult.summary} ${updatedTarget.name} has ${updatedTarget.hitPoints.current}/${updatedTarget.hitPoints.maximum} HP remaining.` });
+  steps.push({ kind: "damage", summary: next.pendingResponse?.type === "damage-reduction-reaction"
+    ? `${damageResult.summary} ${updatedTarget.name} can react before the damage is applied.`
+    : `${damageResult.summary} ${updatedTarget.name} has ${updatedTarget.hitPoints.current}/${updatedTarget.hitPoints.maximum} HP remaining.` });
   return { encounter: next, steps, attackRoll: attackResult.roll, damageRoll: damageResult.roll };
 }

@@ -97,10 +97,16 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
     ...(character.spells ?? []).map((spell) => spellEntry(character, spell)),
     ...(character.resources ?? []).map((resource) => entry(character, "resource", resource.id, resource.name, "supported", ["resource-spend", "resource-recovery"], [], true)),
     ...(character.profile?.features ?? []).map((feature, index) => {
-      const executable = (character.featureActions ?? []).find((action) => action.id === feature.executableActionId);
+      const executableAction = (character.featureActions ?? []).find((action) => action.id === feature.executableActionId);
+      const executableTrigger = (character.triggeredFeatures ?? []).find((trigger) => trigger.id === feature.executableTriggerId);
+      const executable = executableAction ?? executableTrigger;
       const unresolved = unresolvedPattern.test(feature.description);
-      const components: MechanicComponent[] = executable?.resolution.type === "dash-and-temporary-hit-points"
+      const components: MechanicComponent[] = executableAction?.resolution.type === "dash-and-temporary-hit-points"
         ? ["action-economy", "movement", "resource-spend", "temporary-hit-points"]
+        : executableTrigger?.resolution.type === "drop-to-one-hit-point"
+          ? ["trigger", "replacement-effect", "resource-spend"]
+          : executableTrigger?.resolution.type === "reduce-damage-by-roll"
+            ? ["trigger", "reaction", "dice-roll", "damage-reduction", "resource-spend"]
         : ["reference"];
       return entry(
         character,

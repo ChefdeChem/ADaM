@@ -9,7 +9,7 @@ import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effects
 import { executeFeatureAction } from "../src/engine/feature-actions";
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
-import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
+import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolveSavingThrowResponse, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
@@ -268,6 +268,19 @@ export default function Home() {
   function rollPendingConcentration() {
     const result = resolveConcentrationResponse(encounter);
     finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
+  }
+
+  function chooseZeroHitPointReplacement(useFeature: boolean) {
+    const result = resolveZeroHitPointReplacement(encounter, useFeature);
+    finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
+  }
+
+  function chooseDamageReductionReaction(useFeature: boolean) {
+    const result = resolveDamageReductionReaction(encounter, useFeature);
+    setEncounter(result.encounter);
+    if (result.damageRoll) setLastRoll(result.damageRoll);
+    setFeedback(result.summary);
+    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : activeCombatant.side === "enemy" ? "showing" : "idle");
   }
 
   function rollPendingDeathSave() {
@@ -689,6 +702,23 @@ export default function Home() {
           return <section className="roll-coach response-coach concentration-coach" aria-live="assertive">
             <div><span>Player response · Concentration</span><h3>Maintain concentration</h3><p>You took {pending.damageTaken} damage while concentrating. Roll a <strong>Constitution saving throw</strong> against DC {pending.dc}.</p></div>
             <button type="button" onClick={rollPendingConcentration}><small>Roll concentration</small><strong>d20 {modifier >= 0 ? "+" : "−"} {Math.abs(modifier)}</strong></button>
+          </section>;
+        })()}
+        {encounter.pendingResponse?.type === "zero-hit-point-replacement" && (() => {
+          const pending = encounter.pendingResponse;
+          const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
+          const feature = target.triggeredFeatures.find((candidate) => candidate.id === pending.featureId)!;
+          return <section className="roll-coach response-coach reaction-coach" aria-live="assertive">
+            <div><span>Player response · Zero HP replacement</span><h3>{feature.name}</h3><p>{target.name} was reduced to 0 HP but was not killed outright. Spend the once-per-long-rest use to drop to 1 HP instead, or save it and fall unconscious.</p><div className="response-actions"><button type="button" onClick={() => chooseZeroHitPointReplacement(true)}><small>Spend one use</small><strong>Drop to 1 HP</strong><em>This does not use your Reaction.</em></button><button type="button" className="decline-response" onClick={() => chooseZeroHitPointReplacement(false)}><small>Save the feature</small><strong>Fall unconscious</strong></button></div></div>
+          </section>;
+        })()}
+        {encounter.pendingResponse?.type === "damage-reduction-reaction" && (() => {
+          const pending = encounter.pendingResponse;
+          const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
+          const feature = target.triggeredFeatures.find((candidate) => candidate.id === pending.featureId)!;
+          const reduction = feature.resolution.type === "reduce-damage-by-roll" ? `${feature.resolution.die} + ${feature.resolution.modifier}` : "damage reduction";
+          return <section className="roll-coach response-coach reaction-coach" aria-live="assertive">
+            <div><span>Player response · Damage reaction</span><h3>{feature.name}</h3><p>{target.name} is about to take {pending.damageTaken} damage. Spend a Reaction and one use to roll <strong>{reduction}</strong> and reduce it, or save the reaction and take the full damage.</p><div className="response-actions"><button type="button" onClick={() => chooseDamageReductionReaction(true)}><small>Use reaction · Spend one use</small><strong>Roll {reduction}</strong><em>The reduction can lower this damage to 0.</em></button><button type="button" className="decline-response" onClick={() => chooseDamageReductionReaction(false)}><small>Save reaction</small><strong>Take {pending.damageTaken} damage</strong></button></div></div>
           </section>;
         })()}
         {deathSaveRequired && encounter.turn.action && <section className="roll-coach response-coach death-save-coach" aria-live="assertive">

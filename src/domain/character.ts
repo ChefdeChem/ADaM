@@ -70,6 +70,21 @@ export type CharacterFeatureAction = {
   provenance: MechanicProvenance;
 };
 
+export type CharacterTriggeredFeature = {
+  id: string;
+  name: string;
+  trigger: "reduced-to-zero-hit-points" | "takes-damage";
+  optional: boolean;
+  description: string;
+  resourceName: string;
+  resourceCost: number;
+  resolution:
+    | { type: "drop-to-one-hit-point" }
+    | { type: "reduce-damage-by-roll"; die: "1d12"; modifier: number };
+  missingCapabilities?: string[];
+  provenance: MechanicProvenance;
+};
+
 export type CharacterProfile = {
   playerName?: string;
   species?: string;
@@ -86,6 +101,7 @@ export type CharacterProfile = {
     name: string;
     description: string;
     executableActionId?: string;
+    executableTriggerId?: string;
     provenance?: MechanicProvenance;
   }>;
 };
@@ -104,6 +120,7 @@ export type Character = {
   savingThrowModifiers?: Partial<Record<AbilityName, number>>;
   resources: CharacterResource[];
   featureActions?: CharacterFeatureAction[];
+  triggeredFeatures?: CharacterTriggeredFeature[];
   attacks?: CharacterAttack[];
   spells?: CharacterSpell[];
   actions?: string[];

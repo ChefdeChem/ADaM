@@ -1,6 +1,6 @@
 import type { RulesetId } from "../rulesets";
 import type { ScenarioGrid } from "../scenarios/types";
-import type { AbilityName, CharacterAttack } from "./character";
+import type { AbilityName, CharacterAttack, CharacterTriggeredFeature } from "./character";
 
 export type ExperienceMode = "beginner" | "training" | "advanced";
 export type ActionCost = "action" | "bonus-action" | "reaction" | "movement" | "free";
@@ -115,6 +115,21 @@ export type PendingPlayerResponse =
       damageTaken: number;
       dc: number;
       continuation?: MovementContinuation;
+    }
+  | {
+      type: "zero-hit-point-replacement";
+      targetCombatantId: string;
+      featureId: string;
+      damageTaken: number;
+      continuation?: MovementContinuation;
+    }
+  | {
+      type: "damage-reduction-reaction";
+      targetCombatantId: string;
+      featureId: string;
+      damageTaken: number;
+      critical: boolean;
+      continuation?: MovementContinuation;
     };
 
 export type EffectModifiers = {
@@ -148,6 +163,7 @@ export type Combatant = {
   temporaryHitPoints: number;
   temporaryHitPointsSourceEffectId?: string;
   resources: CombatResource[];
+  triggeredFeatures: CharacterTriggeredFeature[];
   initiative: number;
   initiativeModifier: number;
   initiativeRolled: boolean;

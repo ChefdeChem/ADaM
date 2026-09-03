@@ -2,7 +2,7 @@ import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
 import { applyEffect, effectiveArmorClass, effectiveAttackModifier, effectiveSavingThrowModifier } from "./effects";
-import { spendSpellSlot, validateSpellSlot } from "./resources";
+import { spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { analyzeTarget, gridDistanceFeet } from "./targeting";
 
 export type OptionValidation = {
@@ -82,20 +82,47 @@ export type DamageResolution=
   |{legal:false;reason:string;encounter:EncounterState}
   |{legal:true;encounter:EncounterState;roll:DamageRoll;damageApplied:number;summary:string};
 
-export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false}:{critical?:boolean}={}):EncounterState{
+export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false,allowDamageReduction=true}:{critical?:boolean;allowDamageReduction?:boolean}={}):EncounterState{
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return encounter;
+  const reduction=allowDamageReduction&&(target.triggeredFeatures??[]).find((feature)=>feature.trigger==="takes-damage"
+    &&feature.resolution.type==="reduce-damage-by-roll"
+    &&target.reactionAvailable
+    &&validateNamedResource(encounter,target.id,feature.resourceName,feature.resourceCost).legal);
+  if(target.side==="player"&&amount>0&&reduction){
+    const summary=`${target.name} is about to take ${amount} damage and can use ${reduction.name} to reduce it.`;
+    return{
+      ...encounter,
+      pendingResponse:{type:"damage-reduction-reaction",targetCombatantId:target.id,featureId:reduction.id,damageTaken:amount,critical},
+      log:[summary,...encounter.log],
+    };
+  }
   const absorbed=Math.min(target.temporaryHitPoints,amount);
   const hitPointDamage=amount-absorbed;
+  const reducedToZero=target.hitPoints.current>0&&hitPointDamage>=target.hitPoints.current;
+  const killedOutright=reducedToZero&&hitPointDamage-target.hitPoints.current>=target.hitPoints.maximum;
+  const replacement=(target.triggeredFeatures??[]).find((feature)=>feature.trigger==="reduced-to-zero-hit-points"
+    &&validateNamedResource(encounter,target.id,feature.resourceName,feature.resourceCost).legal);
+  const shouldOfferReplacement=target.side==="player"&&reducedToZero&&!killedOutright&&Boolean(replacement);
+  const combatants=encounter.combatants.map((combatant)=>{
+    if(combatant.id!==targetId)return combatant;
+    if(combatant.side==="player"&&combatant.hitPoints.current===0&&hitPointDamage>0){
+      return{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,deathSaves:{...combatant.deathSaves,failures:Math.min(3,combatant.deathSaves.failures+(critical?2:1))}};
+    }
+    return{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,hitPoints:{...combatant.hitPoints,current:Math.max(0,combatant.hitPoints.current-hitPointDamage)},stabilized:false};
+  });
+  if(shouldOfferReplacement&&replacement){
+    const summary=`${target.name} was reduced to 0 HP and can use ${replacement.name} to drop to 1 HP instead.`;
+    return{
+      ...encounter,
+      combatants,
+      pendingResponse:{type:"zero-hit-point-replacement",targetCombatantId:target.id,featureId:replacement.id,damageTaken:hitPointDamage},
+      log:[summary,...encounter.log],
+    };
+  }
   return{
     ...encounter,
-    combatants:encounter.combatants.map((combatant)=>{
-      if(combatant.id!==targetId)return combatant;
-      if(combatant.side==="player"&&combatant.hitPoints.current===0&&hitPointDamage>0){
-        return{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,deathSaves:{...combatant.deathSaves,failures:Math.min(3,combatant.deathSaves.failures+(critical?2:1))}};
-      }
-      return{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,hitPoints:{...combatant.hitPoints,current:Math.max(0,combatant.hitPoints.current-hitPointDamage)},stabilized:false};
-    }),
+    combatants,
   };
 }
 

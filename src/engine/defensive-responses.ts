@@ -2,6 +2,7 @@ import type { EncounterState, MovementContinuation } from "../domain/combat";
 import { endConcentration } from "./effects";
 
 export function queueConcentrationCheck(encounter: EncounterState, targetCombatantId: string, damageTaken: number, continuation?: MovementContinuation): EncounterState {
+  if (encounter.pendingResponse) return encounter;
   if (damageTaken <= 0) return { ...encounter, pendingResponse: null };
   const target = encounter.combatants.find((combatant) => combatant.id === targetCombatantId);
   const concentrating = encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === targetCombatantId);

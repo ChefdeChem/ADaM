@@ -152,6 +152,14 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
     if (!damageResult.legal) return { legal: false, reason: damageResult.reason, encounter: damageResult.encounter, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
     lastDamageRoll = damageResult.roll;
     notes.push(damageResult.summary);
+    if (damageResult.encounter.pendingResponse?.type === "zero-hit-point-replacement" || damageResult.encounter.pendingResponse?.type === "damage-reduction-reaction") {
+      const paused = {
+        ...damageResult.encounter,
+        pendingResponse: { ...damageResult.encounter.pendingResponse, continuation },
+      };
+      const prompt = paused.pendingResponse.type === "damage-reduction-reaction" ? `Decide whether ${mover.name} uses a damage-reduction reaction` : `Decide whether to use ${mover.name}'s zero-HP replacement feature`;
+      return { legal: true, reason: `${notes.join(" ")} ${prompt} before movement continues.`, encounter: paused, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
+    }
     const conscious = damageResult.encounter.combatants.find((combatant) => combatant.id === mover.id)!.hitPoints.current > 0;
     if (!conscious) return { legal: true, reason: `${notes.join(" ")} ${mover.name} falls unconscious before leaving the square.`, encounter: damageResult.encounter, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
     const concentrated = queueConcentrationCheck(damageResult.encounter, mover.id, damageResult.damageApplied, continuation);
