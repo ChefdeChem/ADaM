@@ -6,6 +6,7 @@ import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/com
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
 import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget } from "../src/engine/combat-options";
 import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds } from "../src/engine/effects";
+import { executeFeatureAction } from "../src/engine/feature-actions";
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveSavingThrowResponse, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
@@ -378,6 +379,17 @@ export default function Home() {
     }
     if (action.id === "move") { setFeedback("Choose a highlighted adjacent square. You can split your movement before and after actions; leaving an enemy's reach may trigger an opportunity attack."); return; }
     if (action.id === "magic" || action.id === "cast-spell") { setChoiceMode("spell"); setAttackFlow(null); setSpellFlow(null); setFeedback("Choose a spell first. ADaM will then highlight every legal target for its range and line of sight."); return; }
+    const feature = character.featureActions?.find((candidate) => candidate.id === action.id);
+    if (feature) {
+      const result = executeFeatureAction(encounter, feature);
+      if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
+      setEncounter(result.encounter);
+      setChoiceMode(null);
+      setAttackFlow(null);
+      setSpellFlow(null);
+      setFeedback(result.summary);
+      return;
+    }
     let next = consumeAction(action, encounter);
     if (action.id === "dodge") {
       next = applyEffect(next, {
@@ -486,7 +498,7 @@ export default function Home() {
 
   function submitCommand(event: FormEvent) {
     event.preventDefault();
-    const action = findActionFromText(command, rulesetId);
+    const action = findActionFromText(command, rulesetId, character);
     if (!action) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : "I could not match that request to a supported action yet. Try naming the action directly."); return; }
     runAction(action); setCommand("");
   }

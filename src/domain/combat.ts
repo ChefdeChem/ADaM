@@ -141,6 +141,7 @@ export type Combatant = {
   id: string;
   name: string;
   side: "player" | "enemy";
+  proficiencyBonus: number;
   baseArmorClass: number;
   baseSpeedFeet: number;
   hitPoints: { current: number; maximum: number };

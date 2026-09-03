@@ -3,6 +3,7 @@ import type { CombatAction, EncounterState, ExperienceMode } from "../domain/com
 import type { RulesetId } from "../rulesets";
 import { validateAttackChoice } from "./combat-options";
 import { effectiveSpeed } from "./effects";
+import { featureCombatActions } from "./feature-actions";
 import { spendNamedResource, validateNamedResource } from "./resources";
 import { analyzeTarget } from "./targeting";
 
@@ -62,15 +63,16 @@ export function validateAction(action: CombatAction, encounter: EncounterState, 
 
 export function availableActions(character: Character, ruleset: RulesetId): CombatAction[] {
   const allowedNames = new Set(character.actions?.map((item) => item.toLowerCase()) ?? []);
-  return actionCatalog.filter((action) => action.rulesets.includes(ruleset) && (
+  const coreActions = actionCatalog.filter((action) => action.rulesets.includes(ruleset) && (
     action.cost === "free" || action.cost === "movement" || !character.actions?.length || allowedNames.has(action.name.toLowerCase())
   ));
+  return [...coreActions, ...featureCombatActions(character)];
 }
 
 export function visibleActionsForMode(character: Character, ruleset: RulesetId, mode: ExperienceMode, encounter: EncounterState): CombatAction[] {
   const candidates = mode === "beginner"
     ? availableActions(character, ruleset)
-    : actionCatalog.filter((action) => action.rulesets.includes(ruleset));
+    : [...actionCatalog.filter((action) => action.rulesets.includes(ruleset)), ...featureCombatActions(character)];
   if (mode !== "beginner") return candidates;
 
   return candidates.filter((action) => {
@@ -83,9 +85,12 @@ export function visibleActionsForMode(character: Character, ruleset: RulesetId, 
   });
 }
 
-export function findActionFromText(text: string, ruleset: RulesetId): CombatAction | undefined {
+export function findActionFromText(text: string, ruleset: RulesetId, character?: Character): CombatAction | undefined {
   const normalized = text.toLowerCase();
-  return actionCatalog.filter((action) => action.rulesets.includes(ruleset)).find((action) =>
+  const candidates = character
+    ? [...actionCatalog.filter((action) => action.rulesets.includes(ruleset)), ...featureCombatActions(character)]
+    : actionCatalog.filter((action) => action.rulesets.includes(ruleset));
+  return candidates.find((action) =>
     normalized.includes(action.name.toLowerCase()) || normalized.startsWith(action.id.replaceAll("-", " "))
   );
 }

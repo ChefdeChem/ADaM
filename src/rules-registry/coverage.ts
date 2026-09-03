@@ -1,4 +1,4 @@
-import type { Character, CharacterAttack, CharacterSpell } from "../domain/character";
+import type { Character, CharacterAttack, CharacterSpell, MechanicProvenance } from "../domain/character";
 import type { RulesetId } from "../rulesets/types";
 import type { CharacterMechanicCoverage, MechanicComponent, MechanicSupportStatus, RuleEntityKind, RuleRegistryEntry, RuleSourceId } from "./types";
 
@@ -29,17 +29,23 @@ function entry(
   status: MechanicSupportStatus,
   components: MechanicComponent[],
   missingCapabilities: string[] = [],
+  executable = status === "supported",
+  provenance?: MechanicProvenance,
 ): RuleRegistryEntry {
-  const rulesetId = rulesetFor(character);
+  const rulesetId = provenance?.rulesetId ?? rulesetFor(character);
+  const evidenceSourceId = sourceFor(character);
   return {
     id: canonicalRuleId(rulesetId, kind, name),
     name,
     entityId,
     kind,
     rulesetId,
-    sourceId: sourceFor(character),
-    sourceReference: character.source.fileName ?? "Built-in ADaM sample",
+    sourceId: provenance?.sourceId ?? evidenceSourceId,
+    sourceReference: provenance?.sourceReference ?? character.source.fileName ?? "Built-in ADaM sample",
+    evidenceSourceId,
+    evidenceReference: character.source.fileName ?? "Built-in ADaM sample",
     status,
+    executable,
     components,
     missingCapabilities,
   };
@@ -55,6 +61,7 @@ function attackEntry(character: Character, attack: CharacterAttack): RuleRegistr
     hasUnresolvedRider ? "partial" : "supported",
     ["targeting", "range", "attack-roll", "damage-roll"],
     hasUnresolvedRider ? ["Weapon property or rider resolution"] : [],
+    true,
   );
 }
 
@@ -80,6 +87,7 @@ function spellEntry(character: Character, spell: CharacterSpell): RuleRegistryEn
     spell.unsupportedReason ? "partial" : "supported",
     spellComponents(spell),
     spell.unsupportedReason ? [spell.unsupportedReason] : [],
+    !spell.unsupportedReason,
   );
 }
 
@@ -87,14 +95,28 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
   const entries: RuleRegistryEntry[] = [
     ...(character.attacks ?? []).map((attack) => attackEntry(character, attack)),
     ...(character.spells ?? []).map((spell) => spellEntry(character, spell)),
-    ...(character.resources ?? []).map((resource) => entry(character, "resource", resource.id, resource.name, "supported", ["resource-spend", "resource-recovery"])),
+    ...(character.resources ?? []).map((resource) => entry(character, "resource", resource.id, resource.name, "supported", ["resource-spend", "resource-recovery"], [], true)),
     ...(character.profile?.features ?? []).map((feature, index) => {
+      const executable = (character.featureActions ?? []).find((action) => action.id === feature.executableActionId);
       const unresolved = unresolvedPattern.test(feature.description);
-      return entry(character, "feature", `feature-${index}-${slug(feature.name)}`, feature.name, unresolved ? "partial" : "reference-only", ["reference"], unresolved ? [feature.description] : ["No executable mechanic is registered yet"]);
+      const components: MechanicComponent[] = executable?.resolution.type === "dash-and-temporary-hit-points"
+        ? ["action-economy", "movement", "resource-spend", "temporary-hit-points"]
+        : ["reference"];
+      return entry(
+        character,
+        "feature",
+        feature.id ?? `feature-${index}-${slug(feature.name)}`,
+        feature.name,
+        executable ? (executable.missingCapabilities?.length ? "partial" : "supported") : unresolved ? "partial" : "reference-only",
+        components,
+        executable?.missingCapabilities ?? (unresolved ? [feature.description] : ["No executable mechanic is registered yet"]),
+        Boolean(executable),
+        feature.provenance ?? executable?.provenance,
+      );
     }),
     ...(character.profile?.equipment ?? []).map((item, index) => {
       const attackReady = (character.attacks ?? []).some((attack) => slug(attack.name).includes(slug(item.name)) || slug(item.name).includes(slug(attack.name)));
-      return entry(character, "equipment", `equipment-${index}-${slug(item.name)}`, item.name, attackReady ? "partial" : "reference-only", ["inventory"], attackReady ? ["Inventory use beyond its registered attack"] : ["No executable equipment action is registered yet"]);
+      return entry(character, "equipment", `equipment-${index}-${slug(item.name)}`, item.name, attackReady ? "partial" : "reference-only", ["inventory"], attackReady ? ["Inventory use beyond its registered attack"] : ["No executable equipment action is registered yet"], false);
     }),
   ];
   const counts = { supported: 0, partial: 0, "reference-only": 0, "needs-review": 0 } satisfies CharacterMechanicCoverage["counts"];
@@ -105,7 +127,7 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
     sourceId: sourceFor(character),
     counts,
     total: entries.length,
-    executable: counts.supported + counts.partial,
+    executable: entries.filter((mechanic) => mechanic.executable).length,
     entries,
   };
 }

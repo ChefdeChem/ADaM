@@ -2,6 +2,12 @@ import type { EffectModifiers } from "./combat";
 
 export type AbilityName = "strength" | "dexterity" | "constitution" | "intelligence" | "wisdom" | "charisma";
 
+export type MechanicProvenance = {
+  rulesetId: "dnd-2014" | "dnd-2024";
+  sourceId: "srd-5.1" | "srd-5.2.1" | "official-errata" | "open5e-v2" | "user-imported" | "adam-original";
+  sourceReference: string;
+};
+
 export type CharacterResource = {
   id: string;
   name: string;
@@ -49,6 +55,21 @@ export type CharacterSpell = {
   };
 };
 
+export type CharacterFeatureAction = {
+  id: string;
+  name: string;
+  cost: "action" | "bonus-action" | "reaction";
+  description: string;
+  resourceName: string;
+  resourceCost: number;
+  resolution: {
+    type: "dash-and-temporary-hit-points";
+    temporaryHitPoints: "proficiency-bonus";
+  };
+  missingCapabilities?: string[];
+  provenance: MechanicProvenance;
+};
+
 export type CharacterProfile = {
   playerName?: string;
   species?: string;
@@ -60,7 +81,13 @@ export type CharacterProfile = {
   skills?: Record<string, number>;
   proficiencies?: { armor: string[]; weapons: string[]; tools: string[]; languages: string[] };
   equipment?: Array<{ name: string; quantity: number; weightPounds?: number }>;
-  features?: Array<{ name: string; description: string }>;
+  features?: Array<{
+    id?: string;
+    name: string;
+    description: string;
+    executableActionId?: string;
+    provenance?: MechanicProvenance;
+  }>;
 };
 
 export type Character = {
@@ -76,6 +103,7 @@ export type Character = {
   abilities: Record<AbilityName, number>;
   savingThrowModifiers?: Partial<Record<AbilityName, number>>;
   resources: CharacterResource[];
+  featureActions?: CharacterFeatureAction[];
   attacks?: CharacterAttack[];
   spells?: CharacterSpell[];
   actions?: string[];

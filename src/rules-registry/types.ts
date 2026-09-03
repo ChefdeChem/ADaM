@@ -25,6 +25,9 @@ export type MechanicComponent =
   | "range"
   | "resource-spend"
   | "resource-recovery"
+  | "action-economy"
+  | "movement"
+  | "temporary-hit-points"
   | "duration"
   | "concentration"
   | "inventory"
@@ -38,7 +41,10 @@ export type RuleRegistryEntry = {
   rulesetId: RulesetId;
   sourceId: RuleSourceId;
   sourceReference: string;
+  evidenceSourceId: "user-imported" | "adam-original";
+  evidenceReference: string;
   status: MechanicSupportStatus;
+  executable: boolean;
   components: MechanicComponent[];
   missingCapabilities: string[];
 };

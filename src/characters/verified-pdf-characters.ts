@@ -168,6 +168,17 @@ export const pharos: Character = {
     { id: "relentless-endurance", name: "Relentless Endurance", kind: "generic", current: 1, maximum: 1, recovery: "long-rest" },
     { id: "honeyed-words", name: "Honeyed Words", kind: "generic", current: 1, maximum: 1, recovery: "long-rest" },
   ],
+  featureActions: [{
+    id: "adrenaline-rush",
+    name: "Adrenaline Rush",
+    cost: "bonus-action",
+    description: "Dash as a Bonus Action, gain temporary hit points equal to proficiency bonus, and spend one use.",
+    resourceName: "Adrenaline Rush",
+    resourceCost: 1,
+    resolution: { type: "dash-and-temporary-hit-points", temporaryHitPoints: "proficiency-bonus" },
+    missingCapabilities: ["Short and Long Rest recovery outside an encounter is tracked but not executable yet."],
+    provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Orc: Adrenaline Rush" },
+  }],
   attacks: [
     { id: "club", name: "Club", kind: "melee", attackBonus: 1, damage: "1d4 - 1 bludgeoning", normalRangeFeet: 5, description: "Simple, light, Slow." },
     { id: "light-crossbow", name: "Light Crossbow", kind: "ranged", attackBonus: 3, damage: "1d8 + 1 piercing", normalRangeFeet: 80, longRangeFeet: 320, description: "Simple, ammunition, loading, two-handed, Slow." },
@@ -196,7 +207,7 @@ export const pharos: Character = {
     equipment: [{ name: "Leather Armor", quantity: 1, weightPounds: 10 }, { name: "Dagger", quantity: 2, weightPounds: 1 }, { name: "Club", quantity: 1, weightPounds: 2 }, { name: "Light Crossbow", quantity: 1, weightPounds: 5 }, { name: "Crossbow Bolts", quantity: 20, weightPounds: 0.075 }],
     features: [
       { name: "Dark One's Blessing", description: "Gain 4 temporary hit points after reducing a hostile creature to 0 HP. The automatic trigger is not implemented yet." },
-      { name: "Adrenaline Rush", description: "Twice per short rest, Dash as a bonus action and gain 2 temporary hit points. Feature activation is not implemented yet." },
+      { id: "adrenaline-rush", name: "Adrenaline Rush", description: "Twice per short or long rest, Dash as a bonus action and gain 2 temporary hit points.", executableActionId: "adrenaline-rush", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Orc: Adrenaline Rush" } },
       { name: "Relentless Endurance", description: "Once per long rest, drop to 1 HP instead of 0 when not killed outright. The automatic reaction is not implemented yet." },
       { name: "Honeyed Words", description: "Reroll a failed Deception or Persuasion check; the resource is spent only when it changes failure to success. Skill-check rerolls are not implemented yet." },
     ],
