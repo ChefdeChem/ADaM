@@ -72,6 +72,15 @@ export type CharacterFeatureAction = {
     | {
         type: "healing-pool";
         rangeFeet: 5;
+      }
+    | {
+        type: "activate-effect";
+        effect: {
+          name: string;
+          description: string;
+          duration: "end-of-next-turn";
+          modifiers: EffectModifiers;
+        };
       };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;

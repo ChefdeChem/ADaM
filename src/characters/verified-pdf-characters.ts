@@ -82,6 +82,25 @@ export const goliathBarbarian: Character = {
     { id: "stones-endurance", name: "Stone's Endurance", kind: "generic", current: 2, maximum: 2, recovery: "long-rest" },
     { id: "large-form", name: "Large Form", kind: "generic", current: 1, maximum: 1, recovery: "long-rest" },
   ],
+  featureActions: [{
+    id: "rage",
+    name: "Rage",
+    cost: "bonus-action",
+    description: "As a Bonus Action, expend one Rage use to gain resistance to bludgeoning, piercing, and slashing damage until the end of your next turn.",
+    resourceName: "Rage",
+    resourceCost: 1,
+    resolution: {
+      type: "activate-effect",
+      effect: {
+        name: "Rage",
+        description: "Resistance to bludgeoning, piercing, and slashing damage.",
+        duration: "end-of-next-turn",
+        modifiers: { damageResistances: ["bludgeoning", "piercing", "slashing"] },
+      },
+    },
+    missingCapabilities: ["Rage Damage, Strength Advantage, duration extension, and early-ending conditions are not executable yet."],
+    provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" },
+  }],
   triggeredFeatures: [{
     id: "stones-endurance",
     name: "Stone's Endurance",
@@ -110,7 +129,7 @@ export const goliathBarbarian: Character = {
     proficiencies: { armor: ["Light Armor", "Medium Armor", "Shields"], weapons: ["Martial Weapons", "Simple Weapons"], tools: ["Darts"], languages: ["Common", "Giant", "Orc"] },
     equipment: [{ name: "Spear", quantity: 5, weightPounds: 3 }, { name: "Maul", quantity: 1, weightPounds: 10 }, { name: "Hooded Lantern", quantity: 1, weightPounds: 2 }],
     features: [
-      { name: "Rage", description: "Enter Rage as a bonus action twice per long rest. One expended use returns on a short rest. Rage modifiers and duration are not implemented yet." },
+      { id: "rage", name: "Rage", description: "Enter Rage as a Bonus Action. Damage resistance and the initial duration are executable; Rage Damage, Strength Advantage, duration extension, and early-ending conditions are not implemented yet.", executableActionId: "rage", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" } },
       { name: "Unarmored Defense", description: "While not wearing armor, base AC is 13 plus any shield bonus." },
       { id: "stones-endurance", name: "Stone's Endurance", description: "Twice per long rest, react after taking damage to reduce it by 1d12 + 2.", executableTriggerId: "stones-endurance", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Giant Ancestry (Stone's Endurance)" } },
       { name: "Savage Attacker", description: "Once per turn on a weapon hit, roll the weapon damage dice twice and use either result. The optional reroll is not implemented yet." },

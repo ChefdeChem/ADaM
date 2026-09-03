@@ -1,6 +1,6 @@
 import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
-import { effectiveSpeed } from "./effects";
+import { applyEffect, effectiveSpeed } from "./effects";
 import { spendNamedResource, validateNamedResource } from "./resources";
 
 export type FeatureActionResolution =
@@ -47,6 +47,12 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
     const missingHitPoints = target.hitPoints.maximum - target.hitPoints.current;
     if (missingHitPoints <= 0) return { legal: false, reason: `${target.name} is already at maximum Hit Points.` };
     if (resourceAmount > missingHitPoints) return { legal: false, reason: `${target.name} can regain at most ${missingHitPoints} Hit Points.` };
+  }
+  if (feature.resolution.type === "activate-effect" && encounter.effects.some((effect) =>
+    effect.name === feature.resolution.effect.name
+    && effect.sourceCombatantId === active.id
+    && effect.targetCombatantId === active.id)) {
+    return { legal: false, reason: `${feature.resolution.effect.name} is already active.` };
   }
   return { legal: true };
 }
@@ -99,6 +105,21 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
         : combatant),
     };
     const summary = `${active.name} uses ${feature.name}; ${target.name} regains ${resourceAmount} Hit Point${resourceAmount === 1 ? "" : "s"}.`;
+    return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
+  }
+
+  if (feature.resolution.type === "activate-effect") {
+    next = applyEffect({ ...next, turn }, {
+      name: feature.resolution.effect.name,
+      description: feature.resolution.effect.description,
+      sourceCombatantId: active.id,
+      targetCombatantId: active.id,
+      modifiers: feature.resolution.effect.modifiers,
+      expiresAt: feature.resolution.effect.duration === "end-of-next-turn"
+        ? { round: encounter.round + 1, combatantId: active.id, phase: "end" }
+        : undefined,
+    });
+    const summary = `${active.name} uses ${feature.name}; ${feature.resolution.effect.name} is active until the end of their next turn.`;
     return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
 

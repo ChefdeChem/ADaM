@@ -1,7 +1,7 @@
 import type { EncounterState } from "../domain/combat";
 import { applyDamageToCombatant, resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options";
 import { rollD20, rollDamage, type D20Result, type DamageRoll } from "./dice";
-import { applyEffect, effectiveSavingThrowModifier, endConcentration } from "./effects";
+import { applyEffect, effectiveDamageAmount, effectiveSavingThrowModifier, endConcentration } from "./effects";
 import { queueConcentrationCheck } from "./defensive-responses";
 import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { resumeMovementContinuation } from "./movement";
@@ -24,20 +24,23 @@ export function resolveDamageReductionReaction(encounter: EncounterState, useFea
 
   let next: EncounterState = { ...encounter, pendingResponse: null };
   let reductionRoll: DamageRoll | null = null;
-  let damageApplied = pending.damageTaken;
+  let damageAfterReduction = pending.damageTaken;
+  let damageApplied = effectiveDamageAmount(next, target.id, damageAfterReduction, pending.damageType);
   let summary = `${target.name} saves their reaction and takes ${damageApplied} damage.`;
   if (useFeature) {
     const resource = validateNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
     if (!target.reactionAvailable || !resource.legal) return { encounter, playerRoll: null, damageRoll: null, summary: !target.reactionAvailable ? `${target.name}'s Reaction is unavailable.` : resource.reason ?? `${feature.name} is unavailable.` };
     reductionRoll = rollDamage(`${feature.resolution.die} + ${feature.resolution.modifier}`, { random });
     if (!reductionRoll) return { encounter, playerRoll: null, damageRoll: null, summary: `ADaM could not roll ${feature.name}.` };
-    damageApplied = Math.max(0, pending.damageTaken - reductionRoll.total);
+    damageAfterReduction = Math.max(0, pending.damageTaken - reductionRoll.total);
     next = spendNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
     next = { ...next, combatants: next.combatants.map((combatant) => combatant.id === target.id ? { ...combatant, reactionAvailable: false } : combatant) };
-    summary = `${target.name} uses ${feature.name}, rolls ${reductionRoll.rolls[0]} + ${feature.resolution.modifier} = ${reductionRoll.total}, and reduces ${pending.damageTaken} damage to ${damageApplied}.`;
+    damageApplied = effectiveDamageAmount(next, target.id, damageAfterReduction, pending.damageType);
+    const resistanceCopy = damageApplied < damageAfterReduction ? ` ${target.name}'s resistance further reduces it to ${damageApplied}.` : "";
+    summary = `${target.name} uses ${feature.name}, rolls ${reductionRoll.rolls[0]} + ${feature.resolution.modifier} = ${reductionRoll.total}, and reduces ${pending.damageTaken} damage to ${damageAfterReduction}.${resistanceCopy}`;
   }
 
-  next = applyDamageToCombatant(next, target.id, damageApplied, { critical: pending.critical, allowDamageReduction: false });
+  next = applyDamageToCombatant(next, target.id, damageAfterReduction, { critical: pending.critical, allowDamageReduction: false, damageType: pending.damageType });
   if (next.pendingResponse?.type === "zero-hit-point-replacement" && pending.continuation) {
     next = { ...next, pendingResponse: { ...next.pendingResponse, continuation: pending.continuation } };
   }
@@ -108,11 +111,12 @@ export function resolveSavingThrowResponse(encounter: EncounterState, random = M
   const damage = succeeded
     ? pending.ability.damageOnSuccess === "half" ? Math.floor(damageRoll.total / 2) : 0
     : damageRoll.total;
-  let next = applyDamageToCombatant({ ...encounter, pendingResponse: null }, target.id, damage);
+  const damageApplied = effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType);
+  let next = applyDamageToCombatant({ ...encounter, pendingResponse: null }, target.id, damage, { damageType: damageRoll.formula.damageType });
   const saveSummary = `${target.name} rolls ${playerRoll.kept} ${modifier >= 0 ? "+" : "−"} ${Math.abs(modifier)} = ${playerRoll.total} vs DC ${pending.ability.saveDc} — ${succeeded ? "success" : "failure"}.`;
-  const damageSummary = `${source.name}'s ${pending.ability.name} rolls ${damageRoll.rolls.join(" + ")}${damageRoll.modifier ? ` ${damageRoll.modifier > 0 ? "+" : "−"} ${Math.abs(damageRoll.modifier)}` : ""} = ${damageRoll.total}; ${damage} damage applied.`;
+  const damageSummary = `${source.name}'s ${pending.ability.name} rolls ${damageRoll.rolls.join(" + ")}${damageRoll.modifier ? ` ${damageRoll.modifier > 0 ? "+" : "−"} ${Math.abs(damageRoll.modifier)}` : ""} = ${damageRoll.total}; ${damageApplied} damage applied${damageApplied < damage ? " after resistance" : ""}.`;
   next = { ...next, log: [damageSummary, saveSummary, ...next.log] };
-  next = queueConcentrationCheck(next, target.id, damage);
+  next = queueConcentrationCheck(next, target.id, damageApplied);
   return { encounter: next, playerRoll, damageRoll, summary: `${saveSummary} ${damageSummary}` };
 }
 

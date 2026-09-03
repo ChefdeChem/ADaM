@@ -1,7 +1,7 @@
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
-import { applyEffect, effectiveArmorClass, effectiveAttackModifier, effectiveSavingThrowModifier } from "./effects";
+import { applyEffect, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier } from "./effects";
 import { spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { analyzeTarget, gridDistanceFeet } from "./targeting";
 
@@ -82,7 +82,7 @@ export type DamageResolution=
   |{legal:false;reason:string;encounter:EncounterState}
   |{legal:true;encounter:EncounterState;roll:DamageRoll;damageApplied:number;summary:string};
 
-export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false,allowDamageReduction=true}:{critical?:boolean;allowDamageReduction?:boolean}={}):EncounterState{
+export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false,allowDamageReduction=true,damageType}:{critical?:boolean;allowDamageReduction?:boolean;damageType?:string}={}):EncounterState{
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return encounter;
   const reduction=allowDamageReduction&&(target.triggeredFeatures??[]).find((feature)=>feature.trigger==="takes-damage"
@@ -93,12 +93,13 @@ export function applyDamageToCombatant(encounter:EncounterState,targetId:string,
     const summary=`${target.name} is about to take ${amount} damage and can use ${reduction.name} to reduce it.`;
     return{
       ...encounter,
-      pendingResponse:{type:"damage-reduction-reaction",targetCombatantId:target.id,featureId:reduction.id,damageTaken:amount,critical},
+      pendingResponse:{type:"damage-reduction-reaction",targetCombatantId:target.id,featureId:reduction.id,damageTaken:amount,damageType,critical},
       log:[summary,...encounter.log],
     };
   }
-  const absorbed=Math.min(target.temporaryHitPoints,amount);
-  const hitPointDamage=amount-absorbed;
+  const effectiveAmount=effectiveDamageAmount(encounter,target.id,amount,damageType);
+  const absorbed=Math.min(target.temporaryHitPoints,effectiveAmount);
+  const hitPointDamage=effectiveAmount-absorbed;
   const reducedToZero=target.hitPoints.current>0&&hitPointDamage>=target.hitPoints.current;
   const killedOutright=reducedToZero&&hitPointDamage-target.hitPoints.current>=target.hitPoints.maximum;
   const replacement=(target.triggeredFeatures??[]).find((feature)=>feature.trigger==="reduced-to-zero-hit-points"
@@ -120,9 +121,13 @@ export function applyDamageToCombatant(encounter:EncounterState,targetId:string,
       log:[summary,...encounter.log],
     };
   }
+  const resistanceSummary=effectiveAmount<amount
+    ?`${target.name}'s damage resistance reduces ${amount} ${damageType} damage to ${effectiveAmount}.`
+    :null;
   return{
     ...encounter,
     combatants,
+    log:resistanceSummary?[resistanceSummary,...encounter.log]:encounter.log,
   };
 }
 
@@ -131,10 +136,14 @@ export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAtt
   if(!roll)return{legal:false,reason:`ADaM could not read the damage formula “${attack.damage}”.`,encounter};
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return{legal:false,reason:"The target is no longer available.",encounter};
-  const damaged=applyDamageToCombatant(encounter,targetId,roll.total,{critical});
+  const damaged=applyDamageToCombatant(encounter,targetId,roll.total,{critical,damageType:roll.formula.damageType});
+  const damageApplied=damaged.pendingResponse?.type==="damage-reduction-reaction"
+    ?roll.total
+    :effectiveDamageAmount(encounter,targetId,roll.total,roll.formula.damageType);
   const dice=`${roll.rolls.join(" + ")}${roll.modifier===0?"":` ${roll.modifier>0?"+":"−"} ${Math.abs(roll.modifier)}`}`;
-  const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType} to ${target.name}.`;
-  return{legal:true,roll,damageApplied:roll.total,summary,encounter:{...damaged,log:[summary,...damaged.log]}};
+  const resistanceCopy=damageApplied<roll.total?`; ${damageApplied} applied after resistance`:"";
+  const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType} to ${target.name}${resistanceCopy}.`;
+  return{legal:true,roll,damageApplied,summary,encounter:{...damaged,log:[summary,...damaged.log]}};
 }
 
 export function executeAttackChoice(encounter: EncounterState, attack: CharacterAttack, random = Math.random): OptionResolution {
@@ -264,8 +273,9 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       const damageRoll = rollDamage(spell.damage, { random });
       if (!damageRoll) return { legal: false, reason: `ADaM could not read the damage formula “${spell.damage}”.`, encounter };
       const damage = succeeded ? Math.floor(damageRoll.total / 2) : damageRoll.total;
-      next = applyDamageToCombatant(next, targetId, damage);
-      damageCopy = ` ${damage} ${damageRoll.formula.damageType} damage.`;
+      const damageApplied = effectiveDamageAmount(next, targetId, damage, damageRoll.formula.damageType);
+      next = applyDamageToCombatant(next, targetId, damage, { damageType: damageRoll.formula.damageType });
+      damageCopy = ` ${damageApplied} ${damageRoll.formula.damageType} damage${damageApplied < damage ? ` after resistance (${damage} rolled)` : ""}.`;
     }
     if (!succeeded && spell.effect) next = applyEffect(next, { ...spell.effect, sourceCombatantId: active.id, targetCombatantId: targetId, durationRounds: spell.durationRounds, concentration: spell.concentration });
     const summary = `${target.name} rolled ${saveRoll.total} on the DC ${spell.save.dc} ${spell.save.ability} save against ${spell.name} and ${succeeded ? "succeeded" : "failed"}.${damageCopy}`;

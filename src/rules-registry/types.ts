@@ -33,6 +33,7 @@ export type MechanicComponent =
   | "replacement-effect"
   | "reaction"
   | "damage-reduction"
+  | "damage-resistance"
   | "dice-roll"
   | "duration"
   | "concentration"

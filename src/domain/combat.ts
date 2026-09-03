@@ -131,6 +131,7 @@ export type PendingPlayerResponse =
       targetCombatantId: string;
       featureId: string;
       damageTaken: number;
+      damageType?: string;
       critical: boolean;
       continuation?: MovementContinuation;
     };
@@ -141,6 +142,7 @@ export type EffectModifiers = {
   savingThrows?: number;
   speedFeet?: number;
   incomingAttacks?: "disadvantage";
+  damageResistances?: string[];
 };
 
 export type ActiveEffect = {
@@ -151,7 +153,7 @@ export type ActiveEffect = {
   targetCombatantId: string;
   concentration: boolean;
   modifiers: EffectModifiers;
-  expiresAt?: { round: number; combatantId: string; phase: "start" };
+  expiresAt?: { round: number; combatantId: string; phase: "start" | "end" };
   temporaryHitPointsGranted?: number;
 };
 

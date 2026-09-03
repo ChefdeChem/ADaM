@@ -117,6 +117,8 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
         ? ["action-economy", "movement", "resource-spend", "resource-recovery", "temporary-hit-points"]
         : executableAction?.resolution.type === "healing-pool"
           ? ["action-economy", "targeting", "range", "resource-spend", "resource-recovery", "hit-point-restoration"]
+        : executableAction?.resolution.type === "activate-effect"
+          ? ["action-economy", "resource-spend", "resource-recovery", "duration", "damage-resistance"]
         : executableTrigger?.resolution.type === "drop-to-one-hit-point"
           ? ["trigger", "replacement-effect", "resource-spend", "resource-recovery"]
           : executableTrigger?.resolution.type === "reduce-damage-by-roll"

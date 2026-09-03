@@ -3,7 +3,7 @@ import type { EncounterState } from "../domain/combat";
 import type { Scenario } from "../scenarios/types";
 import { enemyProfile } from "../rulesets/enemy-profiles";
 import { rollD20, type D20Result } from "./dice";
-import { effectiveSpeed, expireEffectsAtTurnStart } from "./effects";
+import { effectiveSpeed, expireEffectsAtTurnEnd, expireEffectsAtTurnStart } from "./effects";
 
 const abilityModifier=(score:number)=>Math.floor((score-10)/2);
 const abilities:AbilityName[]=["strength","dexterity","constitution","intelligence","wisdom","charisma"];
@@ -110,27 +110,29 @@ export function rollCombatantInitiative(encounter:EncounterState,combatantId:str
 }
 
 export function endTurn(encounter: EncounterState): EncounterState {
+  const endingCombatant = encounter.combatants[encounter.activeIndex];
+  const afterEndEffects = endingCombatant ? expireEffectsAtTurnEnd(encounter, encounter.round, endingCombatant.id) : encounter;
   const eligible = (combatant: EncounterState["combatants"][number]) => combatant.side === "enemy"
     ? combatant.hitPoints.current > 0
     : combatant.hitPoints.current > 0 || (!combatant.stabilized && combatant.deathSaves.failures < 3);
-  const livingCombatants = encounter.combatants.filter(eligible);
-  if (livingCombatants.length === 0) return encounter;
-  let nextIndex = encounter.activeIndex;
-  for (let offset = 1; offset <= encounter.combatants.length; offset += 1) {
-    const candidateIndex = (encounter.activeIndex + offset) % encounter.combatants.length;
-    if (eligible(encounter.combatants[candidateIndex])) { nextIndex = candidateIndex; break; }
+  const livingCombatants = afterEndEffects.combatants.filter(eligible);
+  if (livingCombatants.length === 0) return afterEndEffects;
+  let nextIndex = afterEndEffects.activeIndex;
+  for (let offset = 1; offset <= afterEndEffects.combatants.length; offset += 1) {
+    const candidateIndex = (afterEndEffects.activeIndex + offset) % afterEndEffects.combatants.length;
+    if (eligible(afterEndEffects.combatants[candidateIndex])) { nextIndex = candidateIndex; break; }
   }
-  const round = nextIndex <= encounter.activeIndex ? encounter.round + 1 : encounter.round;
-  const nextCombatant = encounter.combatants[nextIndex];
-  const combatants = encounter.combatants.map((combatant, index) => index === nextIndex ? { ...combatant, reactionAvailable: true } : combatant);
+  const round = nextIndex <= afterEndEffects.activeIndex ? afterEndEffects.round + 1 : afterEndEffects.round;
+  const nextCombatant = afterEndEffects.combatants[nextIndex];
+  const combatants = afterEndEffects.combatants.map((combatant, index) => index === nextIndex ? { ...combatant, reactionAvailable: true } : combatant);
   const advanced = {
-    ...encounter,
+    ...afterEndEffects,
     combatants,
     round,
     activeIndex: nextIndex,
     selectedTargetId: null,
     turn: { action: true, bonusAction: true, reaction: true, movementRemaining: nextCombatant.hitPoints.current > 0 ? nextCombatant.baseSpeedFeet : 0, disengaged: false },
-    log: [`Turn passed to ${nextCombatant.name}.`, ...encounter.log],
+    log: [`Turn passed to ${nextCombatant.name}.`, ...afterEndEffects.log],
   };
   const expired = expireEffectsAtTurnStart(advanced, round, nextCombatant.id);
   return { ...expired, turn: { ...expired.turn, movementRemaining: effectiveSpeed(expired, nextCombatant.id) } };

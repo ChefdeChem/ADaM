@@ -10,6 +10,7 @@ export type EffectInput = {
   concentration?: boolean;
   modifiers?: EffectModifiers;
   temporaryHitPoints?: number;
+  expiresAt?: ActiveEffect["expiresAt"];
 };
 
 function cleanExpiredTemporaryHitPoints(encounter: EncounterState, effectIds: Set<string>): EncounterState {
@@ -37,9 +38,9 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     targetCombatantId: input.targetCombatantId,
     concentration: input.concentration ?? false,
     modifiers: input.modifiers ?? {},
-    expiresAt: input.durationRounds
+    expiresAt: input.expiresAt ?? (input.durationRounds
       ? { round: encounter.round + input.durationRounds, combatantId: input.sourceCombatantId, phase: "start" }
-      : undefined,
+      : undefined),
     temporaryHitPointsGranted: input.temporaryHitPoints,
   };
 
@@ -66,6 +67,21 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
 
 export function expireEffectsAtTurnStart(encounter: EncounterState, round: number, combatantId: string): EncounterState {
   const expired = encounter.effects.filter((effect) => effect.expiresAt && (
+    effect.expiresAt.round < round
+    || (effect.expiresAt.phase === "start" && effect.expiresAt.round === round && effect.expiresAt.combatantId === combatantId)
+  ));
+  if (!expired.length) return encounter;
+  const expiredIds = new Set(expired.map((effect) => effect.id));
+  const cleaned = cleanExpiredTemporaryHitPoints(encounter, expiredIds);
+  return {
+    ...cleaned,
+    effects: cleaned.effects.filter((effect) => !expiredIds.has(effect.id)),
+    log: [...expired.map((effect) => `${effect.name} expired.`), ...cleaned.log],
+  };
+}
+
+export function expireEffectsAtTurnEnd(encounter: EncounterState, round: number, combatantId: string): EncounterState {
+  const expired = encounter.effects.filter((effect) => effect.expiresAt?.phase === "end" && (
     effect.expiresAt.round < round
     || (effect.expiresAt.round === round && effect.expiresAt.combatantId === combatantId)
   ));
@@ -100,6 +116,14 @@ export function effectiveSavingThrowModifier(encounter: EncounterState, combatan
   if (!combatant) return 0;
   return combatant.savingThrowModifiers[ability] + effectsForCombatant(encounter, combatantId)
     .reduce((total, effect) => total + (effect.modifiers.savingThrows ?? 0), 0);
+}
+
+export function effectiveDamageAmount(encounter: EncounterState, combatantId: string, amount: number, damageType?: string): number {
+  if (!damageType || amount <= 0) return amount;
+  const normalizedType = damageType.trim().toLowerCase();
+  const resisted = effectsForCombatant(encounter, combatantId).some((effect) =>
+    effect.modifiers.damageResistances?.some((type) => type.toLowerCase() === normalizedType));
+  return resisted ? Math.floor(amount / 2) : amount;
 }
 
 export function endConcentration(encounter: EncounterState, sourceCombatantId: string, reason: string): EncounterState {
