@@ -15,7 +15,9 @@ test("Cleira is the first extracted built-in roster character", () => {
   assert.equal(roster[0].resources.find((resource) => resource.id === "spell-slot-1").maximum, 2);
   assert.equal(roster[0].spells.length, 7);
   assert.equal(roster[0].spells.find((spell) => spell.id === "healing-word").unsupportedReason, undefined);
-  assert.match(roster[0].spells.find((spell) => spell.id === "vicious-mockery").unsupportedReason, /disadvantage rider/i);
+  const viciousMockery = roster[0].spells.find((spell) => spell.id === "vicious-mockery");
+  assert.equal(viciousMockery.unsupportedReason, undefined);
+  assert.equal(viciousMockery.effect.consumeOnAttackRoll, true);
 });
 
 test("Cleira's flat unarmed damage resolves as zero", () => {

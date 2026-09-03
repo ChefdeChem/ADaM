@@ -9,7 +9,7 @@ import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effects
 import { executeFeatureAction } from "../src/engine/feature-actions";
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
-import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolveSavingThrowResponse, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
+import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { recoverRestResources, type RestType } from "../src/engine/resources";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
@@ -272,7 +272,7 @@ export default function Home() {
     setEncounter(result.encounter);
     if (result.damageRoll) setLastRoll(result.damageRoll);
     setFeedback(result.summary);
-    setEnemyTurnPhase("resolving");
+    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
   }
 
   function rollPendingConcentration() {
@@ -291,6 +291,13 @@ export default function Home() {
     if (result.damageRoll) setLastRoll(result.damageRoll);
     setFeedback(result.summary);
     setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : activeCombatant.side === "enemy" ? "showing" : "idle");
+  }
+
+  function chooseWeaponMastery(useMastery: boolean) {
+    const result = resolveWeaponMasteryChoice(encounter, useMastery);
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
+    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : activeCombatant.side === "enemy" ? "resolving" : "idle");
   }
 
   function rollPendingDeathSave() {
@@ -780,6 +787,13 @@ export default function Home() {
           const reduction = feature.resolution.type === "reduce-damage-by-roll" ? `${feature.resolution.die} + ${feature.resolution.modifier}` : "damage reduction";
           return <section className="roll-coach response-coach reaction-coach" aria-live="assertive">
             <div><span>Player response · Damage reaction</span><h3>{feature.name}</h3><p>{target.name} is about to take {pending.damageTaken} damage. Spend a Reaction and one use to roll <strong>{reduction}</strong> and reduce it, or save the reaction and take the full damage.</p><div className="response-actions"><button type="button" onClick={() => chooseDamageReductionReaction(true)}><small>Use reaction · Spend one use</small><strong>Roll {reduction}</strong><em>The reduction can lower this damage to 0.</em></button><button type="button" className="decline-response" onClick={() => chooseDamageReductionReaction(false)}><small>Save reaction</small><strong>Take {pending.damageTaken} damage</strong></button></div></div>
+          </section>;
+        })()}
+        {encounter.pendingResponse?.type === "weapon-mastery-choice" && (() => {
+          const pending = encounter.pendingResponse;
+          const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
+          return <section className="roll-coach response-coach reaction-coach" aria-live="assertive">
+            <div><span>Player choice · Weapon mastery</span><h3>Apply Slow with {pending.attackName}?</h3><p>The attack damaged {target.name}. You may reduce the target&apos;s Speed by 10 feet until the start of your next turn. Multiple Slow applications cannot reduce Speed by more than 10 feet.</p><div className="response-actions"><button type="button" onClick={() => chooseWeaponMastery(true)}><small>Use Slow</small><strong>Reduce Speed by 10 feet</strong><em>This does not spend an action or resource.</em></button><button type="button" className="decline-response" onClick={() => chooseWeaponMastery(false)}><small>Skip Slow</small><strong>Keep current Speed</strong></button></div></div>
           </section>;
         })()}
         {deathSaveRequired && encounter.turn.action && <section className="roll-coach response-coach death-save-coach" aria-live="assertive">

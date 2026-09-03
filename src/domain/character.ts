@@ -29,6 +29,7 @@ export type CharacterAttack = {
   normalRangeFeet: number;
   longRangeFeet?: number;
   description?: string;
+  mastery?: "sap" | "slow";
 };
 
 export type CharacterSpell = {
@@ -49,12 +50,25 @@ export type CharacterSpell = {
   durationRounds?: number;
   description?: string;
   unsupportedReason?: string;
+  missingCapabilities?: string[];
+  provenance?: MechanicProvenance;
   effect?: {
     name: string;
     description: string;
     modifiers?: EffectModifiers;
     temporaryHitPoints?: number;
+    expires?: "end-of-target-next-turn";
+    consumeOnAttackRoll?: boolean;
   };
+};
+
+export type CharacterPassiveFeature = {
+  id: string;
+  name: string;
+  description: string;
+  resolution: { type: "damage-resistance"; damageTypes: string[] };
+  missingCapabilities?: string[];
+  provenance: MechanicProvenance;
 };
 
 export type CharacterFeatureAction = {
@@ -89,14 +103,15 @@ export type CharacterFeatureAction = {
 export type CharacterTriggeredFeature = {
   id: string;
   name: string;
-  trigger: "reduced-to-zero-hit-points" | "takes-damage";
+  trigger: "reduced-to-zero-hit-points" | "takes-damage" | "reduces-hostile-to-zero-hit-points";
   optional: boolean;
   description: string;
-  resourceName: string;
-  resourceCost: number;
+  resourceName?: string;
+  resourceCost?: number;
   resolution:
     | { type: "drop-to-one-hit-point" }
-    | { type: "reduce-damage-by-roll"; die: "1d12"; modifier: number };
+    | { type: "reduce-damage-by-roll"; die: "1d12"; modifier: number }
+    | { type: "gain-temporary-hit-points"; amount: number };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;
 };
@@ -118,6 +133,8 @@ export type CharacterProfile = {
     description: string;
     executableActionId?: string;
     executableTriggerId?: string;
+    executablePassiveId?: string;
+    executableAttackIds?: string[];
     provenance?: MechanicProvenance;
   }>;
 };
@@ -136,6 +153,7 @@ export type Character = {
   savingThrowModifiers?: Partial<Record<AbilityName, number>>;
   resources: CharacterResource[];
   featureActions?: CharacterFeatureAction[];
+  passiveFeatures?: CharacterPassiveFeature[];
   triggeredFeatures?: CharacterTriggeredFeature[];
   attacks?: CharacterAttack[];
   spells?: CharacterSpell[];

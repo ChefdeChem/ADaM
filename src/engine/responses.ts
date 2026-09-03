@@ -1,7 +1,7 @@
 import type { EncounterState } from "../domain/combat";
 import { applyDamageToCombatant, resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options";
 import { rollD20, rollDamage, type D20Result, type DamageRoll } from "./dice";
-import { applyEffect, effectiveDamageAmount, effectiveSavingThrowModifier, endConcentration } from "./effects";
+import { applyEffect, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, endConcentration } from "./effects";
 import { queueConcentrationCheck } from "./defensive-responses";
 import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { resumeMovementContinuation } from "./movement";
@@ -28,6 +28,7 @@ export function resolveDamageReductionReaction(encounter: EncounterState, useFea
   let damageApplied = effectiveDamageAmount(next, target.id, damageAfterReduction, pending.damageType);
   let summary = `${target.name} saves their reaction and takes ${damageApplied} damage.`;
   if (useFeature) {
+    if (!feature.resourceName || feature.resourceCost === undefined) return { encounter, playerRoll: null, damageRoll: null, summary: `${feature.name} is missing its resource rule.` };
     const resource = validateNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
     if (!target.reactionAvailable || !resource.legal) return { encounter, playerRoll: null, damageRoll: null, summary: !target.reactionAvailable ? `${target.name}'s Reaction is unavailable.` : resource.reason ?? `${feature.name} is unavailable.` };
     reductionRoll = rollDamage(`${feature.resolution.die} + ${feature.resolution.modifier}`, { random });
@@ -40,7 +41,7 @@ export function resolveDamageReductionReaction(encounter: EncounterState, useFea
     summary = `${target.name} uses ${feature.name}, rolls ${reductionRoll.rolls[0]} + ${feature.resolution.modifier} = ${reductionRoll.total}, and reduces ${pending.damageTaken} damage to ${damageAfterReduction}.${resistanceCopy}`;
   }
 
-  next = applyDamageToCombatant(next, target.id, damageAfterReduction, { critical: pending.critical, allowDamageReduction: false, damageType: pending.damageType });
+  next = applyDamageToCombatant(next, target.id, damageAfterReduction, { critical: pending.critical, allowDamageReduction: false, damageType: pending.damageType, sourceCombatantId: pending.sourceCombatantId });
   if (next.pendingResponse?.type === "zero-hit-point-replacement" && pending.continuation) {
     next = { ...next, pendingResponse: { ...next.pendingResponse, continuation: pending.continuation } };
   }
@@ -69,6 +70,7 @@ export function resolveZeroHitPointReplacement(encounter: EncounterState, useFea
   let next: EncounterState = { ...encounter, pendingResponse: null };
   let summary: string;
   if (useFeature) {
+    if (!feature.resourceName || feature.resourceCost === undefined) return { encounter, playerRoll: null, damageRoll: null, summary: `${feature.name} is missing its resource rule.` };
     const resource = validateNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
     if (!resource.legal) return { encounter, playerRoll: null, damageRoll: null, summary: resource.reason ?? `${feature.name} is unavailable.` };
     next = spendNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
@@ -112,7 +114,7 @@ export function resolveSavingThrowResponse(encounter: EncounterState, random = M
     ? pending.ability.damageOnSuccess === "half" ? Math.floor(damageRoll.total / 2) : 0
     : damageRoll.total;
   const damageApplied = effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType);
-  let next = applyDamageToCombatant({ ...encounter, pendingResponse: null }, target.id, damage, { damageType: damageRoll.formula.damageType });
+  let next = applyDamageToCombatant({ ...encounter, pendingResponse: null }, target.id, damage, { damageType: damageRoll.formula.damageType, sourceCombatantId: source.id });
   const saveSummary = `${target.name} rolls ${playerRoll.kept} ${modifier >= 0 ? "+" : "−"} ${Math.abs(modifier)} = ${playerRoll.total} vs DC ${pending.ability.saveDc} — ${succeeded ? "success" : "failure"}.`;
   const damageSummary = `${source.name}'s ${pending.ability.name} rolls ${damageRoll.rolls.join(" + ")}${damageRoll.modifier ? ` ${damageRoll.modifier > 0 ? "+" : "−"} ${Math.abs(damageRoll.modifier)}` : ""} = ${damageRoll.total}; ${damageApplied} damage applied${damageApplied < damage ? " after resistance" : ""}.`;
   next = { ...next, log: [damageSummary, saveSummary, ...next.log] };
@@ -213,13 +215,54 @@ export function rollOpportunityDamage(encounter: EncounterState, random = Math.r
   const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId);
   const attack = source?.attacks.find((candidate) => candidate.id === pending.attackId);
   if (!source || !attack) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The opportunity attack can no longer be resolved." };
-  const result = resolveAttackDamage({ ...encounter, pendingResponse: null }, attack, pending.targetCombatantId, pending.critical, random);
+  const result = resolveAttackDamage({ ...encounter, pendingResponse: null }, attack, pending.targetCombatantId, pending.critical, random, source.id);
   if (!result.legal) return { encounter, playerRoll: null, damageRoll: null, summary: result.reason };
+  if (result.encounter.pendingResponse?.type === "weapon-mastery-choice") {
+    const next = { ...result.encounter, pendingResponse: { ...result.encounter.pendingResponse, continuation: pending.continuation } };
+    return { encounter: next, playerRoll: null, damageRoll: result.roll, summary: `${result.summary} Decide whether to apply Slow before movement continues.` };
+  }
   const target = result.encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
   const resumed = target.hitPoints.current > 0 ? resumeMovementContinuation(result.encounter, pending.continuation, random) : null;
   const next = resumed?.encounter ?? result.encounter;
   const summary = `${result.summary}${target.hitPoints.current > 0 ? ` ${target.name} survives. ${resumed?.reason ?? "Movement continues."}` : ` ${target.name} falls before leaving reach.`}`;
   return { encounter: { ...next, log: [summary, ...next.log] }, playerRoll: null, damageRoll: result.roll, summary };
+}
+
+export function resolveWeaponMasteryChoice(encounter: EncounterState, useMastery: boolean, random = Math.random): PlayerResponseResolution {
+  const pending = encounter.pendingResponse;
+  if (!pending || pending.type !== "weapon-mastery-choice") return { encounter, playerRoll: null, damageRoll: null, summary: "No weapon-mastery choice is pending." };
+  const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId);
+  const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId);
+  if (!source || !target) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The weapon-mastery choice can no longer be resolved." };
+
+  let next: EncounterState = { ...encounter, pendingResponse: null };
+  let summary = `${source.name} declines Slow; ${target.name}'s Speed is unchanged.`;
+  if (useMastery) {
+    next = applyEffect(next, {
+      name: "Slow",
+      description: "Speed is reduced by 10 feet until the start of the attacker's next turn.",
+      sourceCombatantId: source.id,
+      targetCombatantId: target.id,
+      modifiers: { speedFeet: -10 },
+      expiresAt: pending.expiresAt,
+      replaceExisting: true,
+    });
+    if (encounter.combatants[encounter.activeIndex]?.id === target.id) {
+      next = { ...next, turn: { ...next.turn, movementRemaining: Math.min(next.turn.movementRemaining, effectiveSpeed(next, target.id)) } };
+    }
+    summary = `${source.name} applies Slow with ${pending.attackName}; ${target.name}'s Speed is reduced by 10 feet.`;
+  }
+  next = { ...next, log: [summary, ...next.log] };
+
+  if (pending.continuation) {
+    if (pending.continuation.cost > next.turn.movementRemaining) {
+      const stopped = `${target.name} no longer has enough movement to complete the interrupted move.`;
+      return { encounter: { ...next, log: [stopped, ...next.log] }, playerRoll: null, damageRoll: null, summary: `${summary} ${stopped}` };
+    }
+    const resumed = resumeMovementContinuation(next, pending.continuation, random);
+    return { encounter: resumed.encounter, playerRoll: null, damageRoll: resumed.damageRoll, summary: `${summary} ${resumed.reason}` };
+  }
+  return { encounter: next, playerRoll: null, damageRoll: null, summary };
 }
 
 export function resolveConcentrationResponse(encounter: EncounterState, random = Math.random): PlayerResponseResolution {

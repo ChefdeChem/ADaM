@@ -21,6 +21,13 @@ export const surinaDaardendrian: Character = {
     { id: "divine-sense", name: "Divine Sense", kind: "generic", current: 3, maximum: 3, recovery: "long-rest" },
     { id: "lay-on-hands", name: "Lay on Hands Pool", kind: "generic", current: 5, maximum: 5, recovery: "long-rest" },
   ],
+  passiveFeatures: [{
+    id: "fire-resistance",
+    name: "Fire Resistance",
+    description: "Gold Dragon ancestry grants resistance to fire damage.",
+    resolution: { type: "damage-resistance", damageTypes: ["fire"] },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Damage Resistance" },
+  }],
   featureActions: [{
     id: "lay-on-hands",
     name: "Lay on Hands",
@@ -56,7 +63,7 @@ export const surinaDaardendrian: Character = {
       { name: "Javelin", quantity: 5, weightPounds: 2 },
     ],
     features: [
-      { name: "Fire Resistance", description: "Resistance to fire damage from Gold Dragon ancestry." },
+      { id: "fire-resistance", name: "Fire Resistance", description: "Resistance to fire damage from Gold Dragon ancestry.", executablePassiveId: "fire-resistance", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Damage Resistance" } },
       { name: "Breath Weapon (Gold)", description: "Once per short rest, creatures in a 15-foot cone make a DC 11 Dexterity save; 2d6 fire damage on a failure and half on a success. Area targeting is not implemented yet." },
       { name: "Divine Sense", description: "Three times per long rest, sense certain celestials, fiends, undead, and hallowed places within 60 feet until the end of the next turn." },
       { id: "lay-on-hands", name: "Lay on Hands", description: "Spend points from a 5-point pool as an Action to heal by touch, or spend 5 points to cure one disease or neutralize one poison.", executableActionId: "lay-on-hands", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Lay on Hands" } },
@@ -168,10 +175,10 @@ export const irvenWeber: Character = {
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Paladin: Lay On Hands" },
   }],
   attacks: [
-    { id: "longsword", name: "Longsword", kind: "melee", attackBonus: 4, damage: "1d8 + 2 slashing", normalRangeFeet: 5, description: "Martial, versatile, Sap; one-handed damage." },
+    { id: "longsword", name: "Longsword", kind: "melee", attackBonus: 4, damage: "1d8 + 2 slashing", normalRangeFeet: 5, description: "Martial, versatile, Sap; one-handed damage.", mastery: "sap" },
     { id: "quarterstaff", name: "Quarterstaff", kind: "melee", attackBonus: 4, damage: "1d6 + 2 bludgeoning", normalRangeFeet: 5, description: "Simple, versatile, Topple; one-handed damage." },
-    { id: "javelin", name: "Javelin", kind: "melee", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 5, description: "Simple, thrown, Slow." },
-    { id: "thrown-javelin", name: "Thrown Javelin", kind: "ranged", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 30, longRangeFeet: 120, description: "Normal to 30 feet; disadvantage from 35 to 120 feet." },
+    { id: "javelin", name: "Javelin", kind: "melee", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 5, description: "Simple, thrown, Slow.", mastery: "slow" },
+    { id: "thrown-javelin", name: "Thrown Javelin", kind: "ranged", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 30, longRangeFeet: 120, description: "Normal to 30 feet; disadvantage from 35 to 120 feet. Slow.", mastery: "slow" },
     { id: "unarmed-strike", name: "Unarmed Strike", kind: "melee", attackBonus: 4, damage: "3 bludgeoning", normalRangeFeet: 5, description: "Fixed damage shown on the source sheet." },
   ],
   spells: [
@@ -195,8 +202,8 @@ export const irvenWeber: Character = {
     features: [
       { id: "lay-on-hands", name: "Lay On Hands", description: "Spend points from a 5-point pool as a Bonus Action to heal by touch, or spend 5 points to remove Poisoned.", executableActionId: "lay-on-hands", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Paladin: Lay On Hands" } },
       { name: "Magic Initiate (Wizard)", description: "Knows two wizard cantrips and Burning Hands, which can be cast once free per long rest or with spell slots." },
-      { name: "Javelin Mastery (Slow)", description: "A damaging javelin hit can reduce the target's Speed by 10 feet until the start of the next turn. The rider is not implemented yet." },
-      { name: "Longsword Mastery (Sap)", description: "A longsword hit gives the target disadvantage on its next attack before the start of the next turn. The rider is not implemented yet." },
+      { id: "javelin-mastery-slow", name: "Javelin Mastery (Slow)", description: "After a damaging javelin hit, choose whether to reduce the target's Speed by 10 feet until the start of the next turn.", executableAttackIds: ["javelin", "thrown-javelin"], provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Weapon Mastery: Slow" } },
+      { id: "longsword-mastery-sap", name: "Longsword Mastery (Sap)", description: "A longsword hit gives the target disadvantage on its next attack before the start of the next turn.", executableAttackIds: ["longsword"], provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Weapon Mastery: Sap" } },
     ],
   },
   source: { format: "flattened-pdf", fileName: "Human Claric.pdf", importedAt },
@@ -231,6 +238,14 @@ export const pharos: Character = {
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Orc: Adrenaline Rush" },
   }],
   triggeredFeatures: [{
+    id: "dark-ones-blessing",
+    name: "Dark One's Blessing",
+    trigger: "reduces-hostile-to-zero-hit-points",
+    optional: false,
+    description: "After reducing a hostile creature to 0 Hit Points, gain 4 temporary Hit Points.",
+    resolution: { type: "gain-temporary-hit-points", amount: 4 },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Fiend Patron: Dark One's Blessing" },
+  }, {
     id: "relentless-endurance",
     name: "Relentless Endurance",
     trigger: "reduced-to-zero-hit-points",
@@ -268,7 +283,7 @@ export const pharos: Character = {
     proficiencies: { armor: ["Light Armor"], weapons: ["Simple Weapons"], tools: ["Calligrapher's Supplies"], languages: ["Alzhedo", "Common", "Giant", "Sylvan"] },
     equipment: [{ name: "Leather Armor", quantity: 1, weightPounds: 10 }, { name: "Dagger", quantity: 2, weightPounds: 1 }, { name: "Club", quantity: 1, weightPounds: 2 }, { name: "Light Crossbow", quantity: 1, weightPounds: 5 }, { name: "Crossbow Bolts", quantity: 20, weightPounds: 0.075 }],
     features: [
-      { name: "Dark One's Blessing", description: "Gain 4 temporary hit points after reducing a hostile creature to 0 HP. The automatic trigger is not implemented yet." },
+      { id: "dark-ones-blessing", name: "Dark One's Blessing", description: "Gain 4 temporary hit points after reducing a hostile creature to 0 HP.", executableTriggerId: "dark-ones-blessing", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Fiend Patron: Dark One's Blessing" } },
       { id: "adrenaline-rush", name: "Adrenaline Rush", description: "Twice per short or long rest, Dash as a bonus action and gain 2 temporary hit points.", executableActionId: "adrenaline-rush", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Orc: Adrenaline Rush" } },
       { id: "relentless-endurance", name: "Relentless Endurance", description: "Once per long rest, choose to drop to 1 HP instead of 0 when reduced to 0 HP but not killed outright.", executableTriggerId: "relentless-endurance", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Orc: Relentless Endurance" } },
       { name: "Honeyed Words", description: "Reroll a failed Deception or Persuasion check; the resource is spent only when it changes failure to success. Skill-check rerolls are not implemented yet." },

@@ -1,7 +1,7 @@
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
-import { applyEffect, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier } from "./effects";
+import { applyEffect, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, hasOutgoingAttackDisadvantage, nextTurnRound } from "./effects";
 import { spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { analyzeTarget, gridDistanceFeet } from "./targeting";
 
@@ -30,7 +30,8 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   const threatened = attack.kind === "ranged" && encounter.combatants.some((combatant) => combatant.side !== active.side
     && combatant.hitPoints.current > 0
     && gridDistanceFeet(active, combatant) <= 5);
-  return { legal: true, rollMode: longRange || threatened ? "disadvantage" : "normal", distanceFeet: analysis.distanceFeet };
+  const effectDisadvantage = hasOutgoingAttackDisadvantage(encounter, active.id);
+  return { legal: true, rollMode: longRange || threatened || effectDisadvantage ? "disadvantage" : "normal", distanceFeet: analysis.distanceFeet };
 }
 
 export function validateAttackTarget(encounter:EncounterState,attack:CharacterAttack,targetId:string):OptionValidation{
@@ -52,7 +53,20 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
   const rangeNote=validation.rollMode==="disadvantage"?" with disadvantage":"";
   const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
-  return{legal:true,roll,hit,critical,targetArmorClass,summary,encounter:{...encounter,turn:{...encounter.turn,action:false},log:[`${active.name} attacks ${target.target.name}. ${summary}`,...encounter.log]}};
+  let next=consumeAttackRollEffects(encounter,active.id);
+  if(hit&&attack.mastery==="sap"){
+    next=applyEffect(next,{
+      name:"Sap",
+      description:"Disadvantage on the next attack roll before the start of the attacker's next turn.",
+      sourceCombatantId:active.id,
+      targetCombatantId:target.target.id,
+      modifiers:{outgoingAttacks:"disadvantage"},
+      expiresAt:{round:nextTurnRound(encounter,active.id),combatantId:active.id,phase:"start"},
+      consumeOnAttackRoll:true,
+      replaceExisting:true,
+    });
+  }
+  return{legal:true,roll,hit,critical,targetArmorClass,summary,encounter:{...next,turn:{...next.turn,action:false},log:[`${active.name} attacks ${target.target.name}. ${summary}`,...next.log]}};
 }
 
 export type ReactionAttackRollResolution=
@@ -66,15 +80,29 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   if(!attacker.reactionAvailable)return{legal:false,reason:`${attacker.name}'s reaction is unavailable.`,encounter};
   if(attack.kind!=="melee")return{legal:false,reason:"Opportunity attacks require a melee attack.",encounter};
   if(gridDistanceFeet(attacker,target)>attack.normalRangeFeet)return{legal:false,reason:`${target.name} is outside ${attack.name}'s reach.`,encounter};
-  const roll=rollD20({mode:"normal",modifier:attack.attackBonus+effectiveAttackModifier(encounter,attacker.id),random});
+  const rollMode=hasOutgoingAttackDisadvantage(encounter,attacker.id)?"disadvantage":"normal";
+  const roll=rollD20({mode:rollMode,modifier:attack.attackBonus+effectiveAttackModifier(encounter,attacker.id),random});
   const targetArmorClass=effectiveArmorClass(encounter,target.id);
   const critical=roll.natural===20;
   const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
-  const summary=`Opportunity attack with ${attack.name}: ${roll.kept} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
+  const summary=`Opportunity attack with ${attack.name}${rollMode==="disadvantage"?" with disadvantage":""}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
+  let next=consumeAttackRollEffects(encounter,attacker.id);
+  if(hit&&attack.mastery==="sap"){
+    next=applyEffect(next,{
+      name:"Sap",
+      description:"Disadvantage on the next attack roll before the start of the attacker's next turn.",
+      sourceCombatantId:attacker.id,
+      targetCombatantId:target.id,
+      modifiers:{outgoingAttacks:"disadvantage"},
+      expiresAt:{round:nextTurnRound(encounter,attacker.id),combatantId:attacker.id,phase:"start"},
+      consumeOnAttackRoll:true,
+      replaceExisting:true,
+    });
+  }
   return{legal:true,roll,hit,critical,targetArmorClass,summary,encounter:{
-    ...encounter,
-    combatants:encounter.combatants.map((combatant)=>combatant.id===attacker.id?{...combatant,reactionAvailable:false}:combatant),
-    log:[`${attacker.name} reacts as ${target.name} leaves its reach. ${summary}`,...encounter.log],
+    ...next,
+    combatants:next.combatants.map((combatant)=>combatant.id===attacker.id?{...combatant,reactionAvailable:false}:combatant),
+    log:[`${attacker.name} reacts as ${target.name} leaves its reach. ${summary}`,...next.log],
   }};
 }
 
@@ -82,18 +110,20 @@ export type DamageResolution=
   |{legal:false;reason:string;encounter:EncounterState}
   |{legal:true;encounter:EncounterState;roll:DamageRoll;damageApplied:number;summary:string};
 
-export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false,allowDamageReduction=true,damageType}:{critical?:boolean;allowDamageReduction?:boolean;damageType?:string}={}):EncounterState{
+export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false,allowDamageReduction=true,damageType,sourceCombatantId}:{critical?:boolean;allowDamageReduction?:boolean;damageType?:string;sourceCombatantId?:string}={}):EncounterState{
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return encounter;
   const reduction=allowDamageReduction&&(target.triggeredFeatures??[]).find((feature)=>feature.trigger==="takes-damage"
     &&feature.resolution.type==="reduce-damage-by-roll"
     &&target.reactionAvailable
-    &&validateNamedResource(encounter,target.id,feature.resourceName,feature.resourceCost).legal);
+    &&Boolean(feature.resourceName)
+    &&feature.resourceCost!==undefined
+    &&validateNamedResource(encounter,target.id,feature.resourceName!,feature.resourceCost).legal);
   if(target.side==="player"&&amount>0&&reduction){
     const summary=`${target.name} is about to take ${amount} damage and can use ${reduction.name} to reduce it.`;
     return{
       ...encounter,
-      pendingResponse:{type:"damage-reduction-reaction",targetCombatantId:target.id,featureId:reduction.id,damageTaken:amount,damageType,critical},
+      pendingResponse:{type:"damage-reduction-reaction",targetCombatantId:target.id,featureId:reduction.id,damageTaken:amount,damageType,sourceCombatantId,critical},
       log:[summary,...encounter.log],
     };
   }
@@ -103,22 +133,36 @@ export function applyDamageToCombatant(encounter:EncounterState,targetId:string,
   const reducedToZero=target.hitPoints.current>0&&hitPointDamage>=target.hitPoints.current;
   const killedOutright=reducedToZero&&hitPointDamage-target.hitPoints.current>=target.hitPoints.maximum;
   const replacement=(target.triggeredFeatures??[]).find((feature)=>feature.trigger==="reduced-to-zero-hit-points"
-    &&validateNamedResource(encounter,target.id,feature.resourceName,feature.resourceCost).legal);
+    &&Boolean(feature.resourceName)
+    &&feature.resourceCost!==undefined
+    &&validateNamedResource(encounter,target.id,feature.resourceName!,feature.resourceCost).legal);
   const shouldOfferReplacement=target.side==="player"&&reducedToZero&&!killedOutright&&Boolean(replacement);
-  const combatants=encounter.combatants.map((combatant)=>{
+  let combatants=encounter.combatants.map((combatant)=>{
     if(combatant.id!==targetId)return combatant;
     if(combatant.side==="player"&&combatant.hitPoints.current===0&&hitPointDamage>0){
       return{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,deathSaves:{...combatant.deathSaves,failures:Math.min(3,combatant.deathSaves.failures+(critical?2:1))}};
     }
     return{...combatant,temporaryHitPoints:combatant.temporaryHitPoints-absorbed,hitPoints:{...combatant.hitPoints,current:Math.max(0,combatant.hitPoints.current-hitPointDamage)},stabilized:false};
   });
+  const source=sourceCombatantId?encounter.combatants.find((combatant)=>combatant.id===sourceCombatantId):undefined;
+  const defeatTrigger=source&&source.side!==target.side&&reducedToZero
+    ?source.triggeredFeatures.find((feature)=>feature.trigger==="reduces-hostile-to-zero-hit-points"&&feature.resolution.type==="gain-temporary-hit-points")
+    :undefined;
+  let defeatSummary:string|null=null;
+  if(defeatTrigger?.resolution.type==="gain-temporary-hit-points"){
+    const temporaryHitPoints=defeatTrigger.resolution.amount;
+    combatants=combatants.map((combatant)=>combatant.id===source.id&&temporaryHitPoints>combatant.temporaryHitPoints
+      ?{...combatant,temporaryHitPoints,temporaryHitPointsSourceEffectId:undefined}
+      :combatant);
+    defeatSummary=`${source.name}'s ${defeatTrigger.name} grants ${temporaryHitPoints} temporary hit points.`;
+  }
   if(shouldOfferReplacement&&replacement){
     const summary=`${target.name} was reduced to 0 HP and can use ${replacement.name} to drop to 1 HP instead.`;
     return{
       ...encounter,
       combatants,
       pendingResponse:{type:"zero-hit-point-replacement",targetCombatantId:target.id,featureId:replacement.id,damageTaken:hitPointDamage},
-      log:[summary,...encounter.log],
+      log:[summary,...(defeatSummary?[defeatSummary]:[]),...encounter.log],
     };
   }
   const resistanceSummary=effectiveAmount<amount
@@ -127,22 +171,40 @@ export function applyDamageToCombatant(encounter:EncounterState,targetId:string,
   return{
     ...encounter,
     combatants,
-    log:resistanceSummary?[resistanceSummary,...encounter.log]:encounter.log,
+    log:[...(defeatSummary?[defeatSummary]:[]),...(resistanceSummary?[resistanceSummary]:[]),...encounter.log],
   };
 }
 
-export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAttack,targetId:string,critical=false,random=Math.random):DamageResolution{
+function attackSourceId(encounter:EncounterState,attack:CharacterAttack,targetId:string):string|undefined{
+  const active=encounter.combatants[encounter.activeIndex];
+  if(active&&active.id!==targetId&&(active.attacks.some((candidate)=>candidate.id===attack.id)||!encounter.combatants.some((combatant)=>combatant.attacks.some((candidate)=>candidate.id===attack.id))))return active.id;
+  return encounter.combatants.find((combatant)=>combatant.id!==targetId&&combatant.attacks.some((candidate)=>candidate.id===attack.id))?.id;
+}
+
+export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAttack,targetId:string,critical=false,random=Math.random,sourceCombatantId=attackSourceId(encounter,attack,targetId)):DamageResolution{
   const roll=rollDamage(attack.damage,{critical,random});
   if(!roll)return{legal:false,reason:`ADaM could not read the damage formula “${attack.damage}”.`,encounter};
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return{legal:false,reason:"The target is no longer available.",encounter};
-  const damaged=applyDamageToCombatant(encounter,targetId,roll.total,{critical,damageType:roll.formula.damageType});
+  let damaged=applyDamageToCombatant(encounter,targetId,roll.total,{critical,damageType:roll.formula.damageType,sourceCombatantId});
   const damageApplied=damaged.pendingResponse?.type==="damage-reduction-reaction"
     ?roll.total
     :effectiveDamageAmount(encounter,targetId,roll.total,roll.formula.damageType);
   const dice=`${roll.rolls.join(" + ")}${roll.modifier===0?"":` ${roll.modifier>0?"+":"−"} ${Math.abs(roll.modifier)}`}`;
   const resistanceCopy=damageApplied<roll.total?`; ${damageApplied} applied after resistance`:"";
   const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType} to ${target.name}${resistanceCopy}.`;
+  const source=sourceCombatantId?encounter.combatants.find((combatant)=>combatant.id===sourceCombatantId):undefined;
+  const updatedTarget=damaged.combatants.find((combatant)=>combatant.id===targetId);
+  if(attack.mastery==="slow"&&source?.side==="player"&&damageApplied>0&&(updatedTarget?.hitPoints.current??0)>0&&!damaged.pendingResponse){
+    damaged={...damaged,pendingResponse:{
+      type:"weapon-mastery-choice",
+      mastery:"slow",
+      sourceCombatantId:source.id,
+      targetCombatantId:targetId,
+      attackName:attack.name,
+      expiresAt:{round:nextTurnRound(encounter,source.id),combatantId:source.id,phase:"start"},
+    }};
+  }
   return{legal:true,roll,damageApplied,summary,encounter:{...damaged,log:[summary,...damaged.log]}};
 }
 
@@ -216,11 +278,13 @@ export function resolveSpellAttackRoll(encounter: EncounterState, spell: Charact
   if (spell.attackBonus === undefined) return { legal: false, reason: `${spell.name} does not require an attack roll.`, encounter };
   const active = encounter.combatants[encounter.activeIndex];
   const target = analyzeTarget(encounter, encounter.selectedTargetId!)!;
-  const roll = rollD20({ mode: validation.rollMode ?? "normal", modifier: spell.attackBonus + effectiveAttackModifier(encounter, active.id), random });
+  const rollMode = validation.rollMode === "disadvantage" || hasOutgoingAttackDisadvantage(encounter, active.id) ? "disadvantage" : "normal";
+  const roll = rollD20({ mode: rollMode, modifier: spell.attackBonus + effectiveAttackModifier(encounter, active.id), random });
   const targetArmorClass = effectiveArmorClass(encounter, target.target.id) + (target.cover === "half" ? 2 : 0);
   const critical = roll.natural === 20;
   const hit = critical || (roll.natural !== 1 && roll.total >= targetArmorClass);
-  let next = spendSpellSlot(encounter, active.id, spell.level);
+  let next = consumeAttackRollEffects(encounter, active.id);
+  next = spendSpellSlot(next, active.id, spell.level);
   next = {
     ...next,
     turn: {
@@ -230,7 +294,7 @@ export function resolveSpellAttackRoll(encounter: EncounterState, spell: Charact
       reaction: spell.castingTime === "reaction" ? false : next.turn.reaction,
     },
   };
-  const rangeNote = validation.rollMode === "disadvantage" ? " with disadvantage" : "";
+  const rangeNote = rollMode === "disadvantage" ? " with disadvantage" : "";
   const summary = `${spell.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier >= 0 ? "+" : "−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical ? "critical hit" : hit ? "hit" : "miss"}.`;
   return { legal: true, roll, hit, critical, targetArmorClass, summary, encounter: { ...next, log: [`${active.name} casts ${spell.name} at ${target.target.name}. ${summary}`, ...next.log] } };
 }
@@ -274,10 +338,20 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       if (!damageRoll) return { legal: false, reason: `ADaM could not read the damage formula “${spell.damage}”.`, encounter };
       const damage = succeeded ? Math.floor(damageRoll.total / 2) : damageRoll.total;
       const damageApplied = effectiveDamageAmount(next, targetId, damage, damageRoll.formula.damageType);
-      next = applyDamageToCombatant(next, targetId, damage, { damageType: damageRoll.formula.damageType });
+      next = applyDamageToCombatant(next, targetId, damage, { damageType: damageRoll.formula.damageType, sourceCombatantId: active.id });
       damageCopy = ` ${damageApplied} ${damageRoll.formula.damageType} damage${damageApplied < damage ? ` after resistance (${damage} rolled)` : ""}.`;
     }
-    if (!succeeded && spell.effect) next = applyEffect(next, { ...spell.effect, sourceCombatantId: active.id, targetCombatantId: targetId, durationRounds: spell.durationRounds, concentration: spell.concentration });
+    if (!succeeded && spell.effect) next = applyEffect(next, {
+      ...spell.effect,
+      sourceCombatantId: active.id,
+      targetCombatantId: targetId,
+      durationRounds: spell.durationRounds,
+      concentration: spell.concentration,
+      expiresAt: spell.effect.expires === "end-of-target-next-turn"
+        ? { round: nextTurnRound(encounter, targetId), combatantId: targetId, phase: "end" }
+        : undefined,
+      replaceExisting: true,
+    });
     const summary = `${target.name} rolled ${saveRoll.total} on the DC ${spell.save.dc} ${spell.save.ability} save against ${spell.name} and ${succeeded ? "succeeded" : "failed"}.${damageCopy}`;
     return { legal: true, roll: saveRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
@@ -300,11 +374,16 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       targetCombatantId: targetId,
       durationRounds: spell.durationRounds,
       concentration: spell.concentration,
+      expiresAt: spell.effect.expires === "end-of-target-next-turn"
+        ? { round: nextTurnRound(encounter, targetId), combatantId: targetId, phase: "end" }
+        : undefined,
+      replaceExisting: true,
     });
   }
   const roll = spell.attackBonus === undefined
     ? null
-    : rollD20({ mode: "normal", modifier: spell.attackBonus + effectiveAttackModifier(next, active.id), random });
+    : rollD20({ mode: hasOutgoingAttackDisadvantage(next, active.id) ? "disadvantage" : "normal", modifier: spell.attackBonus + effectiveAttackModifier(next, active.id), random });
+  if (roll) next = consumeAttackRollEffects(next, active.id);
   const slotCopy = spell.level === 0 ? "cantrip" : `level ${spell.level} slot`;
   const rollCopy = roll ? ` Attack roll: ${roll.total} (${roll.kept} + ${roll.modifier}).` : "";
   const summary = `${spell.name} cast on ${targetName} using ${slotCopy}.${rollCopy}`;

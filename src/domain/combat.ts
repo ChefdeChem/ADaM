@@ -132,7 +132,17 @@ export type PendingPlayerResponse =
       featureId: string;
       damageTaken: number;
       damageType?: string;
+      sourceCombatantId?: string;
       critical: boolean;
+      continuation?: MovementContinuation;
+    }
+  | {
+      type: "weapon-mastery-choice";
+      mastery: "slow";
+      sourceCombatantId: string;
+      targetCombatantId: string;
+      attackName: string;
+      expiresAt: { round: number; combatantId: string; phase: "start" };
       continuation?: MovementContinuation;
     };
 
@@ -142,6 +152,7 @@ export type EffectModifiers = {
   savingThrows?: number;
   speedFeet?: number;
   incomingAttacks?: "disadvantage";
+  outgoingAttacks?: "disadvantage";
   damageResistances?: string[];
 };
 
@@ -155,6 +166,7 @@ export type ActiveEffect = {
   modifiers: EffectModifiers;
   expiresAt?: { round: number; combatantId: string; phase: "start" | "end" };
   temporaryHitPointsGranted?: number;
+  consumeOnAttackRoll?: boolean;
 };
 
 export type Combatant = {
@@ -167,6 +179,7 @@ export type Combatant = {
   hitPoints: { current: number; maximum: number };
   temporaryHitPoints: number;
   temporaryHitPointsSourceEffectId?: string;
+  damageResistances: string[];
   resources: CombatResource[];
   triggeredFeatures: CharacterTriggeredFeature[];
   initiative: number;

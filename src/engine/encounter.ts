@@ -26,6 +26,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       baseSpeedFeet: profile.speedFeet,
       hitPoints: { current: profile.hitPoints, maximum: profile.hitPoints },
       temporaryHitPoints: 0,
+      damageResistances: [],
       resources: [],
       triggeredFeatures: [],
       initiative: 0,
@@ -57,6 +58,8 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         baseSpeedFeet: character.speedFeet ?? 30,
         hitPoints: { ...character.hitPoints },
         temporaryHitPoints: 0,
+        damageResistances: (character.passiveFeatures ?? []).flatMap((feature) =>
+          feature.resolution.type === "damage-resistance" ? feature.resolution.damageTypes : []),
         resources: character.resources.map((resource) => ({ ...resource })),
         triggeredFeatures: (character.triggeredFeatures ?? []).map((feature) => ({ ...feature, provenance: { ...feature.provenance }, resolution: { ...feature.resolution } })),
         initiative: 0,

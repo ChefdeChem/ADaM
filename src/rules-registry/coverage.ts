@@ -52,14 +52,17 @@ function entry(
 }
 
 function attackEntry(character: Character, attack: CharacterAttack): RuleRegistryEntry {
-  const hasUnresolvedRider = masteryPattern.test(attack.description ?? "") || unresolvedPattern.test(attack.description ?? "");
+  const hasUnresolvedRider = (masteryPattern.test(attack.description ?? "") && !attack.mastery) || unresolvedPattern.test(attack.description ?? "");
+  const components: MechanicComponent[] = ["targeting", "range", "attack-roll", "damage-roll"];
+  if (attack.mastery === "sap") components.push("trigger", "duration");
+  if (attack.mastery === "slow") components.push("trigger", "movement", "duration");
   return entry(
     character,
     "attack",
     attack.id,
     attack.name,
     hasUnresolvedRider ? "partial" : "supported",
-    ["targeting", "range", "attack-roll", "damage-roll"],
+    components,
     hasUnresolvedRider ? ["Weapon property or rider resolution"] : [],
     true,
   );
@@ -74,20 +77,24 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   if (spell.level > 0) components.push("resource-spend");
   if (spell.durationRounds) components.push("duration");
   if (spell.concentration) components.push("concentration");
-  if (spell.effect) components.push("reference");
-  return components;
+  if (spell.effect?.modifiers?.outgoingAttacks) components.push("trigger", "attack-roll", "duration");
+  else if (spell.effect) components.push("reference");
+  return [...new Set(components)];
 }
 
 function spellEntry(character: Character, spell: CharacterSpell): RuleRegistryEntry {
+  const blocked = Boolean(spell.unsupportedReason);
+  const partial = Boolean(spell.missingCapabilities?.length);
   return entry(
     character,
     "spell",
     spell.id,
     spell.name,
-    spell.unsupportedReason ? "partial" : "supported",
+    blocked || partial ? "partial" : "supported",
     spellComponents(spell),
-    spell.unsupportedReason ? [spell.unsupportedReason] : [],
-    !spell.unsupportedReason,
+    spell.unsupportedReason ? [spell.unsupportedReason] : spell.missingCapabilities ?? [],
+    !blocked,
+    spell.provenance,
   );
 }
 
@@ -111,7 +118,13 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
     ...(character.profile?.features ?? []).map((feature, index) => {
       const executableAction = (character.featureActions ?? []).find((action) => action.id === feature.executableActionId);
       const executableTrigger = (character.triggeredFeatures ?? []).find((trigger) => trigger.id === feature.executableTriggerId);
-      const executable = executableAction ?? executableTrigger;
+      const executablePassive = (character.passiveFeatures ?? []).find((passive) => passive.id === feature.executablePassiveId);
+      const executableAttacks = (feature.executableAttackIds ?? []).map((attackId) =>
+        (character.attacks ?? []).find((attack) => attack.id === attackId)).filter((attack): attack is CharacterAttack => Boolean(attack));
+      const attackMechanicExecutable = Boolean(feature.executableAttackIds?.length)
+        && executableAttacks.length === feature.executableAttackIds?.length
+        && executableAttacks.every((attack) => Boolean(attack.mastery));
+      const executable = executableAction ?? executableTrigger ?? executablePassive;
       const unresolved = unresolvedPattern.test(feature.description);
       const components: MechanicComponent[] = executableAction?.resolution.type === "dash-and-temporary-hit-points"
         ? ["action-economy", "movement", "resource-spend", "resource-recovery", "temporary-hit-points"]
@@ -123,16 +136,26 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
           ? ["trigger", "replacement-effect", "resource-spend", "resource-recovery"]
           : executableTrigger?.resolution.type === "reduce-damage-by-roll"
             ? ["trigger", "reaction", "dice-roll", "damage-reduction", "resource-spend", "resource-recovery"]
+          : executableTrigger?.resolution.type === "gain-temporary-hit-points"
+            ? ["trigger", "temporary-hit-points"]
+          : executablePassive?.resolution.type === "damage-resistance"
+            ? ["damage-resistance"]
+          : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "slow")
+            ? ["trigger", "damage-roll", "movement", "duration"]
+          : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "sap")
+            ? ["trigger", "attack-roll", "duration"]
         : ["reference"];
+      const missingCapabilities = executable?.missingCapabilities ?? [];
+      const isExecutable = Boolean(executable) || attackMechanicExecutable;
       return entry(
         character,
         "feature",
         feature.id ?? `feature-${index}-${slug(feature.name)}`,
         feature.name,
-        executable ? (executable.missingCapabilities?.length ? "partial" : "supported") : unresolved ? "partial" : "reference-only",
+        isExecutable ? (missingCapabilities.length ? "partial" : "supported") : unresolved ? "partial" : "reference-only",
         components,
-        executable ? executable.missingCapabilities ?? [] : unresolved ? [feature.description] : ["No executable mechanic is registered yet"],
-        Boolean(executable),
+        isExecutable ? missingCapabilities : unresolved ? [feature.description] : ["No executable mechanic is registered yet"],
+        isExecutable,
         feature.provenance ?? executable?.provenance,
       );
     }),

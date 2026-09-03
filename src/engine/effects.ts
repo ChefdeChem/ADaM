@@ -11,6 +11,8 @@ export type EffectInput = {
   modifiers?: EffectModifiers;
   temporaryHitPoints?: number;
   expiresAt?: ActiveEffect["expiresAt"];
+  consumeOnAttackRoll?: boolean;
+  replaceExisting?: boolean;
 };
 
 function cleanExpiredTemporaryHitPoints(encounter: EncounterState, effectIds: Set<string>): EncounterState {
@@ -26,8 +28,14 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
   const concentrationIds = new Set(encounter.effects
     .filter((effect) => input.concentration && effect.concentration && effect.sourceCombatantId === input.sourceCombatantId)
     .map((effect) => effect.id));
-  let next = cleanExpiredTemporaryHitPoints(encounter, concentrationIds);
-  const retainedEffects = next.effects.filter((effect) => !concentrationIds.has(effect.id));
+  const replacementIds = new Set(encounter.effects
+    .filter((effect) => input.replaceExisting
+      && effect.name === input.name
+      && effect.targetCombatantId === input.targetCombatantId)
+    .map((effect) => effect.id));
+  const removedIds = new Set([...concentrationIds, ...replacementIds]);
+  let next = cleanExpiredTemporaryHitPoints(encounter, removedIds);
+  const retainedEffects = next.effects.filter((effect) => !removedIds.has(effect.id));
   const safeId = input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const id = `${safeId}-${encounter.round}-${input.sourceCombatantId}-${retainedEffects.length + 1}`;
   const effect: ActiveEffect = {
@@ -42,6 +50,7 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
       ? { round: encounter.round + input.durationRounds, combatantId: input.sourceCombatantId, phase: "start" }
       : undefined),
     temporaryHitPointsGranted: input.temporaryHitPoints,
+    consumeOnAttackRoll: input.consumeOnAttackRoll,
   };
 
   next = {
@@ -99,6 +108,27 @@ export function effectsForCombatant(encounter: EncounterState, combatantId: stri
   return encounter.effects.filter((effect) => effect.targetCombatantId === combatantId);
 }
 
+export function nextTurnRound(encounter: EncounterState, combatantId: string): number {
+  const combatantIndex = encounter.combatants.findIndex((combatant) => combatant.id === combatantId);
+  return combatantIndex > encounter.activeIndex ? encounter.round : encounter.round + 1;
+}
+
+export function hasOutgoingAttackDisadvantage(encounter: EncounterState, combatantId: string): boolean {
+  return effectsForCombatant(encounter, combatantId).some((effect) => effect.modifiers.outgoingAttacks === "disadvantage");
+}
+
+export function consumeAttackRollEffects(encounter: EncounterState, combatantId: string): EncounterState {
+  const consumed = encounter.effects.filter((effect) => effect.targetCombatantId === combatantId && effect.consumeOnAttackRoll);
+  if (!consumed.length) return encounter;
+  const consumedIds = new Set(consumed.map((effect) => effect.id));
+  const cleaned = cleanExpiredTemporaryHitPoints(encounter, consumedIds);
+  return {
+    ...cleaned,
+    effects: cleaned.effects.filter((effect) => !consumedIds.has(effect.id)),
+    log: [...consumed.map((effect) => `${effect.name} was consumed by ${combatantId}'s attack roll.`), ...cleaned.log],
+  };
+}
+
 export function effectiveArmorClass(encounter: EncounterState, combatantId: string): number {
   const combatant = encounter.combatants.find((item) => item.id === combatantId);
   if (!combatant) return 0;
@@ -121,8 +151,10 @@ export function effectiveSavingThrowModifier(encounter: EncounterState, combatan
 export function effectiveDamageAmount(encounter: EncounterState, combatantId: string, amount: number, damageType?: string): number {
   if (!damageType || amount <= 0) return amount;
   const normalizedType = damageType.trim().toLowerCase();
-  const resisted = effectsForCombatant(encounter, combatantId).some((effect) =>
-    effect.modifiers.damageResistances?.some((type) => type.toLowerCase() === normalizedType));
+  const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  const resisted = combatant?.damageResistances?.some((type) => type.toLowerCase() === normalizedType)
+    || effectsForCombatant(encounter, combatantId).some((effect) =>
+      effect.modifiers.damageResistances?.some((type) => type.toLowerCase() === normalizedType));
   return resisted ? Math.floor(amount / 2) : amount;
 }
 

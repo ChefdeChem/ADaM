@@ -84,16 +84,18 @@ test("Lay on Hands healing is executable with edition-specific provenance", () =
   assert.match(currentEntry.missingCapabilities.join(" "), /Poisoned/i);
 });
 
-test("coverage separates executable cores from unresolved riders", () => {
+test("coverage marks Vicious Mockery's full save, damage, and attack rider executable", () => {
   const cleira = BUILT_IN_CHARACTERS.find((character) => character.id === "cleira-oestwilde");
   const report = buildCharacterMechanicCoverage(cleira);
   const healingWord = report.entries.find((entry) => entry.entityId === "healing-word");
   const viciousMockery = report.entries.find((entry) => entry.entityId === "vicious-mockery");
   assert.equal(healingWord.status, "supported");
   assert.equal(healingWord.executable, true);
-  assert.equal(viciousMockery.status, "partial");
-  assert.equal(viciousMockery.executable, false);
-  assert.match(viciousMockery.missingCapabilities.join(" "), /disadvantage rider/i);
+  assert.equal(viciousMockery.status, "supported");
+  assert.equal(viciousMockery.executable, true);
+  assert.equal(viciousMockery.rulesetId, "dnd-2014");
+  assert.equal(viciousMockery.sourceId, "srd-5.1");
+  assert.deepEqual(viciousMockery.missingCapabilities, []);
 });
 
 test("weapon mastery is partial while its core attack remains registered", () => {
