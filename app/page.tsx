@@ -11,6 +11,7 @@ import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/e
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolveSavingThrowResponse, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
+import { recoverRestResources, type RestType } from "../src/engine/resources";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
 import { importCharacterFile, type ImportResult } from "../src/importers";
@@ -103,6 +104,8 @@ function withCombatDefaults(character: Character): Character {
       current: resource.current,
       maximum: resource.maximum,
       recovery: resource.recovery ?? "long-rest",
+      shortRestRecovery: resource.shortRestRecovery,
+      longRestRecovery: resource.longRestRecovery,
     })),
     attacks: character.attacks?.length ? character.attacks : [{
       id: "unarmed-strike",
@@ -349,6 +352,29 @@ export default function Home() {
       activateCharacter(nextActive, `${nextActive.name} is now active. The removed character is no longer stored on this device.`);
     }
     else setMessage("Character removed from the stored roster.");
+  }
+
+  function recoverAfterRest(restType: RestType) {
+    if (outcome !== "victory") {
+      setFeedback("Rest resource recovery is available after the hostile creatures are defeated.");
+      return;
+    }
+    const result = recoverRestResources(encounter, playerCombatant.id, restType);
+    if (!result.legal) {
+      setFeedback(result.reason);
+      return;
+    }
+    const recoveredPlayer = result.encounter.combatants.find((combatant) => combatant.id === playerCombatant.id)!;
+    const nextCharacter: Character = {
+      ...character,
+      resources: recoveredPlayer.resources.map((resource) => ({ ...resource })),
+    };
+    setEncounter(result.encounter);
+    setCharacter(nextCharacter);
+    if (storedCharacters.some((candidate) => candidate.id === nextCharacter.id)) {
+      persistCharacterRoster(storedCharacters.map((candidate) => candidate.id === nextCharacter.id ? nextCharacter : candidate));
+    }
+    setFeedback(`${result.summary} The recovered totals will carry into the next encounter.`);
   }
 
   function updateReviewNumber(field: "level" | "armorClass" | "proficiencyBonus" | "speedFeet", value: string) {
@@ -787,7 +813,7 @@ export default function Home() {
         <div className="turn-dashboard"><div><span>Current turn</span><strong>{activeCombatant.name}</strong></div><div><span>Action</span><strong>{encounter.turn.action ? "Ready" : "Used"}</strong></div><div><span>Bonus action</span><strong>{encounter.turn.bonusAction ? "Ready" : "Used"}</strong></div><div><span>Movement</span><strong>{encounter.turn.movementRemaining} ft.{encounter.turn.disengaged ? " · Disengaged" : ""}</strong></div><div><span>Your reaction</span><strong>{playerCombatant.reactionAvailable ? "Ready" : "Used"}</strong></div></div>
 
         <section className="state-tray" aria-label="Character resources and temporary effects">
-          <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses remaining</h3></div><div className="resource-pills">{playerCombatant.resources.length ? playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>) : <p>No tracked resources imported.</p>}</div></div>
+          <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses remaining</h3></div><div className="resource-pills">{playerCombatant.resources.length ? playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>) : <p>No tracked resources imported.</p>}</div>{outcome === "victory" && <div className="rest-recovery"><span>Post-encounter recovery</span><div><button type="button" onClick={() => recoverAfterRest("short-rest")}>Recover after Short Rest</button><button type="button" onClick={() => recoverAfterRest("long-rest")}>Recover after Long Rest</button></div><small>Refreshes only resources whose registered rules recover on that rest.</small></div>}</div>
           <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3></div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.description}</small></div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
         </section>
 

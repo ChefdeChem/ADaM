@@ -16,6 +16,8 @@ export type CharacterResource = {
   current: number;
   maximum: number;
   recovery: "short-rest" | "long-rest" | "special";
+  shortRestRecovery?: number | "all";
+  longRestRecovery?: number | "all";
 };
 
 export type CharacterAttack = {

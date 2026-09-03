@@ -67,7 +67,7 @@ export const goliathBarbarian: Character = {
   abilities: { strength: 15, dexterity: 12, constitution: 14, intelligence: 8, wisdom: 13, charisma: 10 },
   savingThrowModifiers: { strength: 4, dexterity: 1, constitution: 4, intelligence: -1, wisdom: 1, charisma: 0 },
   resources: [
-    { id: "rage", name: "Rage", kind: "generic", current: 2, maximum: 2, recovery: "special" },
+    { id: "rage", name: "Rage", kind: "generic", current: 2, maximum: 2, recovery: "special", shortRestRecovery: 1, longRestRecovery: "all" },
     { id: "stones-endurance", name: "Stone's Endurance", kind: "generic", current: 2, maximum: 2, recovery: "long-rest" },
     { id: "large-form", name: "Large Form", kind: "generic", current: 1, maximum: 1, recovery: "long-rest" },
   ],
@@ -80,7 +80,6 @@ export const goliathBarbarian: Character = {
     resourceName: "Stone's Endurance",
     resourceCost: 1,
     resolution: { type: "reduce-damage-by-roll", die: "1d12", modifier: 2 },
-    missingCapabilities: ["Long Rest recovery outside an encounter is tracked but not executable yet."],
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Giant Ancestry (Stone's Endurance)" },
   }],
   attacks: [
@@ -188,7 +187,6 @@ export const pharos: Character = {
     resourceName: "Adrenaline Rush",
     resourceCost: 1,
     resolution: { type: "dash-and-temporary-hit-points", temporaryHitPoints: "proficiency-bonus" },
-    missingCapabilities: ["Short and Long Rest recovery outside an encounter is tracked but not executable yet."],
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Orc: Adrenaline Rush" },
   }],
   triggeredFeatures: [{

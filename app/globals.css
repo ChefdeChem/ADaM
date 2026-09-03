@@ -240,6 +240,11 @@ button{cursor:pointer}
 .effect-pills>div{min-width:180px;border-left:3px solid var(--gold)}
 .effect-pills small{margin-top:4px;text-transform:none;letter-spacing:0}
 .resource-pills p,.effect-pills p{margin:0;color:var(--muted);font-size:10px}
+.rest-recovery{margin-top:12px;padding-top:12px;border-top:1px solid #cfc5b2}
+.rest-recovery>span,.rest-recovery>small{display:block;color:var(--muted);font-size:8px;line-height:1.4;letter-spacing:.08em;text-transform:uppercase}
+.rest-recovery>div{display:flex;flex-wrap:wrap;gap:7px;margin:7px 0}
+.rest-recovery button{padding:8px 10px;border:1px solid var(--red);background:transparent;color:var(--red);font-size:8px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
+.rest-recovery button:hover{background:var(--red);color:#fff}
 .choice-panel{margin-top:12px;border:1px solid #b9aa8e;background:#eee6d6}
 .choice-heading{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid #cfc3ae;background:#ded2bd}
 .choice-heading span,.choice-heading strong{display:block}

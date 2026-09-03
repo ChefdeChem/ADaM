@@ -95,18 +95,30 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
   const entries: RuleRegistryEntry[] = [
     ...(character.attacks ?? []).map((attack) => attackEntry(character, attack)),
     ...(character.spells ?? []).map((spell) => spellEntry(character, spell)),
-    ...(character.resources ?? []).map((resource) => entry(character, "resource", resource.id, resource.name, "supported", ["resource-spend", "resource-recovery"], [], true)),
+    ...(character.resources ?? []).map((resource) => {
+      const specialRecoveryMissing = resource.recovery === "special" && resource.shortRestRecovery === undefined && resource.longRestRecovery === undefined;
+      return entry(
+        character,
+        "resource",
+        resource.id,
+        resource.name,
+        specialRecoveryMissing ? "partial" : "supported",
+        ["resource-spend", "resource-recovery"],
+        specialRecoveryMissing ? ["Special recovery rule is not registered yet"] : [],
+        true,
+      );
+    }),
     ...(character.profile?.features ?? []).map((feature, index) => {
       const executableAction = (character.featureActions ?? []).find((action) => action.id === feature.executableActionId);
       const executableTrigger = (character.triggeredFeatures ?? []).find((trigger) => trigger.id === feature.executableTriggerId);
       const executable = executableAction ?? executableTrigger;
       const unresolved = unresolvedPattern.test(feature.description);
       const components: MechanicComponent[] = executableAction?.resolution.type === "dash-and-temporary-hit-points"
-        ? ["action-economy", "movement", "resource-spend", "temporary-hit-points"]
+        ? ["action-economy", "movement", "resource-spend", "resource-recovery", "temporary-hit-points"]
         : executableTrigger?.resolution.type === "drop-to-one-hit-point"
-          ? ["trigger", "replacement-effect", "resource-spend"]
+          ? ["trigger", "replacement-effect", "resource-spend", "resource-recovery"]
           : executableTrigger?.resolution.type === "reduce-damage-by-roll"
-            ? ["trigger", "reaction", "dice-roll", "damage-reduction", "resource-spend"]
+            ? ["trigger", "reaction", "dice-roll", "damage-reduction", "resource-spend", "resource-recovery"]
         : ["reference"];
       return entry(
         character,
@@ -115,7 +127,7 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
         feature.name,
         executable ? (executable.missingCapabilities?.length ? "partial" : "supported") : unresolved ? "partial" : "reference-only",
         components,
-        executable?.missingCapabilities ?? (unresolved ? [feature.description] : ["No executable mechanic is registered yet"]),
+        executable ? executable.missingCapabilities ?? [] : unresolved ? [feature.description] : ["No executable mechanic is registered yet"],
         Boolean(executable),
         feature.provenance ?? executable?.provenance,
       );
