@@ -191,7 +191,7 @@ test("Dark One's Blessing does not trigger unless the hostile target reaches 0 H
 test("the previous five mechanics remain executable and officially sourced", () => {
   const reports = BUILT_IN_CHARACTERS.map((character) => buildCharacterMechanicCoverage(character));
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
-  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 65);
+  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 75);
 
   const expected = [
     ["cleira-oestwilde", "vicious-mockery", "srd-5.1"],

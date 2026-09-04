@@ -60,6 +60,15 @@ export type CombatResource = {
   longRestRecovery?: number | "all";
 };
 
+export type CombatInventoryItem = {
+  id: string;
+  name: string;
+  current: number;
+  maximum: number;
+  attackIds: string[];
+  expendOnAttackIds: string[];
+};
+
 export type ReactionOption = {
   id: string;
   name: string;
@@ -209,6 +218,7 @@ export type Combatant = {
   weaponAttackDisadvantage: boolean;
   spellcastingBlockedByArmor: boolean;
   resources: CombatResource[];
+  inventory: CombatInventoryItem[];
   triggeredFeatures: CharacterTriggeredFeature[];
   initiative: number;
   initiativeModifier: number;

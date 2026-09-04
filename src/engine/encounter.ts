@@ -4,6 +4,7 @@ import type { Scenario } from "../scenarios/types";
 import { enemyProfile } from "../rulesets/enemy-profiles";
 import { rollD20, type D20Result } from "./dice";
 import { effectiveSpeed, expireEffectsAtTurnEnd, expireEffectsAtTurnStart } from "./effects";
+import { availableCharacterAttacks, combatInventoryForCharacter } from "./inventory";
 import { resolveTurnStartEffects } from "./turn-effects";
 
 const abilityModifier=(score:number)=>Math.floor((score-10)/2);
@@ -66,6 +67,7 @@ function armorTrainingViolation(character: Character): boolean {
 }
 
 export function createEncounter(character: Character, scenario: Scenario): EncounterState {
+  const characterInventory = combatInventoryForCharacter(character);
   const enemyPositions = [{ x: 9, y: 2 }, { x: 9, y: 5 }, { x: 10, y: 3 }];
   const enemySeeds = scenario.enemyProfileIds.map((profileId, index) => ({ instanceId: `${profileId}-${index + 1}`, profileId, position: enemyPositions[index] ?? { x: 10, y: Math.min(6, index + 1) } }));
   const enemies = enemySeeds.map((seed) => {
@@ -89,6 +91,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       weaponAttackDisadvantage: false,
       spellcastingBlockedByArmor: false,
       resources: [],
+      inventory: [],
       triggeredFeatures: [],
       initiative: 0,
       initiativeModifier: profile.initiativeModifier,
@@ -133,12 +136,13 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         weaponAttackDisadvantage: armorTrainingViolation(character),
         spellcastingBlockedByArmor: armorTrainingViolation(character),
         resources: character.resources.map((resource) => ({ ...resource })),
+        inventory: characterInventory,
         triggeredFeatures: (character.triggeredFeatures ?? []).map((feature) => ({ ...feature, provenance: { ...feature.provenance }, resolution: { ...feature.resolution } })),
         initiative: 0,
         initiativeModifier: abilityModifier(character.abilities.dexterity),
         initiativeRolled: false,
         position: { x: 1, y: 6 },
-        attacks: (character.attacks ?? []).map((attack) => ({ ...attack })),
+        attacks: availableCharacterAttacks(character, characterInventory),
         spells: (character.spells ?? []).map((spell) => ({ ...spell })),
         savingThrowModifiers: characterSavingThrows(character),
         reactionAvailable: true,

@@ -3,6 +3,7 @@ import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
 import { applyEffect, canHarmTarget, canRegainHitPoints, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
 import { spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
+import { attackInventoryAvailable, consumeAttackInventory } from "./inventory";
 import { analyzeTarget, gridDistanceFeet } from "./targeting";
 
 export type OptionValidation = {
@@ -23,6 +24,7 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   if (!analysis) return { legal: false, reason: "The selected target is no longer available." };
   if (analysis.target.hitPoints.current <= 0) return { legal: false, reason: `${analysis.target.name} is already defeated.` };
   const active = encounter.combatants[encounter.activeIndex];
+  if (!attackInventoryAvailable(encounter, active.id, attack.id)) return { legal: false, reason: `${attack.name} is no longer in your carried inventory.` };
   if (!canHarmTarget(encounter, active.id, analysis.target.id)) return { legal: false, reason: `${active.name} is charmed and cannot attack ${analysis.target.name}.` };
   if (!analysis.lineOfSight) return { legal: false, reason: `${analysis.target.name} is outside your line of sight.` };
   const maximumRange = attack.longRangeFeet ?? attack.normalRangeFeet;
@@ -55,6 +57,7 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   const rangeNote=validation.rollMode==="disadvantage"?" with disadvantage":"";
   const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
   let next=consumeAttackRollEffects(encounter,active.id,target.target.id);
+  next=consumeAttackInventory(next,active.id,attack.id);
   if(hit&&attack.mastery==="sap"){
     next=applyEffect(next,{
       name:"Sap",
@@ -236,14 +239,15 @@ export function executeAttackChoice(encounter: EncounterState, attack: Character
   const roll = rollD20({ mode: validation.rollMode ?? "normal", modifier: attack.attackBonus + effectiveAttackModifier(encounter, active.id), random });
   const rangeNote = validation.rollMode === "disadvantage" ? " with disadvantage" : "";
   const summary = `${attack.name} against ${target.target.name}${rangeNote}: ${roll.total} (${roll.kept} + ${roll.modifier}).`;
+  const next = consumeAttackInventory(encounter, active.id, attack.id);
   return {
     legal: true,
     roll,
     summary,
     encounter: {
-      ...encounter,
-      turn: { ...encounter.turn, action: false },
-      log: [`${active.name}: ${summary}`, ...encounter.log],
+      ...next,
+      turn: { ...next.turn, action: false },
+      log: [`${active.name}: ${summary}`, ...next.log],
     },
   };
 }

@@ -196,6 +196,8 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
         ? ["inventory", "armor-calculation", "proficiency", ...(equipmentRule.resolution.strengthRequirement ? ["movement" as const] : []), ...(equipmentRule.resolution.stealthDisadvantage ? ["ability-check" as const] : [])]
         : equipmentRule?.resolution.type === "shield"
           ? ["inventory", "armor-calculation", "proficiency"]
+          : equipmentRule?.resolution.type === "weapon"
+            ? ["inventory", "targeting", "range", "attack-roll", "damage-roll", ...(equipmentRule.resolution.expendOnAttackIds?.length ? ["resource-spend" as const] : [])]
           : ["inventory"];
       return entry(
         character,

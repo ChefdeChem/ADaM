@@ -31,6 +31,20 @@ export const cleiraOestwilde: Character = {
     description: "Light armor that sets AC to 11 plus the wearer’s Dexterity modifier.",
     resolution: { type: "armor", category: "light", baseArmorClass: 11, dexterityModifier: "full" },
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Armor and Shields: Leather" },
+  }, {
+    id: "dagger",
+    name: "Dagger",
+    equipped: true,
+    description: "One carried dagger supports both melee attacks and thrown attacks; throwing it removes that copy from carried inventory.",
+    resolution: { type: "weapon", attackIds: ["dagger", "thrown-dagger"], expendOnAttackIds: ["thrown-dagger"] },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Weapons: Dagger and Thrown" },
+  }, {
+    id: "rapier",
+    name: "Rapier",
+    equipped: true,
+    description: "A carried rapier enables Cleira's registered melee attack.",
+    resolution: { type: "weapon", attackIds: ["rapier"] },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Weapons: Rapier" },
   }],
   attacks: [
     { id: "rapier", name: "Rapier", kind: "melee", attackBonus: 4, damage: "1d8 + 2 piercing", normalRangeFeet: 5, description: "Martial, finesse, Vex." },

@@ -110,6 +110,11 @@ export type CharacterEquipmentRule = {
         type: "shield";
         armorClassBonus: number;
         trainingRequiredForBenefit: boolean;
+      }
+    | {
+        type: "weapon";
+        attackIds: string[];
+        expendOnAttackIds?: string[];
       };
   provenance: MechanicProvenance;
 };

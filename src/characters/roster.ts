@@ -2,7 +2,7 @@ import type { Character } from "../domain/character";
 import { BUILT_IN_CHARACTERS } from "./built-ins";
 
 export const CHARACTER_ROSTER_LIMIT = 5;
-export const CHARACTER_ROSTER_SEED_VERSION = 10;
+export const CHARACTER_ROSTER_SEED_VERSION = 11;
 
 export type RosterUpdate = {
   characters: Character[];
