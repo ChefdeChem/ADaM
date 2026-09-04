@@ -1,5 +1,6 @@
 import type { AbilityName } from "../domain/character";
 import type { ActiveEffect, EffectModifiers, EncounterState } from "../domain/combat";
+import type { RollMode } from "./dice";
 
 export type EffectInput = {
   name: string;
@@ -12,6 +13,11 @@ export type EffectInput = {
   temporaryHitPoints?: number;
   expiresAt?: ActiveEffect["expiresAt"];
   consumeOnAttackRoll?: boolean;
+  attackTargetId?: string;
+  startsAt?: ActiveEffect["startsAt"];
+  turnStartTemporaryHitPoints?: number;
+  turnStartDamage?: string;
+  turnStartSave?: ActiveEffect["turnStartSave"];
   replaceExisting?: boolean;
 };
 
@@ -51,6 +57,11 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
       : undefined),
     temporaryHitPointsGranted: input.temporaryHitPoints,
     consumeOnAttackRoll: input.consumeOnAttackRoll,
+    attackTargetId: input.attackTargetId,
+    startsAt: input.startsAt,
+    turnStartTemporaryHitPoints: input.turnStartTemporaryHitPoints,
+    turnStartDamage: input.turnStartDamage,
+    turnStartSave: input.turnStartSave,
   };
 
   next = {
@@ -68,6 +79,15 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
       ...next,
       combatants: next.combatants.map((combatant) => combatant.id === input.targetCombatantId && input.temporaryHitPoints! > combatant.temporaryHitPoints
         ? { ...combatant, temporaryHitPoints: input.temporaryHitPoints!, temporaryHitPointsSourceEffectId: id }
+        : combatant),
+    };
+  }
+  if (input.modifiers?.conditionImmunities?.length) {
+    const immunities = new Set(input.modifiers.conditionImmunities.map((condition) => condition.toLowerCase()));
+    next = {
+      ...next,
+      combatants: next.combatants.map((combatant) => combatant.id === input.targetCombatantId
+        ? { ...combatant, conditions: combatant.conditions.filter((condition) => !immunities.has(condition.toLowerCase())) }
         : combatant),
     };
   }
@@ -108,17 +128,41 @@ export function effectsForCombatant(encounter: EncounterState, combatantId: stri
   return encounter.effects.filter((effect) => effect.targetCombatantId === combatantId);
 }
 
+export function effectHasStarted(encounter: EncounterState, effect: ActiveEffect): boolean {
+  if (!effect.startsAt) return true;
+  if (encounter.round > effect.startsAt.round) return true;
+  if (encounter.round < effect.startsAt.round) return false;
+  const active = encounter.combatants[encounter.activeIndex];
+  return active?.id === effect.startsAt.combatantId;
+}
+
 export function nextTurnRound(encounter: EncounterState, combatantId: string): number {
   const combatantIndex = encounter.combatants.findIndex((combatant) => combatant.id === combatantId);
   return combatantIndex > encounter.activeIndex ? encounter.round : encounter.round + 1;
 }
 
 export function hasOutgoingAttackDisadvantage(encounter: EncounterState, combatantId: string): boolean {
-  return effectsForCombatant(encounter, combatantId).some((effect) => effect.modifiers.outgoingAttacks === "disadvantage");
+  return outgoingAttackRollMode(encounter, combatantId) === "disadvantage";
 }
 
-export function consumeAttackRollEffects(encounter: EncounterState, combatantId: string): EncounterState {
-  const consumed = encounter.effects.filter((effect) => effect.targetCombatantId === combatantId && effect.consumeOnAttackRoll);
+export function outgoingAttackRollMode(encounter: EncounterState, combatantId: string, targetId?: string, situationalMode: RollMode = "normal"): RollMode {
+  const modifiers = effectsForCombatant(encounter, combatantId)
+    .filter((effect) => effectHasStarted(encounter, effect) && (!effect.attackTargetId || effect.attackTargetId === targetId))
+    .map((effect) => effect.modifiers.outgoingAttacks)
+    .filter((mode): mode is "advantage" | "disadvantage" => Boolean(mode));
+  const hasAdvantage = situationalMode === "advantage" || modifiers.includes("advantage");
+  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage");
+  if (hasAdvantage && hasDisadvantage) return "normal";
+  if (hasAdvantage) return "advantage";
+  if (hasDisadvantage) return "disadvantage";
+  return "normal";
+}
+
+export function consumeAttackRollEffects(encounter: EncounterState, combatantId: string, targetId?: string): EncounterState {
+  const consumed = encounter.effects.filter((effect) => effect.targetCombatantId === combatantId
+    && effect.consumeOnAttackRoll
+    && effectHasStarted(encounter, effect)
+    && (!effect.attackTargetId || effect.attackTargetId === targetId));
   if (!consumed.length) return encounter;
   const consumedIds = new Set(consumed.map((effect) => effect.id));
   const cleaned = cleanExpiredTemporaryHitPoints(encounter, consumedIds);
@@ -127,6 +171,27 @@ export function consumeAttackRollEffects(encounter: EncounterState, combatantId:
     effects: cleaned.effects.filter((effect) => !consumedIds.has(effect.id)),
     log: [...consumed.map((effect) => `${effect.name} was consumed by ${combatantId}'s attack roll.`), ...cleaned.log],
   };
+}
+
+export function removeEffect(encounter: EncounterState, effectId: string, reason?: string): EncounterState {
+  const effect = encounter.effects.find((candidate) => candidate.id === effectId);
+  if (!effect) return encounter;
+  const cleaned = cleanExpiredTemporaryHitPoints(encounter, new Set([effectId]));
+  return {
+    ...cleaned,
+    effects: cleaned.effects.filter((candidate) => candidate.id !== effectId),
+    log: reason ? [`${effect.name} ended: ${reason}.`, ...cleaned.log] : cleaned.log,
+  };
+}
+
+export function canRegainHitPoints(encounter: EncounterState, combatantId: string): boolean {
+  return !effectsForCombatant(encounter, combatantId)
+    .some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.healingPrevented);
+}
+
+export function hasBonusActionDash(encounter: EncounterState, combatantId: string): boolean {
+  return effectsForCombatant(encounter, combatantId)
+    .some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.bonusActionDash);
 }
 
 export function effectiveArmorClass(encounter: EncounterState, combatantId: string): number {

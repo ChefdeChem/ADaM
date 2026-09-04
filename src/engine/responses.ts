@@ -15,6 +15,42 @@ export type PlayerResponseResolution = {
   summary: string;
 };
 
+export function resolvePostHitSpellChoice(encounter: EncounterState, castSpell: boolean, random = Math.random): PlayerResponseResolution {
+  const pending = encounter.pendingResponse;
+  if (!pending || pending.type !== "post-hit-spell-choice") return { encounter, playerRoll: null, damageRoll: null, summary: "No post-hit spell choice is pending." };
+  const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId);
+  const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId);
+  const spell = source?.spells.find((candidate) => candidate.id === pending.spellId && candidate.trigger === "after-melee-hit");
+  if (!source || !target || !spell) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The post-hit spell choice can no longer be resolved." };
+  if (!castSpell) {
+    const summary = `${source.name} declines ${spell.name} after the ${pending.attackName} hit.`;
+    return { encounter: { ...encounter, pendingResponse: null, log: [summary, ...encounter.log] }, playerRoll: null, damageRoll: null, summary };
+  }
+  if (!encounter.turn.bonusAction) return { encounter, playerRoll: null, damageRoll: null, summary: `${source.name}'s Bonus Action is unavailable.` };
+  const slot = validateSpellSlot(encounter, source.id, spell.level);
+  if (!slot.legal) return { encounter, playerRoll: null, damageRoll: null, summary: slot.reason ?? `${spell.name} is unavailable.` };
+  const damageRoll = spell.triggeredDamage ? rollDamage(spell.triggeredDamage, { critical: pending.critical, random }) : null;
+  if (!damageRoll) return { encounter, playerRoll: null, damageRoll: null, summary: `ADaM could not read ${spell.name}'s damage formula.` };
+  let next = spendSpellSlot({ ...encounter, pendingResponse: null }, source.id, spell.level);
+  next = { ...next, turn: { ...next.turn, bonusAction: false } };
+  const damageApplied = effectiveDamageAmount(next, target.id, damageRoll.total, damageRoll.formula.damageType);
+  next = applyDamageToCombatant(next, target.id, damageRoll.total, { damageType: damageRoll.formula.damageType, sourceCombatantId: source.id });
+  const updatedTarget = next.combatants.find((combatant) => combatant.id === target.id);
+  if (spell.effect && (updatedTarget?.hitPoints.current ?? 0) > 0 && !next.pendingResponse) {
+    next = applyEffect(next, {
+      ...spell.effect,
+      sourceCombatantId: source.id,
+      targetCombatantId: target.id,
+      durationRounds: spell.durationRounds,
+      concentration: spell.concentration,
+      replaceExisting: true,
+    });
+  }
+  const summary = `${source.name} casts ${spell.name} after the ${pending.attackName} hit, dealing ${damageApplied} ${damageRoll.formula.damageType} damage${pending.critical ? " with doubled damage dice" : ""}.`;
+  next = { ...next, log: [summary, ...next.log] };
+  return { encounter: next, playerRoll: null, damageRoll, summary };
+}
+
 export function resolveDamageReductionReaction(encounter: EncounterState, useFeature: boolean, random = Math.random): PlayerResponseResolution {
   const pending = encounter.pendingResponse;
   if (!pending || pending.type !== "damage-reduction-reaction") return { encounter, playerRoll: null, damageRoll: null, summary: "No damage-reduction reaction is pending." };

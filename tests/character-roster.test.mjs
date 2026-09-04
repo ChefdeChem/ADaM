@@ -56,12 +56,16 @@ test("verified martial profiles preserve core defenses and legal weapon ranges",
   assert.equal(irvenWeber.attacks.find((attack) => attack.id === "thrown-javelin").normalRangeFeet, 30);
 });
 
-test("verified spellcasters preserve slots while guarding unresolved spell mechanics", () => {
+test("verified spellcasters preserve slots while exposing the executable five-spell slice", () => {
   assert.equal(irvenWeber.resources.find((resource) => resource.id === "spell-slot-1").maximum, 2);
   assert.match(irvenWeber.spells.find((spell) => spell.id === "burning-hands").unsupportedReason, /cone targeting/i);
 
   assert.equal(pharos.profile.spellcasting.saveDc, 13);
   assert.equal(pharos.resources.find((resource) => resource.id === "spell-slot-1").recovery, "short-rest");
   assert.equal(pharos.attacks.find((attack) => attack.id === "light-crossbow").longRangeFeet, 320);
-  assert.match(pharos.spells.find((spell) => spell.id === "chill-touch").unsupportedReason, /healing prevention/i);
+  assert.equal(pharos.spells.find((spell) => spell.id === "chill-touch").unsupportedReason, undefined);
+  assert.equal(pharos.spells.find((spell) => spell.id === "true-strike").effect.modifiers.outgoingAttacks, "advantage");
+  assert.equal(pharos.spells.find((spell) => spell.id === "expeditious-retreat").effect.modifiers.bonusActionDash, true);
+  assert.equal(irvenWeber.spells.find((spell) => spell.id === "heroism").effect.turnStartTemporaryHitPoints, 2);
+  assert.equal(irvenWeber.spells.find((spell) => spell.id === "searing-smite").trigger, "after-melee-hit");
 });

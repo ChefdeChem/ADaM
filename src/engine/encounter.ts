@@ -4,6 +4,7 @@ import type { Scenario } from "../scenarios/types";
 import { enemyProfile } from "../rulesets/enemy-profiles";
 import { rollD20, type D20Result } from "./dice";
 import { effectiveSpeed, expireEffectsAtTurnEnd, expireEffectsAtTurnStart } from "./effects";
+import { resolveTurnStartEffects } from "./turn-effects";
 
 const abilityModifier=(score:number)=>Math.floor((score-10)/2);
 const abilities:AbilityName[]=["strength","dexterity","constitution","intelligence","wisdom","charisma"];
@@ -27,6 +28,8 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       hitPoints: { current: profile.hitPoints, maximum: profile.hitPoints },
       temporaryHitPoints: 0,
       damageResistances: [],
+      creatureType: profile.creatureType,
+      conditions: [],
       resources: [],
       triggeredFeatures: [],
       initiative: 0,
@@ -34,6 +37,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       initiativeRolled: false,
       position: seed.position,
       attacks: profile.attacks.map((attack) => ({ ...attack })),
+      spells: [],
       savingThrowModifiers: { strength: 0, dexterity: profile.initiativeModifier, constitution: 0, intelligence: 0, wisdom: 0, charisma: 0 },
       reactionAvailable: true,
       reactionOptions: [],
@@ -58,8 +62,10 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         baseSpeedFeet: character.speedFeet ?? 30,
         hitPoints: { ...character.hitPoints },
         temporaryHitPoints: 0,
+        creatureType: character.creatureType ?? "humanoid",
         damageResistances: (character.passiveFeatures ?? []).flatMap((feature) =>
           feature.resolution.type === "damage-resistance" ? feature.resolution.damageTypes : []),
+        conditions: [],
         resources: character.resources.map((resource) => ({ ...resource })),
         triggeredFeatures: (character.triggeredFeatures ?? []).map((feature) => ({ ...feature, provenance: { ...feature.provenance }, resolution: { ...feature.resolution } })),
         initiative: 0,
@@ -67,6 +73,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         initiativeRolled: false,
         position: { x: 1, y: 6 },
         attacks: (character.attacks ?? []).map((attack) => ({ ...attack })),
+        spells: (character.spells ?? []).map((spell) => ({ ...spell })),
         savingThrowModifiers: characterSavingThrows(character),
         reactionAvailable: true,
         reactionOptions: (character.spells ?? []).filter((spell) => spell.name.toLowerCase() === "shield").map(() => ({ id: "shield", name: "Shield", kind: "armor-class" as const, armorClassBonus: 5, spellLevel: 1, description: "+5 AC until the start of your next turn, including against the triggering attack." })),
@@ -112,7 +119,7 @@ export function rollCombatantInitiative(encounter:EncounterState,combatantId:str
   return{roll,encounter:{...encounter,combatants:ordered,activeIndex:0,log:[`${combatant.name} rolled ${roll.total} initiative (${roll.kept} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)}).`,...encounter.log]}};
 }
 
-export function endTurn(encounter: EncounterState): EncounterState {
+export function endTurn(encounter: EncounterState, random = Math.random): EncounterState {
   const endingCombatant = encounter.combatants[encounter.activeIndex];
   const afterEndEffects = endingCombatant ? expireEffectsAtTurnEnd(encounter, encounter.round, endingCombatant.id) : encounter;
   const eligible = (combatant: EncounterState["combatants"][number]) => combatant.side === "enemy"
@@ -138,5 +145,6 @@ export function endTurn(encounter: EncounterState): EncounterState {
     log: [`Turn passed to ${nextCombatant.name}.`, ...afterEndEffects.log],
   };
   const expired = expireEffectsAtTurnStart(advanced, round, nextCombatant.id);
-  return { ...expired, turn: { ...expired.turn, movementRemaining: effectiveSpeed(expired, nextCombatant.id) } };
+  const started = resolveTurnStartEffects(expired, nextCombatant.id, random);
+  return { ...started, turn: { ...started.turn, movementRemaining: effectiveSpeed(started, nextCombatant.id) } };
 }

@@ -78,7 +78,25 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   if (spell.durationRounds) components.push("duration");
   if (spell.concentration) components.push("concentration");
   if (spell.effect?.modifiers?.outgoingAttacks) components.push("trigger", "attack-roll", "duration");
-  else if (spell.effect) components.push("reference");
+  if (spell.onHitEffect?.preventsHealing) components.push("trigger", "healing-prevention", "duration");
+  if (spell.onHitEffect?.undeadTargetDisadvantageAgainstCaster) components.push("trigger", "attack-roll", "duration");
+  if (spell.effect?.modifiers?.bonusActionDash) components.push("action-economy", "movement", "duration");
+  if (spell.effect?.modifiers?.conditionImmunities) components.push("condition-immunity", "duration");
+  if (spell.effect?.turnStartTemporaryHitPoints) components.push("trigger", "recurring-effect", "temporary-hit-points");
+  if (spell.effect?.turnStartDamage) components.push("trigger", "recurring-effect", "damage-roll");
+  if (spell.effect?.turnStartSave) components.push("saving-throw", "duration");
+  if (spell.trigger) components.push("trigger", "action-economy");
+  if (spell.triggeredDamage) components.push("damage-roll");
+  const executableEffect = spell.effect && (
+    spell.effect.modifiers?.outgoingAttacks
+    || spell.effect.modifiers?.bonusActionDash
+    || spell.effect.modifiers?.conditionImmunities
+    || spell.effect.temporaryHitPoints
+    || spell.effect.turnStartTemporaryHitPoints
+    || spell.effect.turnStartDamage
+    || spell.effect.turnStartSave
+  );
+  if (spell.effect && !executableEffect) components.push("reference");
   return [...new Set(components)];
 }
 

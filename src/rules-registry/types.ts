@@ -37,6 +37,9 @@ export type MechanicComponent =
   | "dice-roll"
   | "duration"
   | "concentration"
+  | "healing-prevention"
+  | "condition-immunity"
+  | "recurring-effect"
   | "inventory"
   | "reference";
 

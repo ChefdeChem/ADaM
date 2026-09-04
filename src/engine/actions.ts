@@ -2,7 +2,7 @@ import type { Character } from "../domain/character";
 import type { CombatAction, EncounterState, ExperienceMode } from "../domain/combat";
 import type { RulesetId } from "../rulesets";
 import { validateAttackChoice } from "./combat-options";
-import { effectiveSpeed } from "./effects";
+import { effectiveSpeed, hasBonusActionDash } from "./effects";
 import { featureCombatActions } from "./feature-actions";
 import { spendNamedResource, validateNamedResource } from "./resources";
 import { analyzeTarget } from "./targeting";
@@ -25,6 +25,7 @@ export const actionCatalog: CombatAction[] = [
   { id: "study", name: "Study", cost: "action", description: "Recall or analyze information using an Intelligence check.", rulesets: ["dnd-2024"] },
   { id: "influence", name: "Influence", cost: "action", description: "Attempt to influence a selected creature you can communicate with within 30 feet.", rulesets: ["dnd-2024"], targeting: { mode: "single", rangeFeet: 30, requiresLineOfSight: true } },
   { id: "quickened-spell", name: "Quickened Spell", cost: "bonus-action", description: "Spend 2 Sorcery Points to change an eligible spell's casting time to a Bonus Action.", rulesets: both, resourceCost: { resourceName: "Sorcery Points", amount: 2 } },
+  { id: "expeditious-retreat-dash", name: "Expeditious Retreat Dash", cost: "bonus-action", description: "Dash using the recurring permission granted by Expeditious Retreat.", rulesets: ["dnd-2014"] },
   { id: "move", name: "Move 5 ft.", cost: "movement", description: "Move one grid space, subject to terrain and opportunity attacks.", rulesets: both },
   { id: "end-turn", name: "End Turn", cost: "free", description: "End your current turn and advance initiative.", rulesets: both },
 ];
@@ -40,6 +41,7 @@ export function validateAction(action: CombatAction, encounter: EncounterState, 
   if (action.cost === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
   if (action.cost === "reaction" && !encounter.turn.reaction) return { legal: false, reason: "Your Reaction is unavailable." };
   if (action.cost === "movement" && encounter.turn.movementRemaining < 5) return { legal: false, reason: "You do not have enough movement remaining." };
+  if (action.id === "expeditious-retreat-dash" && !hasBonusActionDash(encounter, active.id)) return { legal: false, reason: "Expeditious Retreat is not active." };
   if (action.resourceCost && active) {
     const resource = validateNamedResource(encounter, active.id, action.resourceCost.resourceName, action.resourceCost.amount);
     if (!resource.legal) return resource;
@@ -70,8 +72,11 @@ export function availableActions(character: Character, ruleset: RulesetId): Comb
 }
 
 export function visibleActionsForMode(character: Character, ruleset: RulesetId, mode: ExperienceMode, encounter: EncounterState): CombatAction[] {
+  const active = encounter.combatants[encounter.activeIndex];
+  const expeditiousRetreatAction = actionCatalog.find((action) => action.id === "expeditious-retreat-dash");
+  const dynamicActions = expeditiousRetreatAction && active && hasBonusActionDash(encounter, active.id) ? [expeditiousRetreatAction] : [];
   const candidates = mode === "beginner"
-    ? availableActions(character, ruleset)
+    ? [...availableActions(character, ruleset), ...dynamicActions]
     : [...actionCatalog.filter((action) => action.rulesets.includes(ruleset)), ...featureCombatActions(character)];
   if (mode !== "beginner") return candidates;
 
@@ -103,6 +108,7 @@ export function consumeAction(action: CombatAction, encounter: EncounterState): 
   if (action.cost === "movement") turn.movementRemaining = Math.max(0, turn.movementRemaining - 5);
   const active = encounter.combatants[encounter.activeIndex];
   if (action.id === "dash" && active) turn.movementRemaining += effectiveSpeed(encounter, active.id);
+  if (action.id === "expeditious-retreat-dash" && active) turn.movementRemaining += effectiveSpeed(encounter, active.id);
   if (action.id === "disengage") turn.disengaged = true;
   const spent = action.resourceCost && active
     ? spendNamedResource(encounter, active.id, action.resourceCost.resourceName, action.resourceCost.amount)

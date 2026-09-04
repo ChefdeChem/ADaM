@@ -52,13 +52,26 @@ export type CharacterSpell = {
   unsupportedReason?: string;
   missingCapabilities?: string[];
   provenance?: MechanicProvenance;
+  trigger?: "after-melee-hit";
+  triggeredDamage?: string;
+  onHitEffect?: {
+    preventsHealing?: boolean;
+    undeadTargetDisadvantageAgainstCaster?: boolean;
+  };
   effect?: {
     name: string;
     description: string;
     modifiers?: EffectModifiers;
     temporaryHitPoints?: number;
-    expires?: "end-of-target-next-turn";
+    applyTo?: "caster" | "target";
+    attackTarget?: "spell-target";
+    starts?: "start-of-caster-next-turn";
+    expires?: "end-of-target-next-turn" | "start-of-caster-next-turn" | "end-of-caster-next-turn";
     consumeOnAttackRoll?: boolean;
+    dashOnCast?: boolean;
+    turnStartTemporaryHitPoints?: number;
+    turnStartDamage?: string;
+    turnStartSave?: { ability: AbilityName; dc: number; endsOnSuccess: boolean };
   };
 };
 
@@ -145,6 +158,7 @@ export type Character = {
   className: string;
   level: number;
   rulesetId?: "dnd-2014" | "dnd-2024";
+  creatureType?: string;
   armorClass: number;
   speedFeet?: number;
   hitPoints: { current: number; maximum: number };

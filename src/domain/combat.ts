@@ -1,6 +1,6 @@
 import type { RulesetId } from "../rulesets";
 import type { ScenarioGrid } from "../scenarios/types";
-import type { AbilityName, CharacterAttack, CharacterTriggeredFeature } from "./character";
+import type { AbilityName, CharacterAttack, CharacterSpell, CharacterTriggeredFeature } from "./character";
 
 export type ExperienceMode = "beginner" | "training" | "advanced";
 export type ActionCost = "action" | "bonus-action" | "reaction" | "movement" | "free";
@@ -144,6 +144,14 @@ export type PendingPlayerResponse =
       attackName: string;
       expiresAt: { round: number; combatantId: string; phase: "start" };
       continuation?: MovementContinuation;
+    }
+  | {
+      type: "post-hit-spell-choice";
+      sourceCombatantId: string;
+      targetCombatantId: string;
+      spellId: string;
+      attackName: string;
+      critical: boolean;
     };
 
 export type EffectModifiers = {
@@ -152,8 +160,11 @@ export type EffectModifiers = {
   savingThrows?: number;
   speedFeet?: number;
   incomingAttacks?: "disadvantage";
-  outgoingAttacks?: "disadvantage";
+  outgoingAttacks?: "advantage" | "disadvantage";
   damageResistances?: string[];
+  healingPrevented?: boolean;
+  bonusActionDash?: boolean;
+  conditionImmunities?: string[];
 };
 
 export type ActiveEffect = {
@@ -167,6 +178,11 @@ export type ActiveEffect = {
   expiresAt?: { round: number; combatantId: string; phase: "start" | "end" };
   temporaryHitPointsGranted?: number;
   consumeOnAttackRoll?: boolean;
+  attackTargetId?: string;
+  startsAt?: { round: number; combatantId: string; phase: "start" };
+  turnStartTemporaryHitPoints?: number;
+  turnStartDamage?: string;
+  turnStartSave?: { ability: AbilityName; dc: number; endsOnSuccess: boolean };
 };
 
 export type Combatant = {
@@ -180,6 +196,8 @@ export type Combatant = {
   temporaryHitPoints: number;
   temporaryHitPointsSourceEffectId?: string;
   damageResistances: string[];
+  creatureType?: string;
+  conditions: string[];
   resources: CombatResource[];
   triggeredFeatures: CharacterTriggeredFeature[];
   initiative: number;
@@ -187,6 +205,7 @@ export type Combatant = {
   initiativeRolled: boolean;
   position: { x: number; y: number };
   attacks: CharacterAttack[];
+  spells: CharacterSpell[];
   savingThrowModifiers: Record<AbilityName, number>;
   reactionAvailable: boolean;
   reactionOptions: ReactionOption[];

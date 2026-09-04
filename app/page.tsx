@@ -9,7 +9,7 @@ import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effects
 import { executeFeatureAction } from "../src/engine/feature-actions";
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
-import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
+import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolvePostHitSpellChoice, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { recoverRestResources, type RestType } from "../src/engine/resources";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
@@ -300,6 +300,13 @@ export default function Home() {
     setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : activeCombatant.side === "enemy" ? "resolving" : "idle");
   }
 
+  function choosePostHitSpell(castSpell: boolean) {
+    const result = resolvePostHitSpellChoice(encounter, castSpell);
+    setEncounter(result.encounter);
+    if (result.damageRoll) setLastRoll(result.damageRoll);
+    setFeedback(result.summary);
+  }
+
   function rollPendingDeathSave() {
     const result = rollDeathSave(encounter, activeCombatant.id);
     setEncounter(result.encounter);
@@ -523,7 +530,7 @@ export default function Home() {
   }
 
   function rollSelectedDamage() {
-    if (!attackFlow || attackFlow.phase !== "damage-roll" || !attackFlow.targetId) return;
+    if (!attackFlow || attackFlow.phase !== "damage-roll" || !attackFlow.targetId || encounter.pendingResponse) return;
     const result = resolveAttackDamage(encounter, attackFlow.attack, attackFlow.targetId, attackFlow.critical);
     if (!result.legal) { setFeedback(result.reason); return; }
     setEncounter(result.encounter);
@@ -796,6 +803,15 @@ export default function Home() {
             <div><span>Player choice · Weapon mastery</span><h3>Apply Slow with {pending.attackName}?</h3><p>The attack damaged {target.name}. You may reduce the target&apos;s Speed by 10 feet until the start of your next turn. Multiple Slow applications cannot reduce Speed by more than 10 feet.</p><div className="response-actions"><button type="button" onClick={() => chooseWeaponMastery(true)}><small>Use Slow</small><strong>Reduce Speed by 10 feet</strong><em>This does not spend an action or resource.</em></button><button type="button" className="decline-response" onClick={() => chooseWeaponMastery(false)}><small>Skip Slow</small><strong>Keep current Speed</strong></button></div></div>
           </section>;
         })()}
+        {encounter.pendingResponse?.type === "post-hit-spell-choice" && (() => {
+          const pending = encounter.pendingResponse;
+          const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId)!;
+          const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
+          const spell = source.spells.find((candidate) => candidate.id === pending.spellId)!;
+          return <section className="roll-coach response-coach reaction-coach" aria-live="assertive">
+            <div><span>Player choice · After a melee hit</span><h3>Cast {spell.name}?</h3><p>{pending.attackName} hit {target.name}. You may spend your Bonus Action and a level {spell.level} spell slot now, or save both resources. The weapon&apos;s damage roll still follows.</p><div className="response-actions"><button type="button" onClick={() => choosePostHitSpell(true)}><small>Bonus Action · Level {spell.level} slot</small><strong>Cast {spell.name}</strong><em>Roll {spell.triggeredDamage}{pending.critical ? " with doubled damage dice" : ""} now.</em></button><button type="button" className="decline-response" onClick={() => choosePostHitSpell(false)}><small>Save resources</small><strong>Skip {spell.name}</strong></button></div></div>
+          </section>;
+        })()}
         {deathSaveRequired && encounter.turn.action && <section className="roll-coach response-coach death-save-coach" aria-live="assertive">
           <div><span>Start of turn · Death saving throw</span><h3>{activeCombatant.name} is unconscious</h3><p>Roll a <strong>d20</strong> with no modifier. A 10 or higher succeeds; a natural 1 causes two failures; a natural 20 restores 1 HP. Three successes stabilize you and three failures mean death.</p><div className="death-save-track"><span>Successes <strong>{activeCombatant.deathSaves.successes}/3</strong></span><span>Failures <strong>{activeCombatant.deathSaves.failures}/3</strong></span></div></div>
           <button type="button" onClick={rollPendingDeathSave}><small>Roll death save</small><strong>d20</strong></button>
@@ -813,7 +829,7 @@ export default function Home() {
           <div><span>Attack roll · Click to roll</span><h3>{attackFlow.attack.name} vs. {targetAnalysis.target.name}</h3><p>Roll a <strong>d20</strong> {validateAttackChoice(encounter, attackFlow.attack).rollMode === "disadvantage" ? "twice and keep the lower result, then" : "and"} add {attackFlow.attack.attackBonus >= 0 ? "+" : "−"}{Math.abs(attackFlow.attack.attackBonus)}. Meet or beat AC {effectiveArmorClass(encounter, targetAnalysis.target.id) + (targetAnalysis.cover === "half" ? 2 : 0)}.</p></div>
           <button type="button" onClick={rollSelectedAttack}><small>Roll attack</small><strong>{validateAttackChoice(encounter, attackFlow.attack).rollMode === "disadvantage" ? "2d20 · lower" : "d20"} {attackFlow.attack.attackBonus >= 0 ? "+" : "−"} {Math.abs(attackFlow.attack.attackBonus)}</strong></button>
         </section>}
-        {attackFlow?.phase === "damage-roll" && targetAnalysis && <section className="roll-coach damage-coach" aria-live="polite">
+        {attackFlow?.phase === "damage-roll" && targetAnalysis && !encounter.pendingResponse && <section className="roll-coach damage-coach" aria-live="polite">
           <div><span>{attackFlow.critical ? "Critical hit · Double the damage dice" : "Hit confirmed · Click to roll damage"}</span><h3>{attackFlow.attack.damage}</h3><p>Damage is rolled separately from the attack. The total will be applied to {targetAnalysis.target.name}&apos;s hit points.</p></div>
           <button type="button" onClick={rollSelectedDamage}><small>Roll damage</small><strong>{attackFlow.critical ? `Critical · ${attackFlow.attack.damage}` : attackFlow.attack.damage}</strong></button>
         </section>}

@@ -1,6 +1,6 @@
 import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
-import { applyEffect, effectiveSpeed } from "./effects";
+import { applyEffect, canRegainHitPoints, effectiveSpeed } from "./effects";
 import { spendNamedResource, validateNamedResource } from "./resources";
 
 export type FeatureActionResolution =
@@ -44,6 +44,7 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
     const distanceFeet = Math.max(Math.abs(active.position.x - target.position.x), Math.abs(active.position.y - target.position.y)) * 5;
     if (distanceFeet > feature.resolution.rangeFeet) return { legal: false, reason: `${target.name} is ${distanceFeet} feet away; ${feature.name} requires touch.` };
     if (target.deathSaves.failures >= 3) return { legal: false, reason: `${target.name} has died and cannot regain Hit Points from ${feature.name}.` };
+    if (!canRegainHitPoints(encounter, target.id)) return { legal: false, reason: `${target.name} cannot regain Hit Points right now.` };
     const missingHitPoints = target.hitPoints.maximum - target.hitPoints.current;
     if (missingHitPoints <= 0) return { legal: false, reason: `${target.name} is already at maximum Hit Points.` };
     if (resourceAmount > missingHitPoints) return { legal: false, reason: `${target.name} can regain at most ${missingHitPoints} Hit Points.` };

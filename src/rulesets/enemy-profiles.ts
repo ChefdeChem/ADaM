@@ -4,6 +4,7 @@ import type { EnemySaveAbility } from "../domain/combat";
 export type EnemyProfile = {
   id: string;
   name: string;
+  creatureType: string;
   armorClass: number;
   speedFeet: number;
   hitPoints: number;
@@ -17,6 +18,7 @@ export const enemyProfiles: EnemyProfile[] = [
   {
     id: "ashen-scout",
     name: "Ashen Scout",
+    creatureType: "humanoid",
     armorClass: 13,
     speedFeet: 30,
     hitPoints: 18,
@@ -33,6 +35,7 @@ export const enemyProfiles: EnemyProfile[] = [
   {
     id: "ruined-guardian",
     name: "Ruined Guardian",
+    creatureType: "construct",
     armorClass: 15,
     speedFeet: 30,
     hitPoints: 30,
@@ -46,6 +49,7 @@ export const enemyProfiles: EnemyProfile[] = [
   {
     id: "cinder-skirmisher",
     name: "Cinder Skirmisher",
+    creatureType: "humanoid",
     armorClass: 14,
     speedFeet: 30,
     hitPoints: 22,

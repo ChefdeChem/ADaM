@@ -1,7 +1,7 @@
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
-import { applyEffect, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, hasOutgoingAttackDisadvantage, nextTurnRound } from "./effects";
+import { applyEffect, canRegainHitPoints, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, nextTurnRound, outgoingAttackRollMode } from "./effects";
 import { spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { analyzeTarget, gridDistanceFeet } from "./targeting";
 
@@ -30,8 +30,8 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   const threatened = attack.kind === "ranged" && encounter.combatants.some((combatant) => combatant.side !== active.side
     && combatant.hitPoints.current > 0
     && gridDistanceFeet(active, combatant) <= 5);
-  const effectDisadvantage = hasOutgoingAttackDisadvantage(encounter, active.id);
-  return { legal: true, rollMode: longRange || threatened || effectDisadvantage ? "disadvantage" : "normal", distanceFeet: analysis.distanceFeet };
+  const situationalMode = longRange || threatened ? "disadvantage" : "normal";
+  return { legal: true, rollMode: outgoingAttackRollMode(encounter, active.id, analysis.target.id, situationalMode), distanceFeet: analysis.distanceFeet };
 }
 
 export function validateAttackTarget(encounter:EncounterState,attack:CharacterAttack,targetId:string):OptionValidation{
@@ -53,7 +53,7 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
   const rangeNote=validation.rollMode==="disadvantage"?" with disadvantage":"";
   const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
-  let next=consumeAttackRollEffects(encounter,active.id);
+  let next=consumeAttackRollEffects(encounter,active.id,target.target.id);
   if(hit&&attack.mastery==="sap"){
     next=applyEffect(next,{
       name:"Sap",
@@ -65,6 +65,20 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
       consumeOnAttackRoll:true,
       replaceExisting:true,
     });
+  }
+  if(hit&&attack.kind==="melee"&&active.side==="player"&&!next.pendingResponse){
+    const triggeredSpell=active.spells.find((spell)=>spell.trigger==="after-melee-hit"
+      &&validateSpellSlot(next,active.id,spell.level).legal);
+    if(triggeredSpell&&next.turn.bonusAction){
+      next={...next,pendingResponse:{
+        type:"post-hit-spell-choice",
+        sourceCombatantId:active.id,
+        targetCombatantId:target.target.id,
+        spellId:triggeredSpell.id,
+        attackName:attack.name,
+        critical,
+      }};
+    }
   }
   return{legal:true,roll,hit,critical,targetArmorClass,summary,encounter:{...next,turn:{...next.turn,action:false},log:[`${active.name} attacks ${target.target.name}. ${summary}`,...next.log]}};
 }
@@ -80,13 +94,13 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   if(!attacker.reactionAvailable)return{legal:false,reason:`${attacker.name}'s reaction is unavailable.`,encounter};
   if(attack.kind!=="melee")return{legal:false,reason:"Opportunity attacks require a melee attack.",encounter};
   if(gridDistanceFeet(attacker,target)>attack.normalRangeFeet)return{legal:false,reason:`${target.name} is outside ${attack.name}'s reach.`,encounter};
-  const rollMode=hasOutgoingAttackDisadvantage(encounter,attacker.id)?"disadvantage":"normal";
+  const rollMode=outgoingAttackRollMode(encounter,attacker.id,target.id);
   const roll=rollD20({mode:rollMode,modifier:attack.attackBonus+effectiveAttackModifier(encounter,attacker.id),random});
   const targetArmorClass=effectiveArmorClass(encounter,target.id);
   const critical=roll.natural===20;
   const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
   const summary=`Opportunity attack with ${attack.name}${rollMode==="disadvantage"?" with disadvantage":""}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
-  let next=consumeAttackRollEffects(encounter,attacker.id);
+  let next=consumeAttackRollEffects(encounter,attacker.id,target.id);
   if(hit&&attack.mastery==="sap"){
     next=applyEffect(next,{
       name:"Sap",
@@ -231,6 +245,7 @@ export function executeAttackChoice(encounter: EncounterState, attack: Character
 export function validateSpellAvailability(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const active = encounter.combatants[encounter.activeIndex];
   if (spell.unsupportedReason) return { legal: false, reason: spell.unsupportedReason };
+  if (spell.trigger === "after-melee-hit") return { legal: false, reason: `${spell.name} becomes available immediately after you hit with a melee weapon or Unarmed Strike.` };
   if (spell.castingTime === "reaction") return { legal: false, reason: `${spell.name} becomes available automatically when its reaction trigger occurs.` };
   if (spell.castingTime === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (spell.castingTime === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
@@ -247,6 +262,7 @@ export function validateSpellChoice(encounter: EncounterState, spell: CharacterS
     const active = encounter.combatants[encounter.activeIndex];
     if (encounter.selectedTargetId === active.id) {
       if (spell.target !== "self-or-single" || spell.targetSide === "hostile") return { legal: false, reason: `${spell.name} cannot target the caster.` };
+      if (spell.healing && !canRegainHitPoints(encounter, active.id)) return { legal: false, reason: `${active.name} cannot regain Hit Points right now.` };
       return { legal: true, rollMode: "normal", distanceFeet: 0 };
     }
     const analysis = analyzeTarget(encounter, encounter.selectedTargetId);
@@ -256,10 +272,11 @@ export function validateSpellChoice(encounter: EncounterState, spell: CharacterS
     if (analysis.distanceFeet > spell.rangeFeet) return { legal: false, reason: `${analysis.target.name} is ${analysis.distanceFeet} feet away; ${spell.name} reaches ${spell.rangeFeet} feet.` };
     if (spell.targetSide === "hostile" && analysis.target.side === active.side) return { legal: false, reason: `${spell.name} requires a hostile target.` };
     if (spell.targetSide === "friendly" && analysis.target.side !== active.side) return { legal: false, reason: `${spell.name} requires a friendly target.` };
+    if (spell.healing && !canRegainHitPoints(encounter, analysis.target.id)) return { legal: false, reason: `${analysis.target.name} cannot regain Hit Points right now.` };
     const threatened = spell.attackBonus !== undefined && encounter.combatants.some((combatant) => combatant.side !== active.side
       && combatant.hitPoints.current > 0
       && gridDistanceFeet(active, combatant) <= 5);
-    return { legal: true, rollMode: threatened ? "disadvantage" : "normal", distanceFeet: analysis.distanceFeet };
+    return { legal: true, rollMode: outgoingAttackRollMode(encounter, active.id, analysis.target.id, threatened ? "disadvantage" : "normal"), distanceFeet: analysis.distanceFeet };
   }
   return { legal: true, rollMode: "normal", distanceFeet: 0 };
 }
@@ -278,12 +295,12 @@ export function resolveSpellAttackRoll(encounter: EncounterState, spell: Charact
   if (spell.attackBonus === undefined) return { legal: false, reason: `${spell.name} does not require an attack roll.`, encounter };
   const active = encounter.combatants[encounter.activeIndex];
   const target = analyzeTarget(encounter, encounter.selectedTargetId!)!;
-  const rollMode = validation.rollMode === "disadvantage" || hasOutgoingAttackDisadvantage(encounter, active.id) ? "disadvantage" : "normal";
+  const rollMode = validation.rollMode ?? outgoingAttackRollMode(encounter, active.id, target.target.id);
   const roll = rollD20({ mode: rollMode, modifier: spell.attackBonus + effectiveAttackModifier(encounter, active.id), random });
   const targetArmorClass = effectiveArmorClass(encounter, target.target.id) + (target.cover === "half" ? 2 : 0);
   const critical = roll.natural === 20;
   const hit = critical || (roll.natural !== 1 && roll.total >= targetArmorClass);
-  let next = consumeAttackRollEffects(encounter, active.id);
+  let next = consumeAttackRollEffects(encounter, active.id, target.target.id);
   next = spendSpellSlot(next, active.id, spell.level);
   next = {
     ...next,
@@ -301,7 +318,7 @@ export function resolveSpellAttackRoll(encounter: EncounterState, spell: Charact
 
 export function resolveSpellDamage(encounter: EncounterState, spell: CharacterSpell, targetId: string, critical = false, random = Math.random): DamageResolution {
   if (!spell.damage) return { legal: false, reason: `${spell.name} does not have a damage roll.`, encounter };
-  return resolveAttackDamage(encounter, {
+  const result = resolveAttackDamage(encounter, {
     id: spell.id,
     name: spell.name,
     kind: "ranged",
@@ -309,6 +326,60 @@ export function resolveSpellDamage(encounter: EncounterState, spell: CharacterSp
     damage: spell.damage,
     normalRangeFeet: spell.rangeFeet,
   }, targetId, critical, random);
+  if (!result.legal || !spell.onHitEffect) return result;
+  const source = encounter.combatants[encounter.activeIndex];
+  const target = result.encounter.combatants.find((combatant) => combatant.id === targetId);
+  if (!source || !target || target.hitPoints.current <= 0) return result;
+  let next = result.encounter;
+  if (spell.onHitEffect.preventsHealing) {
+    next = applyEffect(next, {
+      name: `${spell.name}: Healing Prevention`,
+      description: `The target cannot regain Hit Points until the start of ${source.name}'s next turn.`,
+      sourceCombatantId: source.id,
+      targetCombatantId: target.id,
+      modifiers: { healingPrevented: true },
+      expiresAt: { round: nextTurnRound(encounter, source.id), combatantId: source.id, phase: "start" },
+      replaceExisting: true,
+    });
+  }
+  if (spell.onHitEffect.undeadTargetDisadvantageAgainstCaster && target.creatureType?.toLowerCase() === "undead") {
+    next = applyEffect(next, {
+      name: `${spell.name}: Undead Disadvantage`,
+      description: `The undead target has disadvantage on attack rolls against ${source.name} until the end of ${source.name}'s next turn.`,
+      sourceCombatantId: source.id,
+      targetCombatantId: target.id,
+      attackTargetId: source.id,
+      modifiers: { outgoingAttacks: "disadvantage" },
+      expiresAt: { round: nextTurnRound(encounter, source.id), combatantId: source.id, phase: "end" },
+      replaceExisting: true,
+    });
+  }
+  return { ...result, encounter: next };
+}
+
+function effectExpiration(encounter: EncounterState, spell: CharacterSpell, casterId: string, targetId: string) {
+  if (spell.effect?.expires === "end-of-target-next-turn") return { round: nextTurnRound(encounter, targetId), combatantId: targetId, phase: "end" as const };
+  if (spell.effect?.expires === "start-of-caster-next-turn") return { round: nextTurnRound(encounter, casterId), combatantId: casterId, phase: "start" as const };
+  if (spell.effect?.expires === "end-of-caster-next-turn") return { round: nextTurnRound(encounter, casterId), combatantId: casterId, phase: "end" as const };
+  return undefined;
+}
+
+function applySpellEffect(encounter: EncounterState, spell: CharacterSpell, casterId: string, spellTargetId: string): EncounterState {
+  if (!spell.effect) return encounter;
+  const effectTargetId = spell.effect.applyTo === "caster" ? casterId : spellTargetId;
+  return applyEffect(encounter, {
+    ...spell.effect,
+    sourceCombatantId: casterId,
+    targetCombatantId: effectTargetId,
+    attackTargetId: spell.effect.attackTarget === "spell-target" ? spellTargetId : undefined,
+    startsAt: spell.effect.starts === "start-of-caster-next-turn"
+      ? { round: nextTurnRound(encounter, casterId), combatantId: casterId, phase: "start" }
+      : undefined,
+    durationRounds: spell.durationRounds,
+    concentration: spell.concentration,
+    expiresAt: effectExpiration(encounter, spell, casterId, spellTargetId),
+    replaceExisting: true,
+  });
 }
 
 export function executeSpellChoice(encounter: EncounterState, spell: CharacterSpell, random = Math.random): OptionResolution {
@@ -341,17 +412,7 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       next = applyDamageToCombatant(next, targetId, damage, { damageType: damageRoll.formula.damageType, sourceCombatantId: active.id });
       damageCopy = ` ${damageApplied} ${damageRoll.formula.damageType} damage${damageApplied < damage ? ` after resistance (${damage} rolled)` : ""}.`;
     }
-    if (!succeeded && spell.effect) next = applyEffect(next, {
-      ...spell.effect,
-      sourceCombatantId: active.id,
-      targetCombatantId: targetId,
-      durationRounds: spell.durationRounds,
-      concentration: spell.concentration,
-      expiresAt: spell.effect.expires === "end-of-target-next-turn"
-        ? { round: nextTurnRound(encounter, targetId), combatantId: targetId, phase: "end" }
-        : undefined,
-      replaceExisting: true,
-    });
+    if (!succeeded && spell.effect) next = applySpellEffect(next, spell, active.id, targetId);
     const summary = `${target.name} rolled ${saveRoll.total} on the DC ${spell.save.dc} ${spell.save.ability} save against ${spell.name} and ${succeeded ? "succeeded" : "failed"}.${damageCopy}`;
     return { legal: true, roll: saveRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
@@ -367,23 +428,12 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
     const summary = `${active.name} casts ${spell.name}; ${targetName} regains ${healingRoll.total} hit points.`;
     return { legal: true, roll: healingRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
-  if (spell.effect) {
-    next = applyEffect(next, {
-      ...spell.effect,
-      sourceCombatantId: active.id,
-      targetCombatantId: targetId,
-      durationRounds: spell.durationRounds,
-      concentration: spell.concentration,
-      expiresAt: spell.effect.expires === "end-of-target-next-turn"
-        ? { round: nextTurnRound(encounter, targetId), combatantId: targetId, phase: "end" }
-        : undefined,
-      replaceExisting: true,
-    });
-  }
+  if (spell.effect) next = applySpellEffect(next, spell, active.id, targetId);
+  if (spell.effect?.dashOnCast) next = { ...next, turn: { ...next.turn, movementRemaining: next.turn.movementRemaining + next.combatants.find((combatant) => combatant.id === active.id)!.baseSpeedFeet } };
   const roll = spell.attackBonus === undefined
     ? null
-    : rollD20({ mode: hasOutgoingAttackDisadvantage(next, active.id) ? "disadvantage" : "normal", modifier: spell.attackBonus + effectiveAttackModifier(next, active.id), random });
-  if (roll) next = consumeAttackRollEffects(next, active.id);
+    : rollD20({ mode: outgoingAttackRollMode(next, active.id, targetId), modifier: spell.attackBonus + effectiveAttackModifier(next, active.id), random });
+  if (roll) next = consumeAttackRollEffects(next, active.id, targetId);
   const slotCopy = spell.level === 0 ? "cantrip" : `level ${spell.level} slot`;
   const rollCopy = roll ? ` Attack roll: ${roll.total} (${roll.kept} + ${roll.modifier}).` : "";
   const summary = `${spell.name} cast on ${targetName} using ${slotCopy}.${rollCopy}`;
