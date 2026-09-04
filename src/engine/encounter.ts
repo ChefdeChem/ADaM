@@ -13,11 +13,56 @@ function characterSavingThrows(character:Character):Record<AbilityName,number>{
   return Object.fromEntries(abilities.map((ability)=>[ability,character.savingThrowModifiers?.[ability]??abilityModifier(character.abilities[ability])])) as Record<AbilityName,number>;
 }
 
+function hasEquipmentTraining(character: Character, category: "light" | "medium" | "heavy" | "shield"): boolean {
+  const proficiencies = (character.profile?.proficiencies?.armor ?? []).map((entry) => entry.toLowerCase());
+  return category === "shield"
+    ? proficiencies.some((entry) => entry === "shields" || entry === "shield")
+    : proficiencies.some((entry) => entry === `${category} armor`);
+}
+
+function equippedEquipmentRules(character: Character) {
+  return (character.equipmentRules ?? []).filter((rule) => rule.equipped);
+}
+
 function characterBaseArmorClass(character: Character): number {
+  const equipment = equippedEquipmentRules(character);
+  const shieldBonus = equipment.reduce((total, rule) => rule.resolution.type === "shield"
+    && (!rule.resolution.trainingRequiredForBenefit || hasEquipmentTraining(character, "shield"))
+    ? total + rule.resolution.armorClassBonus
+    : total, 0);
+  const armor = equipment.find((rule) => rule.resolution.type === "armor");
+  if (armor?.resolution.type === "armor") {
+    const dexterityModifier = abilityModifier(character.abilities.dexterity);
+    const dexterityBonus = armor.resolution.dexterityModifier === "full"
+      ? dexterityModifier
+      : armor.resolution.dexterityModifier === "maximum-two"
+        ? Math.min(2, dexterityModifier)
+        : 0;
+    return armor.resolution.baseArmorClass + dexterityBonus + shieldBonus;
+  }
   const unarmoredDefense = (character.passiveFeatures ?? []).find((feature) => feature.resolution.type === "unarmored-defense");
   const wearingArmor = (character.profile?.equipment ?? []).some((item) => /armor|mail|plate|leather|hide/i.test(item.name));
   if (!unarmoredDefense || wearingArmor) return character.armorClass;
-  return 10 + abilityModifier(character.abilities.dexterity) + abilityModifier(character.abilities.constitution);
+  return 10 + abilityModifier(character.abilities.dexterity) + abilityModifier(character.abilities.constitution) + shieldBonus;
+}
+
+function characterBaseSpeed(character: Character): number {
+  const armor = equippedEquipmentRules(character).find((rule) => rule.resolution.type === "armor");
+  const strengthRequirement = armor?.resolution.type === "armor" ? armor.resolution.strengthRequirement : undefined;
+  return (character.speedFeet ?? 30) - (strengthRequirement && character.abilities.strength < strengthRequirement ? 10 : 0);
+}
+
+function equipmentAbilityCheckDisadvantages(character: Character): string[] {
+  const armor = equippedEquipmentRules(character).find((rule) => rule.resolution.type === "armor");
+  const disadvantages = armor?.resolution.type === "armor" && armor.resolution.stealthDisadvantage ? ["stealth"] : [];
+  return armor?.resolution.type === "armor" && !hasEquipmentTraining(character, armor.resolution.category)
+    ? [...disadvantages, "strength", "dexterity"]
+    : disadvantages;
+}
+
+function armorTrainingViolation(character: Character): boolean {
+  const armor = equippedEquipmentRules(character).find((rule) => rule.resolution.type === "armor");
+  return Boolean(armor?.resolution.type === "armor" && !hasEquipmentTraining(character, armor.resolution.category));
 }
 
 export function createEncounter(character: Character, scenario: Scenario): EncounterState {
@@ -39,6 +84,10 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       conditions: [],
       savingThrowAdvantagesAgainstConditions: [],
       conditionImmunities: [],
+      abilityCheckDisadvantages: [],
+      savingThrowDisadvantages: [],
+      weaponAttackDisadvantage: false,
+      spellcastingBlockedByArmor: false,
       resources: [],
       triggeredFeatures: [],
       initiative: 0,
@@ -68,7 +117,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         side: "player",
         proficiencyBonus: character.proficiencyBonus,
         baseArmorClass: characterBaseArmorClass(character),
-        baseSpeedFeet: character.speedFeet ?? 30,
+        baseSpeedFeet: characterBaseSpeed(character),
         hitPoints: { ...character.hitPoints },
         temporaryHitPoints: 0,
         creatureType: character.creatureType ?? "humanoid",
@@ -79,6 +128,10 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
           feature.resolution.type === "ancestry-defense" ? feature.resolution.savingThrowAdvantageAgainstConditions : []),
         conditionImmunities: (character.passiveFeatures ?? []).flatMap((feature) =>
           feature.resolution.type === "ancestry-defense" ? feature.resolution.conditionImmunities : []),
+        abilityCheckDisadvantages: equipmentAbilityCheckDisadvantages(character),
+        savingThrowDisadvantages: armorTrainingViolation(character) ? ["strength", "dexterity"] : [],
+        weaponAttackDisadvantage: armorTrainingViolation(character),
+        spellcastingBlockedByArmor: armorTrainingViolation(character),
         resources: character.resources.map((resource) => ({ ...resource })),
         triggeredFeatures: (character.triggeredFeatures ?? []).map((feature) => ({ ...feature, provenance: { ...feature.provenance }, resolution: { ...feature.resolution } })),
         initiative: 0,

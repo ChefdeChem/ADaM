@@ -24,6 +24,14 @@ export const cleiraOestwilde: Character = {
     resolution: { type: "ancestry-defense", savingThrowAdvantageAgainstConditions: ["charmed"], conditionImmunities: ["magical sleep"] },
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Fey Ancestry" },
   }],
+  equipmentRules: [{
+    id: "leather-armor",
+    name: "Leather Armor",
+    equipped: true,
+    description: "Light armor that sets AC to 11 plus the wearer’s Dexterity modifier.",
+    resolution: { type: "armor", category: "light", baseArmorClass: 11, dexterityModifier: "full" },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Armor and Shields: Leather" },
+  }],
   attacks: [
     { id: "rapier", name: "Rapier", kind: "melee", attackBonus: 4, damage: "1d8 + 2 piercing", normalRangeFeet: 5, description: "Martial, finesse, Vex." },
     { id: "dagger", name: "Dagger", kind: "melee", attackBonus: 4, damage: "1d4 + 2 piercing", normalRangeFeet: 5, description: "Simple, finesse, light." },

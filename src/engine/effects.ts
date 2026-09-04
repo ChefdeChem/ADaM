@@ -242,13 +242,22 @@ export function endEffectsBrokenByHarm(encounter: EncounterState, sourceCombatan
   return broken.reduce((next, effect) => removeEffect(next, effect.id, `${next.combatants.find((combatant) => combatant.id === sourceCombatantId)?.name ?? "the source"} harmed the target`), encounter);
 }
 
-export function savingThrowRollMode(encounter: EncounterState, combatantId: string, condition?: string, situationalMode: RollMode = "normal"): RollMode {
+export function savingThrowRollMode(encounter: EncounterState, combatantId: string, condition?: string, situationalMode: RollMode = "normal", ability?: AbilityName): RollMode {
   const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
   const hasAdvantage = situationalMode === "advantage" || Boolean(condition && combatant?.savingThrowAdvantagesAgainstConditions
     .some((candidate) => candidate.toLowerCase() === condition.toLowerCase()));
-  const hasDisadvantage = situationalMode === "disadvantage";
+  const hasDisadvantage = situationalMode === "disadvantage" || Boolean(ability && combatant?.savingThrowDisadvantages?.includes(ability));
   if (hasAdvantage && hasDisadvantage) return "normal";
   if (hasAdvantage) return "advantage";
+  if (hasDisadvantage) return "disadvantage";
+  return "normal";
+}
+
+export function abilityCheckRollMode(encounter: EncounterState, combatantId: string, check: string, situationalMode: RollMode = "normal"): RollMode {
+  const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  const hasDisadvantage = situationalMode === "disadvantage" || Boolean(combatant?.abilityCheckDisadvantages?.some((candidate) => candidate.toLowerCase() === check.toLowerCase()));
+  if (situationalMode === "advantage" && hasDisadvantage) return "normal";
+  if (situationalMode === "advantage") return "advantage";
   if (hasDisadvantage) return "disadvantage";
   return "normal";
 }

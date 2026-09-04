@@ -31,7 +31,7 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   const threatened = attack.kind === "ranged" && encounter.combatants.some((combatant) => combatant.side !== active.side
     && combatant.hitPoints.current > 0
     && gridDistanceFeet(active, combatant) <= 5);
-  const situationalMode = longRange || threatened ? "disadvantage" : "normal";
+  const situationalMode = longRange || threatened || active.weaponAttackDisadvantage ? "disadvantage" : "normal";
   return { legal: true, rollMode: outgoingAttackRollMode(encounter, active.id, analysis.target.id, situationalMode), distanceFeet: analysis.distanceFeet };
 }
 
@@ -96,7 +96,7 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   if(!attacker.reactionAvailable)return{legal:false,reason:`${attacker.name}'s reaction is unavailable.`,encounter};
   if(attack.kind!=="melee")return{legal:false,reason:"Opportunity attacks require a melee attack.",encounter};
   if(gridDistanceFeet(attacker,target)>attack.normalRangeFeet)return{legal:false,reason:`${target.name} is outside ${attack.name}'s reach.`,encounter};
-  const rollMode=outgoingAttackRollMode(encounter,attacker.id,target.id);
+  const rollMode=outgoingAttackRollMode(encounter,attacker.id,target.id,attacker.weaponAttackDisadvantage?"disadvantage":"normal");
   const roll=rollD20({mode:rollMode,modifier:attack.attackBonus+effectiveAttackModifier(encounter,attacker.id),random});
   const targetArmorClass=effectiveArmorClass(encounter,target.id);
   const critical=roll.natural===20;
@@ -250,6 +250,7 @@ export function executeAttackChoice(encounter: EncounterState, attack: Character
 
 export function validateSpellAvailability(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const active = encounter.combatants[encounter.activeIndex];
+  if (active?.spellcastingBlockedByArmor) return { legal: false, reason: `${active.name} cannot cast spells while wearing armor without training.` };
   if (spell.unsupportedReason) return { legal: false, reason: spell.unsupportedReason };
   if (spell.trigger === "after-melee-hit") return { legal: false, reason: `${spell.name} becomes available immediately after you hit with a melee weapon or Unarmed Strike.` };
   if (spell.castingTime === "reaction") return { legal: false, reason: `${spell.name} becomes available automatically when its reaction trigger occurs.` };
@@ -411,7 +412,7 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
     const target = next.combatants.find((combatant) => combatant.id === targetId);
     if (!target) return { legal: false, reason: "The target is no longer available.", encounter };
     const situationalMode = spell.hostileSaveAdvantage && target.side !== active.side ? "advantage" : "normal";
-    const saveMode = savingThrowRollMode(next, targetId, spell.effect?.conditionGranted, situationalMode);
+    const saveMode = savingThrowRollMode(next, targetId, spell.effect?.conditionGranted, situationalMode, spell.save.ability);
     const saveRoll = rollD20({ mode: saveMode, modifier: effectiveSavingThrowModifier(next, targetId, spell.save.ability), random });
     const succeeded = saveRoll.total >= spell.save.dc;
     let damageCopy = "";

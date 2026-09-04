@@ -190,8 +190,24 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
       );
     }),
     ...(character.profile?.equipment ?? []).map((item, index) => {
+      const equipmentRule = (character.equipmentRules ?? []).find((rule) => slug(rule.name) === slug(item.name));
       const attackReady = (character.attacks ?? []).some((attack) => slug(attack.name).includes(slug(item.name)) || slug(item.name).includes(slug(attack.name)));
-      return entry(character, "equipment", `equipment-${index}-${slug(item.name)}`, item.name, attackReady ? "partial" : "reference-only", ["inventory"], attackReady ? ["Inventory use beyond its registered attack"] : ["No executable equipment action is registered yet"], false);
+      const equipmentComponents: MechanicComponent[] = equipmentRule?.resolution.type === "armor"
+        ? ["inventory", "armor-calculation", "proficiency", ...(equipmentRule.resolution.strengthRequirement ? ["movement" as const] : []), ...(equipmentRule.resolution.stealthDisadvantage ? ["ability-check" as const] : [])]
+        : equipmentRule?.resolution.type === "shield"
+          ? ["inventory", "armor-calculation", "proficiency"]
+          : ["inventory"];
+      return entry(
+        character,
+        "equipment",
+        `equipment-${index}-${slug(item.name)}`,
+        item.name,
+        equipmentRule ? "supported" : attackReady ? "partial" : "reference-only",
+        equipmentComponents,
+        equipmentRule ? [] : attackReady ? ["Inventory use beyond its registered attack"] : ["No executable equipment action is registered yet"],
+        Boolean(equipmentRule),
+        equipmentRule?.provenance,
+      );
     }),
   ];
   const counts = { supported: 0, partial: 0, "reference-only": 0, "needs-review": 0 } satisfies CharacterMechanicCoverage["counts"];

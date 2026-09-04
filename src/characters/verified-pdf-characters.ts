@@ -21,6 +21,14 @@ export const surinaDaardendrian: Character = {
     { id: "divine-sense", name: "Divine Sense", kind: "generic", current: 3, maximum: 3, recovery: "long-rest" },
     { id: "lay-on-hands", name: "Lay on Hands Pool", kind: "generic", current: 5, maximum: 5, recovery: "long-rest" },
   ],
+  equipmentRules: [{
+    id: "chain-mail",
+    name: "Chain Mail",
+    equipped: true,
+    description: "Heavy armor that sets AC to 16, requires Strength 13 to avoid a Speed penalty, and imposes disadvantage on Stealth checks.",
+    resolution: { type: "armor", category: "heavy", baseArmorClass: 16, dexterityModifier: "none", strengthRequirement: 13, stealthDisadvantage: true },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Armor and Shields: Chain Mail" },
+  }],
   passiveFeatures: [{
     id: "fire-resistance",
     name: "Fire Resistance",
@@ -179,6 +187,21 @@ export const irvenWeber: Character = {
     { id: "spell-slot-1", name: "Level 1 Spell Slots", kind: "spell-slot", level: 1, current: 2, maximum: 2, recovery: "long-rest" },
     { id: "magic-initiate-free-cast", name: "Magic Initiate Free Cast", kind: "generic", current: 1, maximum: 1, recovery: "long-rest" },
   ],
+  equipmentRules: [{
+    id: "chain-mail",
+    name: "Chain Mail",
+    equipped: true,
+    description: "Heavy armor that sets AC to 16, requires Strength 13 to avoid a Speed penalty, and imposes disadvantage on Stealth checks.",
+    resolution: { type: "armor", category: "heavy", baseArmorClass: 16, dexterityModifier: "none", strengthRequirement: 13, stealthDisadvantage: true },
+    provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Armor: Chain Mail" },
+  }, {
+    id: "shield",
+    name: "Shield",
+    equipped: true,
+    description: "A wielded shield grants a +2 bonus to Armor Class when the wearer has Shield training.",
+    resolution: { type: "shield", armorClassBonus: 2, trainingRequiredForBenefit: true },
+    provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Armor: Shield" },
+  }],
   featureActions: [{
     id: "lay-on-hands",
     name: "Lay On Hands",
@@ -243,6 +266,14 @@ export const pharos: Character = {
     { id: "relentless-endurance", name: "Relentless Endurance", kind: "generic", current: 1, maximum: 1, recovery: "long-rest" },
     { id: "honeyed-words", name: "Honeyed Words", kind: "generic", current: 1, maximum: 1, recovery: "long-rest" },
   ],
+  equipmentRules: [{
+    id: "leather-armor",
+    name: "Leather Armor",
+    equipped: true,
+    description: "Light armor that sets AC to 11 plus the wearer’s Dexterity modifier.",
+    resolution: { type: "armor", category: "light", baseArmorClass: 11, dexterityModifier: "full" },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Armor and Shields: Leather" },
+  }],
   featureActions: [{
     id: "adrenaline-rush",
     name: "Adrenaline Rush",

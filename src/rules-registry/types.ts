@@ -44,6 +44,8 @@ export type MechanicComponent =
   | "detection"
   | "armor-calculation"
   | "advantage"
+  | "ability-check"
+  | "proficiency"
   | "recurring-effect"
   | "inventory"
   | "reference";

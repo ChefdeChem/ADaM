@@ -92,6 +92,28 @@ export type CharacterPassiveFeature = {
   provenance: MechanicProvenance;
 };
 
+export type CharacterEquipmentRule = {
+  id: string;
+  name: string;
+  equipped: boolean;
+  description: string;
+  resolution:
+    | {
+        type: "armor";
+        category: "light" | "medium" | "heavy";
+        baseArmorClass: number;
+        dexterityModifier: "full" | "maximum-two" | "none";
+        strengthRequirement?: number;
+        stealthDisadvantage?: boolean;
+      }
+    | {
+        type: "shield";
+        armorClassBonus: number;
+        trainingRequiredForBenefit: boolean;
+      };
+  provenance: MechanicProvenance;
+};
+
 export type CharacterFeatureAction = {
   id: string;
   name: string;
@@ -183,6 +205,7 @@ export type Character = {
   resources: CharacterResource[];
   featureActions?: CharacterFeatureAction[];
   passiveFeatures?: CharacterPassiveFeature[];
+  equipmentRules?: CharacterEquipmentRule[];
   triggeredFeatures?: CharacterTriggeredFeature[];
   attacks?: CharacterAttack[];
   spells?: CharacterSpell[];

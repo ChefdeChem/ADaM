@@ -204,6 +204,10 @@ export type Combatant = {
   conditions: string[];
   savingThrowAdvantagesAgainstConditions: string[];
   conditionImmunities: string[];
+  abilityCheckDisadvantages: string[];
+  savingThrowDisadvantages: AbilityName[];
+  weaponAttackDisadvantage: boolean;
+  spellcastingBlockedByArmor: boolean;
   resources: CombatResource[];
   triggeredFeatures: CharacterTriggeredFeature[];
   initiative: number;
