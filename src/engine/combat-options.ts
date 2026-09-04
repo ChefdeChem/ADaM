@@ -1,7 +1,7 @@
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
-import { applyEffect, canRegainHitPoints, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, nextTurnRound, outgoingAttackRollMode } from "./effects";
+import { applyEffect, canHarmTarget, canRegainHitPoints, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
 import { spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { analyzeTarget, gridDistanceFeet } from "./targeting";
 
@@ -22,11 +22,12 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   const analysis = analyzeTarget(encounter, encounter.selectedTargetId);
   if (!analysis) return { legal: false, reason: "The selected target is no longer available." };
   if (analysis.target.hitPoints.current <= 0) return { legal: false, reason: `${analysis.target.name} is already defeated.` };
+  const active = encounter.combatants[encounter.activeIndex];
+  if (!canHarmTarget(encounter, active.id, analysis.target.id)) return { legal: false, reason: `${active.name} is charmed and cannot attack ${analysis.target.name}.` };
   if (!analysis.lineOfSight) return { legal: false, reason: `${analysis.target.name} is outside your line of sight.` };
   const maximumRange = attack.longRangeFeet ?? attack.normalRangeFeet;
   if (analysis.distanceFeet > maximumRange) return { legal: false, reason: `${analysis.target.name} is ${analysis.distanceFeet} feet away; ${attack.name} reaches ${maximumRange} feet.` };
   const longRange = attack.kind === "ranged" && analysis.distanceFeet > attack.normalRangeFeet;
-  const active = encounter.combatants[encounter.activeIndex];
   const threatened = attack.kind === "ranged" && encounter.combatants.some((combatant) => combatant.side !== active.side
     && combatant.hitPoints.current > 0
     && gridDistanceFeet(active, combatant) <= 5);
@@ -91,6 +92,7 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   const attacker=encounter.combatants.find((combatant)=>combatant.id===attackerId);
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!attacker||!target)return{legal:false,reason:"The opportunity attack can no longer be resolved.",encounter};
+  if(!canHarmTarget(encounter,attackerId,targetId))return{legal:false,reason:`${attacker.name} is charmed and cannot attack ${target.name}.`,encounter};
   if(!attacker.reactionAvailable)return{legal:false,reason:`${attacker.name}'s reaction is unavailable.`,encounter};
   if(attack.kind!=="melee")return{legal:false,reason:"Opportunity attacks require a melee attack.",encounter};
   if(gridDistanceFeet(attacker,target)>attack.normalRangeFeet)return{legal:false,reason:`${target.name} is outside ${attack.name}'s reach.`,encounter};
@@ -125,6 +127,10 @@ export type DamageResolution=
   |{legal:true;encounter:EncounterState;roll:DamageRoll;damageApplied:number;summary:string};
 
 export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false,allowDamageReduction=true,damageType,sourceCombatantId}:{critical?:boolean;allowDamageReduction?:boolean;damageType?:string;sourceCombatantId?:string}={}):EncounterState{
+  if(sourceCombatantId&&amount>0){
+    const afterBrokenEffects=endEffectsBrokenByHarm(encounter,sourceCombatantId,targetId);
+    if(afterBrokenEffects!==encounter)return applyDamageToCombatant(afterBrokenEffects,targetId,amount,{critical,allowDamageReduction,damageType,sourceCombatantId});
+  }
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return encounter;
   const reduction=allowDamageReduction&&(target.triggeredFeatures??[]).find((feature)=>feature.trigger==="takes-damage"
@@ -273,6 +279,9 @@ export function validateSpellChoice(encounter: EncounterState, spell: CharacterS
     if (spell.targetSide === "hostile" && analysis.target.side === active.side) return { legal: false, reason: `${spell.name} requires a hostile target.` };
     if (spell.targetSide === "friendly" && analysis.target.side !== active.side) return { legal: false, reason: `${spell.name} requires a friendly target.` };
     if (spell.healing && !canRegainHitPoints(encounter, analysis.target.id)) return { legal: false, reason: `${analysis.target.name} cannot regain Hit Points right now.` };
+    if (spell.targetCreatureTypes?.length && !spell.targetCreatureTypes.some((creatureType) => creatureType.toLowerCase() === analysis.target.creatureType?.toLowerCase())) {
+      return { legal: false, reason: `${spell.name} can target only ${spell.targetCreatureTypes.join(" or ")}, not ${analysis.target.creatureType ?? "an unknown creature type"}.` };
+    }
     const threatened = spell.attackBonus !== undefined && encounter.combatants.some((combatant) => combatant.side !== active.side
       && combatant.hitPoints.current > 0
       && gridDistanceFeet(active, combatant) <= 5);
@@ -401,7 +410,9 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
   if (spell.save) {
     const target = next.combatants.find((combatant) => combatant.id === targetId);
     if (!target) return { legal: false, reason: "The target is no longer available.", encounter };
-    const saveRoll = rollD20({ mode: "normal", modifier: effectiveSavingThrowModifier(next, targetId, spell.save.ability), random });
+    const situationalMode = spell.hostileSaveAdvantage && target.side !== active.side ? "advantage" : "normal";
+    const saveMode = savingThrowRollMode(next, targetId, spell.effect?.conditionGranted, situationalMode);
+    const saveRoll = rollD20({ mode: saveMode, modifier: effectiveSavingThrowModifier(next, targetId, spell.save.ability), random });
     const succeeded = saveRoll.total >= spell.save.dc;
     let damageCopy = "";
     if (spell.damage && (!succeeded || spell.save.damageOnSuccess === "half")) {
@@ -413,7 +424,8 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       damageCopy = ` ${damageApplied} ${damageRoll.formula.damageType} damage${damageApplied < damage ? ` after resistance (${damage} rolled)` : ""}.`;
     }
     if (!succeeded && spell.effect) next = applySpellEffect(next, spell, active.id, targetId);
-    const summary = `${target.name} rolled ${saveRoll.total} on the DC ${spell.save.dc} ${spell.save.ability} save against ${spell.name} and ${succeeded ? "succeeded" : "failed"}.${damageCopy}`;
+    const modeCopy = saveMode === "normal" ? "" : ` with ${saveMode}`;
+    const summary = `${target.name} rolled ${saveRoll.total}${modeCopy} on the DC ${spell.save.dc} ${spell.save.ability} save against ${spell.name} and ${succeeded ? "succeeded" : "failed"}.${damageCopy}`;
     return { legal: true, roll: saveRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
   if (spell.healing) {

@@ -16,6 +16,7 @@ export type GridTerrainCell = {
   y: number;
   kind: GridTerrainKind;
   label: string;
+  divineAura?: "consecrated" | "desecrated";
 };
 
 export type ScenarioGrid = {

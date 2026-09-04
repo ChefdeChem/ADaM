@@ -72,6 +72,8 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   const components: MechanicComponent[] = ["targeting", "range"];
   if (spell.attackBonus !== undefined) components.push("attack-roll");
   if (spell.save) components.push("saving-throw");
+  if (spell.targetCreatureTypes?.length) components.push("creature-type");
+  if (spell.hostileSaveAdvantage) components.push("advantage");
   if (spell.damage) components.push("damage-roll");
   if (spell.healing) components.push("healing-roll");
   if (spell.level > 0) components.push("resource-spend");
@@ -82,6 +84,8 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   if (spell.onHitEffect?.undeadTargetDisadvantageAgainstCaster) components.push("trigger", "attack-roll", "duration");
   if (spell.effect?.modifiers?.bonusActionDash) components.push("action-economy", "movement", "duration");
   if (spell.effect?.modifiers?.conditionImmunities) components.push("condition-immunity", "duration");
+  if (spell.effect?.conditionGranted) components.push("condition", "duration");
+  if (spell.effect?.endsWhenSourceHarmsTarget) components.push("trigger", "duration");
   if (spell.effect?.turnStartTemporaryHitPoints) components.push("trigger", "recurring-effect", "temporary-hit-points");
   if (spell.effect?.turnStartDamage) components.push("trigger", "recurring-effect", "damage-roll");
   if (spell.effect?.turnStartSave) components.push("saving-throw", "duration");
@@ -91,6 +95,8 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
     spell.effect.modifiers?.outgoingAttacks
     || spell.effect.modifiers?.bonusActionDash
     || spell.effect.modifiers?.conditionImmunities
+    || spell.effect.conditionGranted
+    || spell.effect.modifiers?.preventsHarmingSource
     || spell.effect.temporaryHitPoints
     || spell.effect.turnStartTemporaryHitPoints
     || spell.effect.turnStartDamage
@@ -150,6 +156,8 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
           ? ["action-economy", "targeting", "range", "resource-spend", "resource-recovery", "hit-point-restoration"]
         : executableAction?.resolution.type === "activate-effect"
           ? ["action-economy", "resource-spend", "resource-recovery", "duration", "damage-resistance"]
+        : executableAction?.resolution.type === "sense-creature-types"
+          ? ["action-economy", "resource-spend", "resource-recovery", "range", "duration", "creature-type", "detection"]
         : executableTrigger?.resolution.type === "drop-to-one-hit-point"
           ? ["trigger", "replacement-effect", "resource-spend", "resource-recovery"]
           : executableTrigger?.resolution.type === "reduce-damage-by-roll"
@@ -158,6 +166,10 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
             ? ["trigger", "temporary-hit-points"]
           : executablePassive?.resolution.type === "damage-resistance"
             ? ["damage-resistance"]
+          : executablePassive?.resolution.type === "ancestry-defense"
+            ? ["saving-throw", "advantage", "condition-immunity"]
+          : executablePassive?.resolution.type === "unarmored-defense"
+            ? ["armor-calculation"]
           : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "slow")
             ? ["trigger", "damage-roll", "movement", "duration"]
           : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "sap")

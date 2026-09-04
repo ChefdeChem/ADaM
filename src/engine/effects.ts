@@ -18,15 +18,30 @@ export type EffectInput = {
   turnStartTemporaryHitPoints?: number;
   turnStartDamage?: string;
   turnStartSave?: ActiveEffect["turnStartSave"];
+  conditionGranted?: string;
+  endsWhenSourceHarmsTarget?: boolean;
+  sense?: ActiveEffect["sense"];
   replaceExisting?: boolean;
 };
 
-function cleanExpiredTemporaryHitPoints(encounter: EncounterState, effectIds: Set<string>): EncounterState {
+function cleanRemovedEffectState(encounter: EncounterState, effectIds: Set<string>): EncounterState {
+  const removedEffects = encounter.effects.filter((effect) => effectIds.has(effect.id));
+  const retainedEffects = encounter.effects.filter((effect) => !effectIds.has(effect.id));
   return {
     ...encounter,
-    combatants: encounter.combatants.map((combatant) => effectIds.has(combatant.temporaryHitPointsSourceEffectId ?? "")
-      ? { ...combatant, temporaryHitPoints: 0, temporaryHitPointsSourceEffectId: undefined }
-      : combatant),
+    combatants: encounter.combatants.map((combatant) => {
+      const removedConditions = new Set(removedEffects
+        .filter((effect) => effect.targetCombatantId === combatant.id && effect.conditionGranted)
+        .map((effect) => effect.conditionGranted!.toLowerCase()));
+      const retainedConditions = new Set(retainedEffects
+        .filter((effect) => effect.targetCombatantId === combatant.id && effect.conditionGranted)
+        .map((effect) => effect.conditionGranted!.toLowerCase()));
+      const withoutExpiredConditions = (combatant.conditions ?? []).filter((condition) =>
+        !removedConditions.has(condition.toLowerCase()) || retainedConditions.has(condition.toLowerCase()));
+      return effectIds.has(combatant.temporaryHitPointsSourceEffectId ?? "")
+        ? { ...combatant, conditions: withoutExpiredConditions, temporaryHitPoints: 0, temporaryHitPointsSourceEffectId: undefined }
+        : { ...combatant, conditions: withoutExpiredConditions };
+    }),
   };
 }
 
@@ -40,7 +55,7 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
       && effect.targetCombatantId === input.targetCombatantId)
     .map((effect) => effect.id));
   const removedIds = new Set([...concentrationIds, ...replacementIds]);
-  let next = cleanExpiredTemporaryHitPoints(encounter, removedIds);
+  let next = cleanRemovedEffectState(encounter, removedIds);
   const retainedEffects = next.effects.filter((effect) => !removedIds.has(effect.id));
   const safeId = input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const id = `${safeId}-${encounter.round}-${input.sourceCombatantId}-${retainedEffects.length + 1}`;
@@ -62,6 +77,9 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     turnStartTemporaryHitPoints: input.turnStartTemporaryHitPoints,
     turnStartDamage: input.turnStartDamage,
     turnStartSave: input.turnStartSave,
+    conditionGranted: input.conditionGranted,
+    endsWhenSourceHarmsTarget: input.endsWhenSourceHarmsTarget,
+    sense: input.sense,
   };
 
   next = {
@@ -91,6 +109,23 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
         : combatant),
     };
   }
+  if (input.conditionGranted) {
+    const normalizedCondition = input.conditionGranted.toLowerCase();
+    const target = next.combatants.find((combatant) => combatant.id === input.targetCombatantId);
+    const effectImmunities = effectsForCombatant(next, input.targetCombatantId)
+      .flatMap((activeEffect) => activeEffect.modifiers.conditionImmunities ?? []);
+    const isImmune = [...(target?.conditionImmunities ?? []), ...effectImmunities]
+      .some((condition) => condition.toLowerCase() === normalizedCondition);
+    if (!isImmune) {
+      next = {
+        ...next,
+        combatants: next.combatants.map((combatant) => combatant.id === input.targetCombatantId
+          && !(combatant.conditions ?? []).some((condition) => condition.toLowerCase() === normalizedCondition)
+          ? { ...combatant, conditions: [...(combatant.conditions ?? []), input.conditionGranted!] }
+          : combatant),
+      };
+    }
+  }
   return next;
 }
 
@@ -101,7 +136,7 @@ export function expireEffectsAtTurnStart(encounter: EncounterState, round: numbe
   ));
   if (!expired.length) return encounter;
   const expiredIds = new Set(expired.map((effect) => effect.id));
-  const cleaned = cleanExpiredTemporaryHitPoints(encounter, expiredIds);
+  const cleaned = cleanRemovedEffectState(encounter, expiredIds);
   return {
     ...cleaned,
     effects: cleaned.effects.filter((effect) => !expiredIds.has(effect.id)),
@@ -116,7 +151,7 @@ export function expireEffectsAtTurnEnd(encounter: EncounterState, round: number,
   ));
   if (!expired.length) return encounter;
   const expiredIds = new Set(expired.map((effect) => effect.id));
-  const cleaned = cleanExpiredTemporaryHitPoints(encounter, expiredIds);
+  const cleaned = cleanRemovedEffectState(encounter, expiredIds);
   return {
     ...cleaned,
     effects: cleaned.effects.filter((effect) => !expiredIds.has(effect.id)),
@@ -165,7 +200,7 @@ export function consumeAttackRollEffects(encounter: EncounterState, combatantId:
     && (!effect.attackTargetId || effect.attackTargetId === targetId));
   if (!consumed.length) return encounter;
   const consumedIds = new Set(consumed.map((effect) => effect.id));
-  const cleaned = cleanExpiredTemporaryHitPoints(encounter, consumedIds);
+  const cleaned = cleanRemovedEffectState(encounter, consumedIds);
   return {
     ...cleaned,
     effects: cleaned.effects.filter((effect) => !consumedIds.has(effect.id)),
@@ -176,7 +211,7 @@ export function consumeAttackRollEffects(encounter: EncounterState, combatantId:
 export function removeEffect(encounter: EncounterState, effectId: string, reason?: string): EncounterState {
   const effect = encounter.effects.find((candidate) => candidate.id === effectId);
   if (!effect) return encounter;
-  const cleaned = cleanExpiredTemporaryHitPoints(encounter, new Set([effectId]));
+  const cleaned = cleanRemovedEffectState(encounter, new Set([effectId]));
   return {
     ...cleaned,
     effects: cleaned.effects.filter((candidate) => candidate.id !== effectId),
@@ -187,6 +222,35 @@ export function removeEffect(encounter: EncounterState, effectId: string, reason
 export function canRegainHitPoints(encounter: EncounterState, combatantId: string): boolean {
   return !effectsForCombatant(encounter, combatantId)
     .some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.healingPrevented);
+}
+
+export function canHarmTarget(encounter: EncounterState, sourceCombatantId: string, targetCombatantId: string): boolean {
+  return !effectsForCombatant(encounter, sourceCombatantId).some((effect) =>
+    effectHasStarted(encounter, effect)
+    && effect.modifiers.preventsHarmingSource
+    && effect.sourceCombatantId === targetCombatantId);
+}
+
+export function endEffectsBrokenByHarm(encounter: EncounterState, sourceCombatantId: string, targetCombatantId: string): EncounterState {
+  const harmfulSource = encounter.combatants.find((combatant) => combatant.id === sourceCombatantId);
+  const broken = encounter.effects.filter((effect) => {
+    const effectSource = encounter.combatants.find((combatant) => combatant.id === effect.sourceCombatantId);
+    return effect.endsWhenSourceHarmsTarget
+      && effect.targetCombatantId === targetCombatantId
+      && harmfulSource?.side === effectSource?.side;
+  });
+  return broken.reduce((next, effect) => removeEffect(next, effect.id, `${next.combatants.find((combatant) => combatant.id === sourceCombatantId)?.name ?? "the source"} harmed the target`), encounter);
+}
+
+export function savingThrowRollMode(encounter: EncounterState, combatantId: string, condition?: string, situationalMode: RollMode = "normal"): RollMode {
+  const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  const hasAdvantage = situationalMode === "advantage" || Boolean(condition && combatant?.savingThrowAdvantagesAgainstConditions
+    .some((candidate) => candidate.toLowerCase() === condition.toLowerCase()));
+  const hasDisadvantage = situationalMode === "disadvantage";
+  if (hasAdvantage && hasDisadvantage) return "normal";
+  if (hasAdvantage) return "advantage";
+  if (hasDisadvantage) return "disadvantage";
+  return "normal";
 }
 
 export function hasBonusActionDash(encounter: EncounterState, combatantId: string): boolean {
@@ -227,7 +291,7 @@ export function endConcentration(encounter: EncounterState, sourceCombatantId: s
   const ended = encounter.effects.filter((effect) => effect.concentration && effect.sourceCombatantId === sourceCombatantId);
   if (!ended.length) return encounter;
   const endedIds = new Set(ended.map((effect) => effect.id));
-  const cleaned = cleanExpiredTemporaryHitPoints(encounter, endedIds);
+  const cleaned = cleanRemovedEffectState(encounter, endedIds);
   return {
     ...cleaned,
     effects: cleaned.effects.filter((effect) => !endedIds.has(effect.id)),

@@ -1,6 +1,7 @@
 import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
 import { applyEffect, canRegainHitPoints, effectiveSpeed } from "./effects";
+import { analyzeTarget } from "./targeting";
 import { spendNamedResource, validateNamedResource } from "./resources";
 
 export type FeatureActionResolution =
@@ -121,6 +122,39 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
         : undefined,
     });
     const summary = `${active.name} uses ${feature.name}; ${feature.resolution.effect.name} is active until the end of their next turn.`;
+    return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
+  }
+
+  if (feature.resolution.type === "sense-creature-types") {
+    const detectableTypes = new Set(feature.resolution.creatureTypes.map((creatureType) => creatureType.toLowerCase()));
+    const detectedCreatures = next.combatants.filter((combatant) => {
+      if (combatant.id === active.id || combatant.hitPoints.current <= 0 || !detectableTypes.has(combatant.creatureType?.toLowerCase() ?? "")) return false;
+      const analysis = analyzeTarget(next, combatant.id);
+      return Boolean(analysis && analysis.distanceFeet <= feature.resolution.rangeFeet
+        && (!feature.resolution.blockedByTotalCover || analysis.lineOfSight));
+    });
+    const detectedAuras = next.map.terrain.filter((cell) => cell.divineAura
+      && Math.max(Math.abs(active.position.x - cell.x), Math.abs(active.position.y - cell.y)) * 5 <= feature.resolution.rangeFeet);
+    next = applyEffect({ ...next, turn }, {
+      name: feature.name,
+      description: feature.description,
+      sourceCombatantId: active.id,
+      targetCombatantId: active.id,
+      sense: {
+        creatureTypes: feature.resolution.creatureTypes,
+        rangeFeet: feature.resolution.rangeFeet,
+        blockedByTotalCover: feature.resolution.blockedByTotalCover,
+      },
+      expiresAt: { round: encounter.round + 1, combatantId: active.id, phase: "end" },
+      replaceExisting: true,
+    });
+    const creatureCopy = detectedCreatures.length
+      ? detectedCreatures.map((combatant) => `${combatant.creatureType} at ${combatant.position.x},${combatant.position.y}`).join(", ")
+      : "no qualifying creatures";
+    const auraCopy = detectedAuras.length
+      ? [...new Set(detectedAuras.map((cell) => cell.divineAura))].join(" and ") + " presence"
+      : "no consecrated or desecrated presence";
+    const summary = `${active.name} uses ${feature.name} and senses ${creatureCopy}; ${auraCopy}.`;
     return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
 

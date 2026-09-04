@@ -29,6 +29,15 @@ export const surinaDaardendrian: Character = {
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Damage Resistance" },
   }],
   featureActions: [{
+    id: "divine-sense",
+    name: "Divine Sense",
+    cost: "action",
+    description: "Until the end of the next turn, sense celestials, fiends, and undead within 60 feet that are not behind total cover, plus consecrated or desecrated presence.",
+    resourceName: "Divine Sense",
+    resourceCost: 1,
+    resolution: { type: "sense-creature-types", creatureTypes: ["celestial", "fiend", "undead"], rangeFeet: 60, duration: "end-of-next-turn", blockedByTotalCover: true },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Divine Sense" },
+  }, {
     id: "lay-on-hands",
     name: "Lay on Hands",
     cost: "action",
@@ -65,7 +74,7 @@ export const surinaDaardendrian: Character = {
     features: [
       { id: "fire-resistance", name: "Fire Resistance", description: "Resistance to fire damage from Gold Dragon ancestry.", executablePassiveId: "fire-resistance", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Damage Resistance" } },
       { name: "Breath Weapon (Gold)", description: "Once per short rest, creatures in a 15-foot cone make a DC 11 Dexterity save; 2d6 fire damage on a failure and half on a success. Area targeting is not implemented yet." },
-      { name: "Divine Sense", description: "Three times per long rest, sense certain celestials, fiends, undead, and hallowed places within 60 feet until the end of the next turn." },
+      { id: "divine-sense", name: "Divine Sense", description: "Three times per long rest, sense certain celestials, fiends, undead, and hallowed places within 60 feet until the end of the next turn.", executableActionId: "divine-sense", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Divine Sense" } },
       { id: "lay-on-hands", name: "Lay on Hands", description: "Spend points from a 5-point pool as an Action to heal by touch, or spend 5 points to cure one disease or neutralize one poison.", executableActionId: "lay-on-hands", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Lay on Hands" } },
     ],
   },
@@ -89,6 +98,13 @@ export const goliathBarbarian: Character = {
     { id: "stones-endurance", name: "Stone's Endurance", kind: "generic", current: 2, maximum: 2, recovery: "long-rest" },
     { id: "large-form", name: "Large Form", kind: "generic", current: 1, maximum: 1, recovery: "long-rest" },
   ],
+  passiveFeatures: [{
+    id: "unarmored-defense",
+    name: "Unarmored Defense",
+    description: "While not wearing armor, base AC equals 10 plus Dexterity and Constitution modifiers; a shield can still apply.",
+    resolution: { type: "unarmored-defense", abilityModifiers: ["dexterity", "constitution"], allowsShield: true },
+    provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Unarmored Defense" },
+  }],
   featureActions: [{
     id: "rage",
     name: "Rage",
@@ -137,7 +153,7 @@ export const goliathBarbarian: Character = {
     equipment: [{ name: "Spear", quantity: 5, weightPounds: 3 }, { name: "Maul", quantity: 1, weightPounds: 10 }, { name: "Hooded Lantern", quantity: 1, weightPounds: 2 }],
     features: [
       { id: "rage", name: "Rage", description: "Enter Rage as a Bonus Action. Damage resistance and the initial duration are executable; Rage Damage, Strength Advantage, duration extension, and early-ending conditions are not implemented yet.", executableActionId: "rage", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" } },
-      { name: "Unarmored Defense", description: "While not wearing armor, base AC is 13 plus any shield bonus." },
+      { id: "unarmored-defense", name: "Unarmored Defense", description: "While not wearing armor, base AC is 13 plus any shield bonus.", executablePassiveId: "unarmored-defense", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Unarmored Defense" } },
       { id: "stones-endurance", name: "Stone's Endurance", description: "Twice per long rest, react after taking damage to reduce it by 1d12 + 2.", executableTriggerId: "stones-endurance", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Giant Ancestry (Stone's Endurance)" } },
       { name: "Savage Attacker", description: "Once per turn on a weapon hit, roll the weapon damage dice twice and use either result. The optional reroll is not implemented yet." },
       { name: "Large Form", description: "Once per long rest, become Large for 10 minutes. Size-changing effects are not implemented yet." },
@@ -269,7 +285,7 @@ export const pharos: Character = {
     { id: "druidcraft", name: "Druidcraft", level: 0, castingTime: "action", rangeFeet: 30, target: "self", requiresLineOfSight: true, description: "Creates a minor nature effect.", unsupportedReason: "Environmental utility-spell adjudication is not implemented yet." },
     { id: "guidance", name: "Guidance", level: 0, castingTime: "action", rangeFeet: 5, target: "self-or-single", targetSide: "friendly", requiresLineOfSight: true, concentration: true, durationRounds: 10, description: "A touched creature can add 1d4 to one ability check.", unsupportedReason: "Ability-check prompts and the optional d4 bonus are not implemented yet." },
     { id: "expeditious-retreat", name: "Expeditious Retreat", level: 1, castingTime: "bonus-action", rangeFeet: 0, target: "self", requiresLineOfSight: false, concentration: true, durationRounds: 100, description: "Dash when cast, then Dash as a Bonus Action on each turn while concentration lasts.", effect: { name: "Expeditious Retreat", description: "The caster can take the Dash action as a Bonus Action until concentration ends.", applyTo: "caster", modifiers: { bonusActionDash: true }, dashOnCast: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Expeditious Retreat" } },
-    { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 13, damageOnSuccess: "none" }, durationRounds: 600, description: "A humanoid target makes a DC 13 Wisdom save or is charmed for 1 hour.", unsupportedReason: "Humanoid validation, hostile-save advantage, and the charmed condition are not implemented yet." },
+    { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 13, damageOnSuccess: "none" }, targetCreatureTypes: ["humanoid"], hostileSaveAdvantage: true, durationRounds: 600, description: "A humanoid target makes a DC 13 Wisdom save with advantage while fighting the caster or an ally. On a failure, it is charmed for 1 hour or until harmed by the caster or an ally.", effect: { name: "Charm Person", description: "The target is charmed by the caster and cannot harm the caster until the spell ends.", conditionGranted: "charmed", modifiers: { preventsHarmingSource: true }, endsWhenSourceHarmsTarget: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Charm Person" } },
   ],
   actions: standardActions2014,
   profile: {

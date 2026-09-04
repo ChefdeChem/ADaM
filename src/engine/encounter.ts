@@ -13,6 +13,13 @@ function characterSavingThrows(character:Character):Record<AbilityName,number>{
   return Object.fromEntries(abilities.map((ability)=>[ability,character.savingThrowModifiers?.[ability]??abilityModifier(character.abilities[ability])])) as Record<AbilityName,number>;
 }
 
+function characterBaseArmorClass(character: Character): number {
+  const unarmoredDefense = (character.passiveFeatures ?? []).find((feature) => feature.resolution.type === "unarmored-defense");
+  const wearingArmor = (character.profile?.equipment ?? []).some((item) => /armor|mail|plate|leather|hide/i.test(item.name));
+  if (!unarmoredDefense || wearingArmor) return character.armorClass;
+  return 10 + abilityModifier(character.abilities.dexterity) + abilityModifier(character.abilities.constitution);
+}
+
 export function createEncounter(character: Character, scenario: Scenario): EncounterState {
   const enemyPositions = [{ x: 9, y: 2 }, { x: 9, y: 5 }, { x: 10, y: 3 }];
   const enemySeeds = scenario.enemyProfileIds.map((profileId, index) => ({ instanceId: `${profileId}-${index + 1}`, profileId, position: enemyPositions[index] ?? { x: 10, y: Math.min(6, index + 1) } }));
@@ -30,6 +37,8 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       damageResistances: [],
       creatureType: profile.creatureType,
       conditions: [],
+      savingThrowAdvantagesAgainstConditions: [],
+      conditionImmunities: [],
       resources: [],
       triggeredFeatures: [],
       initiative: 0,
@@ -58,7 +67,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         name: character.name,
         side: "player",
         proficiencyBonus: character.proficiencyBonus,
-        baseArmorClass: character.armorClass,
+        baseArmorClass: characterBaseArmorClass(character),
         baseSpeedFeet: character.speedFeet ?? 30,
         hitPoints: { ...character.hitPoints },
         temporaryHitPoints: 0,
@@ -66,6 +75,10 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         damageResistances: (character.passiveFeatures ?? []).flatMap((feature) =>
           feature.resolution.type === "damage-resistance" ? feature.resolution.damageTypes : []),
         conditions: [],
+        savingThrowAdvantagesAgainstConditions: (character.passiveFeatures ?? []).flatMap((feature) =>
+          feature.resolution.type === "ancestry-defense" ? feature.resolution.savingThrowAdvantageAgainstConditions : []),
+        conditionImmunities: (character.passiveFeatures ?? []).flatMap((feature) =>
+          feature.resolution.type === "ancestry-defense" ? feature.resolution.conditionImmunities : []),
         resources: character.resources.map((resource) => ({ ...resource })),
         triggeredFeatures: (character.triggeredFeatures ?? []).map((feature) => ({ ...feature, provenance: { ...feature.provenance }, resolution: { ...feature.resolution } })),
         initiative: 0,

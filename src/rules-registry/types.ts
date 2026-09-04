@@ -39,6 +39,11 @@ export type MechanicComponent =
   | "concentration"
   | "healing-prevention"
   | "condition-immunity"
+  | "condition"
+  | "creature-type"
+  | "detection"
+  | "armor-calculation"
+  | "advantage"
   | "recurring-effect"
   | "inventory"
   | "reference";

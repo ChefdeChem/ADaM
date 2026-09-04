@@ -5,7 +5,7 @@ import { resolveAttackDamage, resolveAttackRoll, validateAttackTarget } from "./
 import { gridDistanceFeet } from "./targeting";
 import { analyzeTarget } from "./targeting";
 import { queueConcentrationCheck } from "./defensive-responses";
-import { effectiveArmorClass } from "./effects";
+import { canHarmTarget, effectiveArmorClass } from "./effects";
 import { validateSpellSlot } from "./resources";
 import { applyMovementContinuation } from "./movement";
 
@@ -105,7 +105,8 @@ function legalAttack(encounter: EncounterState, targetId: string, attacks: Chara
 
 function legalSaveAbility(encounter: EncounterState, targetId: string, abilities: EnemySaveAbility[], usedAbilityIds: string[]): EnemySaveAbility | null {
   const analysis = analyzeTarget(encounter, targetId);
-  if (!analysis || analysis.target.hitPoints.current <= 0) return null;
+  const active = encounter.combatants[encounter.activeIndex];
+  if (!analysis || analysis.target.hitPoints.current <= 0 || !active || !canHarmTarget(encounter, active.id, targetId)) return null;
   return abilities.find((ability) => !usedAbilityIds.includes(ability.id)
     && analysis.distanceFeet <= ability.rangeFeet
     && (!ability.requiresLineOfSight || analysis.lineOfSight)) ?? null;

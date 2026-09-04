@@ -165,6 +165,7 @@ export type EffectModifiers = {
   healingPrevented?: boolean;
   bonusActionDash?: boolean;
   conditionImmunities?: string[];
+  preventsHarmingSource?: boolean;
 };
 
 export type ActiveEffect = {
@@ -183,6 +184,9 @@ export type ActiveEffect = {
   turnStartTemporaryHitPoints?: number;
   turnStartDamage?: string;
   turnStartSave?: { ability: AbilityName; dc: number; endsOnSuccess: boolean };
+  conditionGranted?: string;
+  endsWhenSourceHarmsTarget?: boolean;
+  sense?: { creatureTypes: string[]; rangeFeet: number; blockedByTotalCover: boolean };
 };
 
 export type Combatant = {
@@ -198,6 +202,8 @@ export type Combatant = {
   damageResistances: string[];
   creatureType?: string;
   conditions: string[];
+  savingThrowAdvantagesAgainstConditions: string[];
+  conditionImmunities: string[];
   resources: CombatResource[];
   triggeredFeatures: CharacterTriggeredFeature[];
   initiative: number;

@@ -17,6 +17,13 @@ export const cleiraOestwilde: Character = {
     { id: "bardic-inspiration", name: "Bardic Inspiration", kind: "generic", current: 2, maximum: 2, recovery: "long-rest" },
     { id: "spell-slot-1", name: "Level 1 Spell Slots", kind: "spell-slot", level: 1, current: 2, maximum: 2, recovery: "long-rest" },
   ],
+  passiveFeatures: [{
+    id: "fey-ancestry",
+    name: "Fey Ancestry",
+    description: "Advantage on saving throws against being charmed; magic cannot put Cleira to sleep.",
+    resolution: { type: "ancestry-defense", savingThrowAdvantageAgainstConditions: ["charmed"], conditionImmunities: ["magical sleep"] },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Fey Ancestry" },
+  }],
   attacks: [
     { id: "rapier", name: "Rapier", kind: "melee", attackBonus: 4, damage: "1d8 + 2 piercing", normalRangeFeet: 5, description: "Martial, finesse, Vex." },
     { id: "dagger", name: "Dagger", kind: "melee", attackBonus: 4, damage: "1d4 + 2 piercing", normalRangeFeet: 5, description: "Simple, finesse, light." },
@@ -27,7 +34,7 @@ export const cleiraOestwilde: Character = {
     { id: "dancing-lights", name: "Dancing Lights", level: 0, castingTime: "action", rangeFeet: 120, target: "self", requiresLineOfSight: true, concentration: true, durationRounds: 10, description: "Creates and moves up to four lights for 1 minute.", unsupportedReason: "Movable point-based light placement is not implemented yet." },
     { id: "vicious-mockery", name: "Vicious Mockery", level: 0, castingTime: "action", rangeFeet: 60, target: "single", targetSide: "hostile", requiresLineOfSight: true, damage: "1d4 psychic", save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, description: "The target makes a DC 12 Wisdom save; on a failure it takes psychic damage and has disadvantage on its next attack roll before the end of its next turn.", effect: { name: "Vicious Mockery", description: "Disadvantage on the next attack roll before the end of this creature's next turn.", modifiers: { outgoingAttacks: "disadvantage" }, expires: "end-of-target-next-turn", consumeOnAttackRoll: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Vicious Mockery" } },
     { id: "minor-illusion", name: "Minor Illusion", level: 0, castingTime: "action", rangeFeet: 30, target: "self", requiresLineOfSight: true, durationRounds: 10, description: "Creates a sound or image in a 5-foot cube for 1 minute.", unsupportedReason: "Illusion placement and adjudication are not implemented yet." },
-    { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, durationRounds: 600, description: "A humanoid target makes a DC 12 Wisdom save or is charmed for 1 hour.", unsupportedReason: "Humanoid validation, hostile-save advantage, and the charmed condition are not implemented yet." },
+    { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, targetCreatureTypes: ["humanoid"], hostileSaveAdvantage: true, durationRounds: 600, description: "A humanoid target makes a DC 12 Wisdom save with advantage while fighting the caster or an ally. On a failure, it is charmed for 1 hour or until harmed by the caster or an ally.", effect: { name: "Charm Person", description: "The target is charmed by the caster and cannot harm the caster until the spell ends.", conditionGranted: "charmed", modifiers: { preventsHarmingSource: true }, endsWhenSourceHarmsTarget: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Charm Person" } },
     { id: "detect-magic", name: "Detect Magic", level: 1, castingTime: "action", rangeFeet: 0, target: "self", requiresLineOfSight: false, ritual: true, concentration: true, durationRounds: 100, description: "Senses magic within 30 feet for up to 10 minutes.", unsupportedReason: "Magic-aura detection and ritual casting are not implemented yet.", effect: { name: "Detect Magic", description: "Cleira is concentrating on Detect Magic within 30 feet." } },
     { id: "healing-word", name: "Healing Word", level: 1, castingTime: "bonus-action", rangeFeet: 60, target: "self-or-single", targetSide: "friendly", requiresLineOfSight: true, healing: "1d4 + 2 healing", description: "A visible creature within 60 feet regains 1d4 + 2 hit points." },
     { id: "thunderwave", name: "Thunderwave", level: 1, castingTime: "action", rangeFeet: 0, target: "self", targetSide: "hostile", requiresLineOfSight: false, damage: "2d8 thunder", save: { ability: "constitution", dc: 12, damageOnSuccess: "half" }, description: "Creatures in a 15-foot cube make a DC 12 Constitution save; the wave can push them 10 feet.", unsupportedReason: "Directional area selection and forced movement are not implemented yet." },
@@ -57,7 +64,7 @@ export const cleiraOestwilde: Character = {
     ],
     features: [
       { name: "Bardic Inspiration", description: "Twice per long rest, grant another creature within 60 feet a d6 inspiration die as a bonus action." },
-      { name: "Fey Ancestry", description: "Advantage on saving throws against being charmed; magic cannot put Cleira to sleep." },
+      { id: "fey-ancestry", name: "Fey Ancestry", description: "Advantage on saving throws against being charmed; magic cannot put Cleira to sleep.", executablePassiveId: "fey-ancestry", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Fey Ancestry" } },
       { name: "Trance", description: "Meditates for 4 hours instead of sleeping." },
       { name: "Keen Senses", description: "Proficient in Perception." },
     ],

@@ -45,6 +45,8 @@ export type CharacterSpell = {
   damage?: string;
   healing?: string;
   save?: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" };
+  targetCreatureTypes?: string[];
+  hostileSaveAdvantage?: boolean;
   ritual?: boolean;
   concentration?: boolean;
   durationRounds?: number;
@@ -72,6 +74,9 @@ export type CharacterSpell = {
     turnStartTemporaryHitPoints?: number;
     turnStartDamage?: string;
     turnStartSave?: { ability: AbilityName; dc: number; endsOnSuccess: boolean };
+    conditionGranted?: string;
+    preventsHarmingSource?: boolean;
+    endsWhenSourceHarmsTarget?: boolean;
   };
 };
 
@@ -79,7 +84,10 @@ export type CharacterPassiveFeature = {
   id: string;
   name: string;
   description: string;
-  resolution: { type: "damage-resistance"; damageTypes: string[] };
+  resolution:
+    | { type: "damage-resistance"; damageTypes: string[] }
+    | { type: "ancestry-defense"; savingThrowAdvantageAgainstConditions: string[]; conditionImmunities: string[] }
+    | { type: "unarmored-defense"; abilityModifiers: ["dexterity", "constitution"]; allowsShield: boolean };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;
 };
@@ -108,6 +116,13 @@ export type CharacterFeatureAction = {
           duration: "end-of-next-turn";
           modifiers: EffectModifiers;
         };
+      }
+    | {
+        type: "sense-creature-types";
+        creatureTypes: string[];
+        rangeFeet: number;
+        duration: "end-of-next-turn";
+        blockedByTotalCover: boolean;
       };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;
