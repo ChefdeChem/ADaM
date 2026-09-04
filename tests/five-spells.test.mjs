@@ -45,7 +45,7 @@ function nextPlayerTurn(encounter, random = () => 0.5) {
 test("the five spells add five executable official entries without changing the registry size", () => {
   const reports = BUILT_IN_CHARACTERS.map((character) => buildCharacterMechanicCoverage(character));
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
-  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 95);
+  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 99);
   const entries = reports.flatMap((report) => report.entries).filter((entry) =>
     ["chill-touch", "true-strike", "expeditious-retreat", "heroism", "searing-smite"].includes(entry.entityId));
   assert.equal(entries.length, 5);

@@ -92,6 +92,17 @@ export type CharacterSpell = {
   pointEffect?:
     | { type: "lights"; maximumPoints: number; dimLightFeet: number; movementFeet: number }
     | { type: "damaging-hazard"; sizeFeet: number; damage: string; save: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" } };
+  utilityChoices?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    resolution:
+      | { type: "illusion"; mode: "sound" | "image"; sizeFeet: 5 }
+      | { type: "weather-sensor"; durationRounds: 1 }
+      | { type: "bloom" }
+      | { type: "sensory-effect"; sizeFeet: 5 }
+      | { type: "flame"; operation: "light" | "snuff" | "control" };
+  }>;
 };
 
 export type CharacterPassiveFeature = {
@@ -151,6 +162,12 @@ export type CharacterEquipmentRule = {
         hoodedDimLightFeet: number;
         fuelMinutes: number;
         adjustmentCost: "action" | "bonus-action";
+      }
+    | {
+        type: "tool-check";
+        purpose: string;
+        allowedAbilities: AbilityName[];
+        actionCost: "action";
       };
   provenance: MechanicProvenance;
 };

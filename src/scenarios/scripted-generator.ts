@@ -58,18 +58,21 @@ function createGrid(environment: ScenarioEnvironment, objective: ScenarioObjecti
   };
   const terrainByEnvironment: Record<ScenarioEnvironment, ScenarioGrid["terrain"]> = {
     crypt: [
+      { x: 2, y: 2, kind: "flame", label: "Wall torch", flame: { lit: true, controlled: false } },
       { x: 4, y: 1, kind: "wall", label: "Stone wall" }, { x: 4, y: 2, kind: "wall", label: "Stone wall" },
       { x: 4, y: 5, kind: "wall", label: "Stone wall" }, { x: 4, y: 6, kind: "wall", label: "Stone wall" },
       { x: 6, y: 3, kind: "difficult", label: "Loose rubble" }, { x: 6, y: 4, kind: "difficult", label: "Loose rubble" },
       { x: 8, y: 2, kind: "cover", label: "Unstable pillar" }, { x: 8, y: 5, kind: "cover", label: "Unstable pillar" },
     ],
     forest: [
+      { x: 6, y: 6, kind: "flame", label: "Small campfire", flame: { lit: true, controlled: false } },
       { x: 4, y: 1, kind: "wall", label: "Thick tree" }, { x: 7, y: 2, kind: "wall", label: "Thick tree" },
       { x: 5, y: 5, kind: "wall", label: "Thick tree" }, { x: 9, y: 6, kind: "wall", label: "Thick tree" },
       { x: 3, y: 3, kind: "difficult", label: "Dense brambles" }, { x: 4, y: 3, kind: "difficult", label: "Dense brambles" },
       { x: 5, y: 3, kind: "difficult", label: "Dense brambles" }, { x: 8, y: 4, kind: "cover", label: "Fallen log" },
     ],
     market: [
+      { x: 2, y: 5, kind: "flame", label: "Market lantern", flame: { lit: true, controlled: false } },
       { x: 4, y: 2, kind: "cover", label: "Vendor stall" }, { x: 5, y: 2, kind: "cover", label: "Vendor stall" },
       { x: 7, y: 5, kind: "cover", label: "Vendor stall" }, { x: 8, y: 5, kind: "cover", label: "Vendor stall" },
       { x: 6, y: 3, kind: "wall", label: "Collapsed cart" }, { x: 6, y: 4, kind: "wall", label: "Collapsed cart" },

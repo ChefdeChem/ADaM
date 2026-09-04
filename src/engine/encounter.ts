@@ -98,6 +98,8 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       creatureType: profile.creatureType,
       skillModifiers: {},
       skillProficiencies: [],
+      abilityModifiers: Object.fromEntries(abilities.map((ability) => [ability, 0])) as Record<AbilityName, number>,
+      toolProficiencies: [],
       conditions: [],
       savingThrowAdvantagesAgainstConditions: [],
       conditionImmunities: [],
@@ -145,6 +147,9 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         skillModifiers: characterSkillModifiers(character),
         skillProficiencies: (character.passiveFeatures ?? []).flatMap((feature) =>
           feature.resolution.type === "skill-proficiency" ? [feature.resolution.skill.toLowerCase()] : []),
+        abilityModifiers: Object.fromEntries(abilities.map((ability) => [ability, abilityModifier(character.abilities[ability])])) as Record<AbilityName, number>,
+        toolProficiencies: (character.profile?.proficiencies?.tools ?? []).map((tool) => tool.toLowerCase()),
+        spellSaveDc: character.profile?.spellcasting?.saveDc,
         damageResistances: (character.passiveFeatures ?? []).flatMap((feature) =>
           feature.resolution.type === "damage-resistance" ? feature.resolution.damageTypes : []),
         conditions: [],

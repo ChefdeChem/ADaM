@@ -77,6 +77,11 @@ export type CombatInventoryItem = {
     fuelMinutesRemaining: number;
     adjustmentCost: "action" | "bonus-action";
   };
+  tool?: {
+    purpose: string;
+    proficient: boolean;
+    allowedAbilities: AbilityName[];
+  };
 };
 
 export type ReactionOption = {
@@ -214,7 +219,9 @@ export type ActiveEffect = {
   points?: Array<{ x: number; y: number }>;
   pointEffect?:
     | { type: "lights"; dimLightFeet: number; movementFeet: number }
-    | { type: "damaging-hazard"; sizeFeet: number; damage: string; save: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" } };
+    | { type: "damaging-hazard"; sizeFeet: number; damage: string; save: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" } }
+    | { type: "illusion"; mode: "sound" | "image"; sizeFeet: 5; investigationDc: number; discoveredBy: string[] }
+    | { type: "utility-marker"; kind: "weather-sensor" | "bloom"; sizeFeet: number };
 };
 
 export type Combatant = {
@@ -233,6 +240,9 @@ export type Combatant = {
   creatureType?: string;
   skillModifiers: Record<string, number>;
   skillProficiencies: string[];
+  abilityModifiers: Record<AbilityName, number>;
+  toolProficiencies: string[];
+  spellSaveDc?: number;
   conditions: string[];
   savingThrowAdvantagesAgainstConditions: string[];
   conditionImmunities: string[];

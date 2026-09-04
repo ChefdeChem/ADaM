@@ -33,11 +33,11 @@ function encounterFor(character) {
 
 const player = (state) => state.combatants.find((combatant) => combatant.side === "player");
 
-test("the milestone slice raises executable coverage from 85 to 95 of 99", () => {
+test("the milestone registry remains fully executable after the final slice", () => {
   const reports = BUILT_IN_CHARACTERS.map(buildCharacterMechanicCoverage);
   assert.equal(reports.reduce((sum, report) => sum + report.total, 0), 99);
-  assert.equal(reports.reduce((sum, report) => sum + report.executable, 0), 95);
-  assert.deepEqual(reports.flatMap((report) => report.entries.filter((entry) => !entry.executable).map((entry) => entry.name)).sort(), ["Control Flames", "Disguise Kit", "Druidcraft", "Minor Illusion"]);
+  assert.equal(reports.reduce((sum, report) => sum + report.executable, 0), 99);
+  assert.deepEqual(reports.flatMap((report) => report.entries.filter((entry) => !entry.executable).map((entry) => entry.name)), []);
 });
 
 test("Dancing Lights places up to four lights and moves one with a Bonus Action", () => {

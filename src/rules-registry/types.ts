@@ -49,6 +49,9 @@ export type MechanicComponent =
   | "recurring-effect"
   | "inventory"
   | "light"
+  | "illusion"
+  | "environment"
+  | "tool"
   | "size"
   | "rest-alternative"
   | "reference";

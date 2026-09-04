@@ -9,7 +9,7 @@ export type ScenarioSetup = {
   difficulty: ScenarioDifficulty;
 };
 
-export type GridTerrainKind = "wall" | "difficult" | "cover" | "objective";
+export type GridTerrainKind = "wall" | "difficult" | "cover" | "objective" | "flame";
 
 export type GridTerrainCell = {
   x: number;
@@ -18,6 +18,7 @@ export type GridTerrainCell = {
   label: string;
   divineAura?: "consecrated" | "desecrated";
   magicAura?: string;
+  flame?: { lit: boolean; controlled: boolean };
 };
 
 export type ScenarioGrid = {

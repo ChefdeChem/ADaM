@@ -201,6 +201,7 @@ button{cursor:pointer}
 .map-legend .legend-difficult:before{background:#6b5530}
 .map-legend .legend-cover:before{background:#526355}
 .map-legend .legend-objective:before{background:#315f69}
+.map-legend .legend-flame:before{background:#b85d28;border-color:#efad5c}
 .map-scroll{overflow-x:auto;padding:18px;background:radial-gradient(circle at 50% 50%,#3a3d39,#272a28 68%)}
 .battle-grid{display:grid;width:max-content;margin:auto;border-top:1px solid #72736d;border-left:1px solid #72736d}
 .grid-cell{position:relative;width:46px;height:46px;padding:0;border:0;border-right:1px solid #72736d;border-bottom:1px solid #72736d;background:#444742;color:#fff}
@@ -212,6 +213,11 @@ button{cursor:pointer}
 .grid-cell.terrain-difficult{background:#5b4c32}
 .grid-cell.terrain-cover{background:#405044}
 .grid-cell.terrain-objective{background:#28515a;box-shadow:inset 0 0 0 2px #61a8b6}
+.grid-cell.terrain-flame{background:#563923}
+.grid-cell.terrain-flame .terrain-mark{color:#f0a04b}
+.grid-cell .point-effect-mark{position:absolute;right:4px;bottom:2px;z-index:1;color:#8ed4dc;font-size:18px;line-height:1;text-shadow:0 1px 3px #000}
+.grid-cell .point-effect-illusion{color:#bb9dea}
+.grid-cell .point-effect-utility-marker{color:#9bd188}
 .grid-cell.reachable{cursor:pointer;box-shadow:inset 0 0 0 3px #e4bd6a}
 .grid-cell.reachable:hover{background:#6f623f;box-shadow:inset 0 0 0 3px #ffe09d}
 .grid-cell.targeted{box-shadow:inset 0 0 0 3px #f2cf7d;background:#6a312c}

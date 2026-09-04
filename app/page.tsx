@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { AbilityName, Character, CharacterAttack, CharacterFeatureAction, CharacterSpell } from "../src/domain/character";
+import type { AbilityName, Character, CharacterAttack, CharacterEquipmentRule, CharacterFeatureAction, CharacterSpell } from "../src/domain/character";
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
 import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
@@ -13,6 +13,7 @@ import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationRes
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { recoverRestResources, type RestType } from "../src/engine/resources";
 import { executePointSpell } from "../src/engine/point-effects";
+import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
 import { importCharacterFile, type ImportResult } from "../src/importers";
@@ -33,10 +34,11 @@ type AttackFlow = null | {
 };
 type SpellFlow = null | {
   spell: CharacterSpell;
-  phase: "resource" | "target" | "point" | "attack-roll" | "damage-roll";
+  phase: "resource" | "option" | "target" | "point" | "attack-roll" | "damage-roll";
   targetId?: string;
   critical?: boolean;
   castingResource?: SpellCastingResourceChoice;
+  utilityChoiceId?: string;
 };
 type FeatureFlow = null | {
   feature: CharacterFeatureAction;
@@ -44,6 +46,7 @@ type FeatureFlow = null | {
   amount: number;
   maximum: number;
 };
+type ToolFlow = null | { rule: CharacterEquipmentRule };
 
 const actionCategoryCopy: Array<{ id: ActionCategory; label: string; detail: string }> = [
   { id: "action", label: "Action", detail: "Attacks, magic, and core actions" },
@@ -153,6 +156,7 @@ export default function Home() {
   const [attackFlow, setAttackFlow] = useState<AttackFlow>(null);
   const [spellFlow, setSpellFlow] = useState<SpellFlow>(null);
   const [featureFlow, setFeatureFlow] = useState<FeatureFlow>(null);
+  const [toolFlow, setToolFlow] = useState<ToolFlow>(null);
   const [enemyTurnPhase, setEnemyTurnPhase] = useState<"idle" | "resolving" | "awaiting-player" | "showing">("idle");
 
   const activeRuleset = rulesets.find((ruleset) => ruleset.id === rulesetId)!;
@@ -345,6 +349,7 @@ export default function Home() {
     setAttackFlow(null);
     setSpellFlow(null);
     setFeatureFlow(null);
+    setToolFlow(null);
     setEnemyTurnPhase("idle");
     localStorage.setItem("adam-active-character-id", nextCharacter.id);
     setMessage(announcement);
@@ -428,12 +433,13 @@ export default function Home() {
     if (activeCombatant.side !== "player") { setFeedback("ADaM is resolving the enemy turn."); return; }
     if (deathSaveRequired && encounter.turn.action) { setFeedback("Roll the required death saving throw before ending this turn."); return; }
     if (activeCombatant.hitPoints.current <= 0 && action.id !== "end-turn") { setFeedback("An unconscious character cannot take actions."); return; }
-    if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setFeedback("Turn ended. Initiative advanced."); return; }
+    if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setFeedback("Turn ended. Initiative advanced."); return; }
     if (action.id === "attack") {
       setChoiceMode("attack");
       setAttackFlow(null);
       setSpellFlow(null);
       setFeatureFlow(null);
+      setToolFlow(null);
       setFeedback(`${playerCombatant.attacks.length} weapon attacks are ready. Choose a weapon to reveal its legal targets.`);
       return;
     }
@@ -442,7 +448,7 @@ export default function Home() {
       setFeedback(experienceMode === "training" ? validation.reason ?? "That action is not currently legal." : "Action disallowed."); return;
     }
     if (action.id === "move") { setFeedback("Choose a highlighted adjacent square. You can split your movement before and after actions; leaving an enemy's reach may trigger an opportunity attack."); return; }
-    if (action.id === "magic" || action.id === "cast-spell") { setChoiceMode("spell"); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setFeedback("Choose a spell first. ADaM will then highlight every legal target for its range and line of sight."); return; }
+    if (action.id === "magic" || action.id === "cast-spell") { setChoiceMode("spell"); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setFeedback("Choose a spell first. ADaM will then highlight every legal target for its range and line of sight."); return; }
     const feature = character.featureActions?.find((candidate) => candidate.id === action.id);
     if (feature) {
       if (feature.resolution.type === "healing-pool") {
@@ -455,6 +461,7 @@ export default function Home() {
         setAttackFlow(null);
         setSpellFlow(null);
         setFeatureFlow({ feature, targetId: target.id, amount: maximum, maximum });
+        setToolFlow(null);
         setFeedback(`Choose 1 to ${maximum} points to restore to ${target.name}. One pool point restores one Hit Point.`);
         return;
       }
@@ -465,7 +472,18 @@ export default function Home() {
       setAttackFlow(null);
       setSpellFlow(null);
       setFeatureFlow(null);
+      setToolFlow(null);
       setFeedback(result.summary);
+      return;
+    }
+    const toolRule = toolRuleForAction(character, action.id);
+    if (toolRule) {
+      setChoiceMode(null);
+      setAttackFlow(null);
+      setSpellFlow(null);
+      setFeatureFlow(null);
+      setToolFlow({ rule: toolRule });
+      setFeedback(`Choose which ability applies to this ${toolRule.name} check. ADaM will add tool proficiency automatically when the character has it.`);
       return;
     }
     let next = consumeAction(action, encounter);
@@ -482,6 +500,7 @@ export default function Home() {
     setEncounter(next);
     setChoiceMode(null);
     setFeatureFlow(null);
+    setToolFlow(null);
     const targetCopy = action.targeting?.mode === "single" && targetAnalysis ? ` against ${targetAnalysis.target.name}` : "";
     const tacticalCopy = action.id === "dash"
       ? ` Your available movement is now ${next.turn.movementRemaining} feet and may be split around other choices.`
@@ -497,6 +516,7 @@ export default function Home() {
     setAttackFlow({ attack, phase: "target" });
     setSpellFlow(null);
     setFeatureFlow(null);
+    setToolFlow(null);
     setFeedback(`${attack.name} selected. Choose one of the highlighted enemy targets on the tactical map.`);
   }
 
@@ -507,6 +527,16 @@ export default function Home() {
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter);
     setFeatureFlow(null);
+    setFeedback(result.summary);
+  }
+
+  function chooseToolAbility(ability: AbilityName) {
+    if (!toolFlow) return;
+    const result = executeToolCheck(encounter, toolFlow.rule, ability);
+    if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
+    setEncounter(result.encounter);
+    setLastRoll(result.roll);
+    setToolFlow(null);
     setFeedback(result.summary);
   }
 
@@ -545,6 +575,7 @@ export default function Home() {
   function chooseSpell(spell: CharacterSpell) {
     const availability = validateSpellAvailability(encounter, spell);
     if (!availability.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : availability.reason ?? "That spell is not available."); return; }
+    setToolFlow(null);
     const resources = spellCastingResourceOptions(encounter, spell);
     if (resources.freeCast && resources.spellSlot) {
       setSpellFlow({ spell, phase: "resource" });
@@ -556,6 +587,13 @@ export default function Home() {
 
   function continueSpellChoice(spell: CharacterSpell, castingResource?: SpellCastingResourceChoice) {
     const hasOtherFriendlyTarget = encounter.combatants.some((combatant) => combatant.id !== activeCombatant.id && combatant.side === activeCombatant.side && combatant.hitPoints.current > 0);
+    if (spell.utilityChoices?.length) {
+      setSpellFlow({ spell, phase: "option", castingResource });
+      setAttackFlow(null);
+      setToolFlow(null);
+      setFeedback(`Choose the ${spell.name} effect you want to create.`);
+      return;
+    }
     if (spell.target === "point") {
       setSpellFlow({ spell, phase: "point", castingResource });
       setAttackFlow(null);
@@ -583,6 +621,14 @@ export default function Home() {
   function chooseSpellCastingResource(castingResource: SpellCastingResourceChoice) {
     if (!spellFlow || spellFlow.phase !== "resource") return;
     continueSpellChoice(spellFlow.spell, castingResource);
+  }
+
+  function chooseUtilitySpellChoice(utilityChoiceId: string) {
+    if (!spellFlow || spellFlow.phase !== "option") return;
+    const choice = spellFlow.spell.utilityChoices?.find((candidate) => candidate.id === utilityChoiceId);
+    if (!choice) return;
+    setSpellFlow({ ...spellFlow, phase: "point", utilityChoiceId });
+    setFeedback(`${choice.name} selected. Choose a point within ${spellFlow.spell.rangeFeet} feet on the tactical map.`);
   }
 
   function rollSelectedSpellAttack() {
@@ -618,7 +664,7 @@ export default function Home() {
     event.preventDefault();
     const setup: ScenarioSetup = { prompt: setupMode === "guided" ? "" : scenarioPrompt, environment, objective, difficulty };
     const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
-    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
+    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
   }
 
   function loadTemplate(template: ScenarioTemplate) {
@@ -627,7 +673,7 @@ export default function Home() {
     setObjective(template.setup.objective);
     setDifficulty(template.setup.difficulty);
     const next = generateScriptedScenario(template.setup);
-    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
+    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
   }
 
   function saveTemplate() {
@@ -654,7 +700,7 @@ export default function Home() {
     if (!initiativeReady) { setFeedback("Finish rolling initiative before interacting with the map."); return; }
     if (activeCombatant.side !== "player") { setFeedback("ADaM controls targeting and movement during enemy turns."); return; }
     if (spellFlow?.phase === "point") {
-      const result = executePointSpell(encounter, spellFlow.spell, [{ x, y }]);
+      const result = executePointSpell(encounter, spellFlow.spell, [{ x, y }], Math.random, spellFlow.utilityChoiceId);
       if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Point disallowed." : result.reason); return; }
       setEncounter(result.encounter);
       if (result.damageRoll) setLastRoll(result.damageRoll);
@@ -859,7 +905,10 @@ export default function Home() {
           <div className="target-count"><strong>{legalSpellTargetIds.size}</strong><small>legal targets</small></div>
         </section>}
         {initiativeReady && spellFlow?.phase === "point" && <section className="roll-coach target-coach" aria-live="polite">
-          <div><span>Point spell · Choose location</span><h3>{spellFlow.spell.name}</h3><p>Choose a map square within {spellFlow.spell.rangeFeet} feet and line of sight.</p></div>
+          <div><span>Point spell · Choose location</span><h3>{spellFlow.spell.name}</h3><p>Choose a map square within {spellFlow.spell.rangeFeet} feet and line of sight.{spellFlow.utilityChoiceId ? ` ${spellFlow.spell.utilityChoices?.find((choice) => choice.id === spellFlow.utilityChoiceId)?.description ?? ""}` : ""}</p></div>
+        </section>}
+        {initiativeReady && spellFlow?.phase === "option" && <section className="roll-coach response-coach utility-choice-coach" aria-live="polite">
+          <div><span>Spell selected · Choose effect</span><h3>{spellFlow.spell.name}</h3><p>Select the effect first, then choose its location on the tactical map.</p><div className="response-actions">{spellFlow.spell.utilityChoices?.map((choice) => <button type="button" key={choice.id} onClick={() => chooseUtilitySpellChoice(choice.id)}><small>Spell effect</small><strong>{choice.name}</strong><em>{choice.description}</em></button>)}</div></div>
         </section>}
         {initiativeReady && spellFlow?.phase === "resource" && <section className="roll-coach target-coach" aria-live="polite">
           <div><span>Spell selected · Choose resource</span><h3>{spellFlow.spell.name}</h3><p>Use the once-per-Long-Rest Magic Initiate cast or preserve it and spend a level 1 spell slot.</p></div>
@@ -885,7 +934,7 @@ export default function Home() {
         </section>}
 
         <section className="tactical-map-panel">
-          <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span></div></div>
+          <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span><span className="legend-flame">Flame</span></div></div>
           <div className={`target-panel ${targetAnalysis ? "has-target" : ""}`}>
             {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} · AC {effectiveArmorClass(encounter, targetAnalysis.target.id)} · {targetAnalysis.target.side === "enemy" ? enemyHealthLabel(targetAnalysis.target, experienceMode) : `${targetAnalysis.target.hitPoints.current}/${targetAnalysis.target.hitPoints.maximum} HP`}</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" disabled={activeCombatant.side !== "player"} onClick={() => { setEncounter((state) => selectTarget(state, null)); setAttackFlow(attackFlow ? { ...attackFlow, phase: "target", targetId: undefined } : null); setSpellFlow(spellFlow ? { ...spellFlow, phase: "target", targetId: undefined } : null); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>{attackFlow?.phase === "target" ? `Targeting · ${attackFlow.attack.name}` : spellFlow?.phase === "target" ? `Targeting · ${spellFlow.spell.name}` : "Choose an action"}</span><strong>{attackFlow?.phase === "target" || spellFlow?.phase === "target" ? "Select a highlighted creature" : "Choose an attack or spell first"}</strong><small>{attackFlow?.phase === "target" ? "Gold rings indicate targets within this weapon’s range and line of sight." : spellFlow?.phase === "target" ? "Gold rings indicate legal targets for the selected spell." : "The selected option determines which targets ADaM highlights."}</small></div>}
           </div>
@@ -895,6 +944,7 @@ export default function Home() {
                 const x = index % encounter.map.width;
                 const y = Math.floor(index / encounter.map.width);
                 const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
+                const pointEffect = encounter.effects.find((effect) => effect.points?.some((point) => point.x === x && point.y === y));
                 const occupant = encounter.combatants.find((combatant) => combatant.position.x === x && combatant.position.y === y);
                 const movementCell = legalMovementByCell.get(`${x},${y}`);
                 const reachable = !attackFlow && !spellFlow && initiativeReady && activeCombatant.side === "player" && !occupant && Boolean(movementCell);
@@ -906,7 +956,8 @@ export default function Home() {
                 const targetOptionName = attackFlow?.attack.name ?? spellFlow?.spell.name;
                 return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""} ${targeted ? "targeted" : ""} ${legalOptionTarget ? "legal-target" : targetCandidate ? "illegal-target" : ""}`} onClick={() => handleGridInteraction(x, y, occupant?.id)} aria-pressed={targeted} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${movementCell ? `. Reachable for ${movementCell.cost} feet.` : ""}${occupant ? `. Occupied by ${occupant.name}. ${legalOptionTarget ? `Legal target for ${targetOptionName}.` : "Select as target."}` : ""}`} title={`${coordinate} · ${occupant ? legalOptionTarget ? `${occupant.name}: legal target` : targetValidation?.reason ?? `Select ${occupant.name}` : movementCell ? `${movementCell.cost} ft. by legal path` : terrain?.label ?? "Open ground"}`}>
                   <small>{coordinate}</small>
-                  {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : "◆"}</span>}
+                  {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : terrain.kind === "flame" ? terrain.flame?.lit ? "♨" : "○" : "◆"}</span>}
+                  {pointEffect && <span className={`point-effect-mark point-effect-${pointEffect.pointEffect?.type ?? "effect"}`} aria-hidden="true">{pointEffect.pointEffect?.type === "illusion" ? pointEffect.pointEffect.mode === "image" ? "◇" : "◌" : pointEffect.pointEffect?.type === "utility-marker" ? pointEffect.pointEffect.kind === "bloom" ? "✦" : "☁" : "•"}</span>}
                   {occupant && <span className={`token ${occupant.side} ${occupant.hitPoints.current <= 0 ? occupant.side === "player" && !occupant.stabilized && occupant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.hitPoints.current <= 0 ? occupant.stabilized ? "S" : "0" : occupant.name.slice(0, 2).toUpperCase()}</span>}
                 </button>;
               })}
@@ -939,6 +990,7 @@ export default function Home() {
           {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose weapon</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{playerCombatant.attacks.map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : spell.freeCastResourceName ? `Level ${spell.level} · free use or slot` : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : spell.target === "area" && spell.area ? `${spell.area.sizeFeet} ft. ${spell.area.shape}` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           {featureFlow && (() => { const target = encounter.combatants.find((combatant) => combatant.id === featureFlow.targetId)!; return <form className="choice-panel feature-choice" onSubmit={confirmFeatureChoice}><div className="choice-heading"><div><span>Choose healing amount</span><strong>{featureFlow.feature.name}</strong></div><button type="button" onClick={() => setFeatureFlow(null)}>Cancel</button></div><div className="feature-choice-form"><div><span>Target</span><strong>{target.name}</strong><small>{target.hitPoints.current}/{target.hitPoints.maximum} Hit Points</small></div><label htmlFor="feature-healing-amount">Pool points to spend<input id="feature-healing-amount" type="number" min="1" max={featureFlow.maximum} step="1" value={featureFlow.amount} onChange={(event) => setFeatureFlow({ ...featureFlow, amount: Number(event.target.value) })} /></label><button type="submit">Spend {featureFlow.amount} · Restore {featureFlow.amount} HP</button></div></form>; })()}
+          {toolFlow && toolFlow.rule.resolution.type === "tool-check" && <div className="choice-panel"><div className="choice-heading"><div><span>Choose check ability</span><strong>{toolFlow.rule.name}</strong></div><button type="button" onClick={() => setToolFlow(null)}>Cancel</button></div><div className="choice-grid">{abilityLabels.filter((ability) => toolFlow.rule.resolution.type === "tool-check" && toolFlow.rule.resolution.allowedAbilities.includes(ability.id)).map((ability) => <button type="button" key={ability.id} onClick={() => chooseToolAbility(ability.id)}><span>Ability check</span><strong>{ability.label}</strong><small>{playerCombatant.inventory.find((item) => item.id === toolFlow.rule.id)?.tool?.proficient ? `Ability modifier + ${playerCombatant.proficiencyBonus} proficiency` : "Ability modifier only"}</small></button>)}</div></div>}
           <div className="area-effect-note"><span>Area effects</span><p>Cones and cubes now find every creature in the aimed area, resolve one saving throw per target, apply shared damage, and handle forced movement.</p></div>
           <div className="turn-controls"><div><span>Turn control</span><p>{activeCombatant.side === "player" ? "End your turn and let ADaM advance initiative." : "ADaM controls and advances enemy turns automatically."}</p></div><button type="button" disabled={activeCombatant.side !== "player" || outcome !== "active"} onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>{activeCombatant.side === "player" ? "End turn" : "Enemy acting"}</button></div>
           <form className="command-bar" onSubmit={submitCommand}><label htmlFor="command">Or describe your action</label><div><input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Example: I cast a spell at the scout" /><button>Submit</button></div></form>

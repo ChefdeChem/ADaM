@@ -5,8 +5,9 @@ const normalize = (value: string) => value.trim().toLowerCase();
 
 export function combatInventoryForCharacter(character: Character): CombatInventoryItem[] {
   const equipment = character.profile?.equipment ?? [];
+  const toolProficiencies = new Set((character.profile?.proficiencies?.tools ?? []).map(normalize));
   return (character.equipmentRules ?? []).flatMap((rule) => {
-    if (rule.resolution.type !== "weapon" && rule.resolution.type !== "ammunition" && rule.resolution.type !== "spellcasting-focus" && rule.resolution.type !== "light-source") return [];
+    if (rule.resolution.type !== "weapon" && rule.resolution.type !== "ammunition" && rule.resolution.type !== "spellcasting-focus" && rule.resolution.type !== "light-source" && rule.resolution.type !== "tool-check") return [];
     const carried = equipment.find((item) => normalize(item.name) === normalize(rule.name));
     const maximum = Math.max(0, Math.floor(carried?.quantity ?? 0));
     return [{
@@ -24,6 +25,11 @@ export function combatInventoryForCharacter(character: Character): CombatInvento
         hoodedDimLightFeet: rule.resolution.hoodedDimLightFeet,
         fuelMinutesRemaining: rule.resolution.fuelMinutes,
         adjustmentCost: rule.resolution.adjustmentCost,
+      } : undefined,
+      tool: rule.resolution.type === "tool-check" ? {
+        purpose: rule.resolution.purpose,
+        proficient: toolProficiencies.has(normalize(rule.name)),
+        allowedAbilities: [...rule.resolution.allowedAbilities],
       } : undefined,
     }];
   });

@@ -94,6 +94,9 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   if (spell.effect?.rollBonus) components.push("ability-check", "dice-roll", "trigger", "duration");
   if (spell.pointEffect?.type === "lights") components.push("light", "movement", "duration");
   if (spell.pointEffect?.type === "damaging-hazard") components.push("targeting", "saving-throw", "damage-roll", "recurring-effect", "duration");
+  if (spell.utilityChoices?.some((choice) => choice.resolution.type === "illusion")) components.push("illusion", "ability-check", "duration");
+  if (spell.utilityChoices?.some((choice) => choice.resolution.type === "flame")) components.push("environment", "light");
+  if (spell.utilityChoices?.some((choice) => choice.resolution.type === "weather-sensor" || choice.resolution.type === "bloom" || choice.resolution.type === "sensory-effect")) components.push("environment");
   if (spell.freeCastResourceName) components.push("resource-spend", "resource-recovery");
   if (spell.trigger) components.push("trigger", "action-economy");
   if (spell.triggeredDamage) components.push("damage-roll");
@@ -226,6 +229,8 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
             ? ["inventory", "reference"]
           : equipmentRule?.resolution.type === "light-source"
             ? ["inventory", "action-economy", "light", "duration"]
+          : equipmentRule?.resolution.type === "tool-check"
+            ? ["inventory", "action-economy", "tool", "ability-check", "proficiency"]
           : ["inventory"];
       return entry(
         character,

@@ -42,7 +42,7 @@ function player(state) {
 test("the prior ten-mechanic slice remains executable at the current milestone", () => {
   const reports = BUILT_IN_CHARACTERS.map((character) => buildCharacterMechanicCoverage(character));
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
-  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 95);
+  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 99);
   const expected = [
     ["cleira-oestwilde", "spell", "detect-magic", "srd-5.1"],
     ["cleira-oestwilde", "spell", "thunderwave", "srd-5.1"],
