@@ -6,7 +6,7 @@ const normalize = (value: string) => value.trim().toLowerCase();
 export function combatInventoryForCharacter(character: Character): CombatInventoryItem[] {
   const equipment = character.profile?.equipment ?? [];
   return (character.equipmentRules ?? []).flatMap((rule) => {
-    if (rule.resolution.type !== "weapon" && rule.resolution.type !== "ammunition") return [];
+    if (rule.resolution.type !== "weapon" && rule.resolution.type !== "ammunition" && rule.resolution.type !== "spellcasting-focus" && rule.resolution.type !== "light-source") return [];
     const carried = equipment.find((item) => normalize(item.name) === normalize(rule.name));
     const maximum = Math.max(0, Math.floor(carried?.quantity ?? 0));
     return [{
@@ -14,8 +14,17 @@ export function combatInventoryForCharacter(character: Character): CombatInvento
       name: rule.name,
       current: rule.equipped ? maximum : 0,
       maximum,
-      attackIds: [...rule.resolution.attackIds],
-      expendOnAttackIds: [...(rule.resolution.expendOnAttackIds ?? [])],
+      attackIds: rule.resolution.type === "weapon" || rule.resolution.type === "ammunition" ? [...rule.resolution.attackIds] : [],
+      expendOnAttackIds: rule.resolution.type === "weapon" || rule.resolution.type === "ammunition" ? [...(rule.resolution.expendOnAttackIds ?? [])] : [],
+      spellcastingFocusFor: rule.resolution.type === "spellcasting-focus" ? rule.resolution.spellcastingClass : undefined,
+      lightSource: rule.resolution.type === "light-source" ? {
+        mode: "off" as const,
+        brightLightFeet: rule.resolution.brightLightFeet,
+        dimLightFeet: rule.resolution.dimLightFeet,
+        hoodedDimLightFeet: rule.resolution.hoodedDimLightFeet,
+        fuelMinutesRemaining: rule.resolution.fuelMinutes,
+        adjustmentCost: rule.resolution.adjustmentCost,
+      } : undefined,
     }];
   });
 }

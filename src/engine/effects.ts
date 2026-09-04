@@ -22,7 +22,10 @@ export type EffectInput = {
   endsWhenSourceHarmsTarget?: boolean;
   sense?: ActiveEffect["sense"];
   senseMagic?: ActiveEffect["senseMagic"];
-  senseMagic?: ActiveEffect["senseMagic"];
+  rollBonus?: ActiveEffect["rollBonus"];
+  consumeOnRollBonus?: boolean;
+  points?: ActiveEffect["points"];
+  pointEffect?: ActiveEffect["pointEffect"];
   replaceExisting?: boolean;
 };
 
@@ -83,7 +86,10 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     endsWhenSourceHarmsTarget: input.endsWhenSourceHarmsTarget,
     sense: input.sense,
     senseMagic: input.senseMagic,
-    senseMagic: input.senseMagic,
+    rollBonus: input.rollBonus,
+    consumeOnRollBonus: input.consumeOnRollBonus,
+    points: input.points,
+    pointEffect: input.pointEffect,
   };
 
   next = {
@@ -259,11 +265,21 @@ export function savingThrowRollMode(encounter: EncounterState, combatantId: stri
 
 export function abilityCheckRollMode(encounter: EncounterState, combatantId: string, check: string, situationalMode: RollMode = "normal"): RollMode {
   const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  const hasEffectAdvantage = effectsForCombatant(encounter, combatantId).some((effect) => effectHasStarted(encounter, effect)
+    && effect.modifiers.abilityCheckAdvantages?.some((candidate) => candidate.toLowerCase() === check.toLowerCase()));
   const hasDisadvantage = situationalMode === "disadvantage" || Boolean(combatant?.abilityCheckDisadvantages?.some((candidate) => candidate.toLowerCase() === check.toLowerCase()));
-  if (situationalMode === "advantage" && hasDisadvantage) return "normal";
-  if (situationalMode === "advantage") return "advantage";
+  const hasAdvantage = situationalMode === "advantage" || hasEffectAdvantage;
+  if (hasAdvantage && hasDisadvantage) return "normal";
+  if (hasAdvantage) return "advantage";
   if (hasDisadvantage) return "disadvantage";
   return "normal";
+}
+
+export function effectiveSize(encounter: EncounterState, combatantId: string): "small" | "medium" | "large" {
+  const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  return effectsForCombatant(encounter, combatantId).some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.size === "large")
+    ? "large"
+    : combatant?.size ?? "medium";
 }
 
 export function hasBonusActionDash(encounter: EncounterState, combatantId: string): boolean {

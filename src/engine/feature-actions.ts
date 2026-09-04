@@ -59,6 +59,19 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
     if (!targetId) return { legal: false, reason: "Select a creature to set the area's direction." };
     return validateAreaAim(encounter, active.id, targetId, feature.resolution.area);
   }
+  if (feature.resolution.type === "grant-roll-bonus") {
+    const target = encounter.combatants.find((combatant) => combatant.id === options.targetCombatantId);
+    if (!target) return { legal: false, reason: `Choose a creature to receive ${feature.name}.` };
+    if (target.side !== active.side) return { legal: false, reason: `${feature.name} requires a friendly target.` };
+    if (feature.resolution.excludesSelf && target.id === active.id) return { legal: false, reason: `${feature.name} must target another creature.` };
+    const distanceFeet = Math.max(Math.abs(active.position.x - target.position.x), Math.abs(active.position.y - target.position.y)) * 5;
+    if (distanceFeet > feature.resolution.rangeFeet) return { legal: false, reason: `${target.name} is outside ${feature.name}'s ${feature.resolution.rangeFeet}-foot range.` };
+    if (feature.resolution.requiresHearing && target.conditions.some((condition) => condition.toLowerCase() === "deafened")) return { legal: false, reason: `${target.name} cannot hear ${feature.name}.` };
+  }
+  if (feature.resolution.type === "activate-large-form") {
+    if (active.level < feature.resolution.minimumLevel) return { legal: false, reason: `${feature.name} requires level ${feature.resolution.minimumLevel}.` };
+    if (active.size === "large" || encounter.effects.some((effect) => effect.sourceCombatantId === active.id && effect.modifiers.size === "large")) return { legal: false, reason: `${active.name} is already Large.` };
+  }
   if (feature.resolution.type === "activate-effect" && encounter.effects.some((effect) =>
     effect.name === feature.resolution.effect.name
     && effect.sourceCombatantId === active.id
@@ -153,6 +166,37 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
         : undefined,
     });
     const summary = `${active.name} uses ${feature.name}; ${feature.resolution.effect.name} is active until the end of their next turn.`;
+    return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
+  }
+
+  if (feature.resolution.type === "grant-roll-bonus") {
+    const targetId = options.targetCombatantId!;
+    const target = next.combatants.find((combatant) => combatant.id === targetId)!;
+    next = applyEffect({ ...next, turn }, {
+      name: feature.name,
+      description: feature.description,
+      sourceCombatantId: active.id,
+      targetCombatantId: targetId,
+      durationRounds: feature.resolution.durationRounds,
+      rollBonus: { die: feature.resolution.die, appliesTo: feature.resolution.appliesTo },
+      consumeOnRollBonus: true,
+      replaceExisting: true,
+    });
+    const summary = `${active.name} grants ${target.name} ${feature.name} (${feature.resolution.die}) for ${feature.resolution.durationRounds} rounds.`;
+    return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
+  }
+
+  if (feature.resolution.type === "activate-large-form") {
+    next = applyEffect({ ...next, turn }, {
+      name: feature.name,
+      description: feature.description,
+      sourceCombatantId: active.id,
+      targetCombatantId: active.id,
+      durationRounds: feature.resolution.durationRounds,
+      modifiers: { size: "large", speedFeet: feature.resolution.speedBonusFeet, abilityCheckAdvantages: ["strength"] },
+      replaceExisting: true,
+    });
+    const summary = `${active.name} uses ${feature.name}, becomes Large, gains advantage on Strength checks, and gains ${feature.resolution.speedBonusFeet} feet of Speed.`;
     return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
 

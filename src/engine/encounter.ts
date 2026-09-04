@@ -6,6 +6,7 @@ import { rollD20, type D20Result } from "./dice";
 import { effectiveSpeed, expireEffectsAtTurnEnd, expireEffectsAtTurnStart } from "./effects";
 import { availableCharacterAttacks, combatInventoryForCharacter } from "./inventory";
 import { resolveTurnStartEffects } from "./turn-effects";
+import { resolvePointHazardsForCombatant } from "./point-effects";
 
 const abilityModifier=(score:number)=>Math.floor((score-10)/2);
 const abilities:AbilityName[]=["strength","dexterity","constitution","intelligence","wisdom","charisma"];
@@ -87,6 +88,8 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       name: profile.name,
       side: "enemy" as const,
       proficiencyBonus: 0,
+      level: 1,
+      size: "medium" as const,
       baseArmorClass: profile.armorClass,
       baseSpeedFeet: profile.speedFeet,
       hitPoints: { current: profile.hitPoints, maximum: profile.hitPoints },
@@ -105,6 +108,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       resources: [],
       inventory: [],
       triggeredFeatures: [],
+      abilityCheckRerolls: [],
       initiative: 0,
       initiativeModifier: profile.initiativeModifier,
       initiativeRolled: false,
@@ -131,6 +135,8 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         name: character.name,
         side: "player",
         proficiencyBonus: character.proficiencyBonus,
+        level: character.level,
+        size: "medium",
         baseArmorClass: characterBaseArmorClass(character),
         baseSpeedFeet: characterBaseSpeed(character),
         hitPoints: { ...character.hitPoints },
@@ -153,6 +159,16 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         resources: character.resources.map((resource) => ({ ...resource })),
         inventory: characterInventory,
         triggeredFeatures: (character.triggeredFeatures ?? []).map((feature) => ({ ...feature, provenance: { ...feature.provenance }, resolution: { ...feature.resolution } })),
+        weaponDamageRerollFeatureId: (character.passiveFeatures ?? []).find((feature) => feature.resolution.type === "weapon-damage-reroll")?.id,
+        abilityCheckRerolls: (character.passiveFeatures ?? []).flatMap((feature) => feature.resolution.type === "ability-check-reroll"
+          ? [{ featureId: feature.id, skills: [...feature.resolution.skills], resourceName: feature.resolution.resourceName, spendOnlyWhenFailureBecomesSuccess: feature.resolution.spendOnlyWhenFailureBecomesSuccess }]
+          : []),
+        restAlternative: (() => {
+          const feature = (character.passiveFeatures ?? []).find((candidate) => candidate.resolution.type === "rest-alternative");
+          return feature?.resolution.type === "rest-alternative"
+            ? { sleepRequired: feature.resolution.sleepRequired, meditationHours: feature.resolution.meditationHours, semiconscious: feature.resolution.semiconscious }
+            : undefined;
+        })(),
         initiative: 0,
         initiativeModifier: abilityModifier(character.abilities.dexterity),
         initiativeRolled: false,
@@ -171,7 +187,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
     ],
     effects: [],
     map: scenario.grid,
-    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false },
+    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false, usedFeatureIds: [] },
     pendingResponse: null,
     log: ["Encounter started. The collapsed gate is thirty feet ahead."],
   };
@@ -206,7 +222,8 @@ export function rollCombatantInitiative(encounter:EncounterState,combatantId:str
 
 export function endTurn(encounter: EncounterState, random = Math.random): EncounterState {
   const endingCombatant = encounter.combatants[encounter.activeIndex];
-  const afterEndEffects = endingCombatant ? expireEffectsAtTurnEnd(encounter, encounter.round, endingCombatant.id) : encounter;
+  const afterHazards = endingCombatant ? resolvePointHazardsForCombatant(encounter, endingCombatant.id, random) : encounter;
+  const afterEndEffects = endingCombatant ? expireEffectsAtTurnEnd(afterHazards, encounter.round, endingCombatant.id) : afterHazards;
   const eligible = (combatant: EncounterState["combatants"][number]) => combatant.side === "enemy"
     ? combatant.hitPoints.current > 0
     : combatant.hitPoints.current > 0 || (!combatant.stabilized && combatant.deathSaves.failures < 3);
@@ -226,7 +243,7 @@ export function endTurn(encounter: EncounterState, random = Math.random): Encoun
     round,
     activeIndex: nextIndex,
     selectedTargetId: null,
-    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: nextCombatant.hitPoints.current > 0 ? nextCombatant.baseSpeedFeet : 0, disengaged: false },
+    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: nextCombatant.hitPoints.current > 0 ? nextCombatant.baseSpeedFeet : 0, disengaged: false, usedFeatureIds: [] },
     log: [`Turn passed to ${nextCombatant.name}.`, ...afterEndEffects.log],
   };
   const expired = expireEffectsAtTurnStart(advanced, round, nextCombatant.id);

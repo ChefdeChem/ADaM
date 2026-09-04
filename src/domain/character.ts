@@ -38,7 +38,7 @@ export type CharacterSpell = {
   level: number;
   castingTime: "action" | "bonus-action" | "reaction";
   rangeFeet: number;
-  target: "self" | "single" | "self-or-single" | "area";
+  target: "self" | "single" | "self-or-single" | "area" | "point";
   targetSide?: "friendly" | "hostile" | "any";
   requiresLineOfSight: boolean;
   attackBonus?: number;
@@ -86,7 +86,12 @@ export type CharacterSpell = {
     preventsHarmingSource?: boolean;
     endsWhenSourceHarmsTarget?: boolean;
     senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
+    rollBonus?: { die: "1d4" | "1d6"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
+    consumeOnRollBonus?: boolean;
   };
+  pointEffect?:
+    | { type: "lights"; maximumPoints: number; dimLightFeet: number; movementFeet: number }
+    | { type: "damaging-hazard"; sizeFeet: number; damage: string; save: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" } };
 };
 
 export type CharacterPassiveFeature = {
@@ -98,7 +103,10 @@ export type CharacterPassiveFeature = {
     | { type: "ancestry-defense"; savingThrowAdvantageAgainstConditions: string[]; conditionImmunities: string[] }
     | { type: "unarmored-defense"; abilityModifiers: ["dexterity", "constitution"]; allowsShield: boolean }
     | { type: "skill-proficiency"; skill: string; ability: AbilityName }
-    | { type: "free-spell-cast"; spellId: string; resourceName: string };
+    | { type: "free-spell-cast"; spellId: string; resourceName: string }
+    | { type: "rest-alternative"; sleepRequired: false; meditationHours: number; semiconscious: true }
+    | { type: "weapon-damage-reroll"; oncePerTurn: true }
+    | { type: "ability-check-reroll"; skills: string[]; resourceName: string; spendOnlyWhenFailureBecomesSuccess: true };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;
 };
@@ -131,6 +139,18 @@ export type CharacterEquipmentRule = {
         type: "ammunition";
         attackIds: string[];
         expendOnAttackIds: string[];
+      }
+    | {
+        type: "spellcasting-focus";
+        spellcastingClass: string;
+      }
+    | {
+        type: "light-source";
+        brightLightFeet: number;
+        dimLightFeet: number;
+        hoodedDimLightFeet: number;
+        fuelMinutes: number;
+        adjustmentCost: "action" | "bonus-action";
       };
   provenance: MechanicProvenance;
 };
@@ -172,6 +192,22 @@ export type CharacterFeatureAction = {
         area: NonNullable<CharacterSpell["area"]>;
         save: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" };
         damage: string;
+      }
+    | {
+        type: "grant-roll-bonus";
+        rangeFeet: number;
+        excludesSelf: boolean;
+        requiresHearing: boolean;
+        die: "1d4" | "1d6";
+        appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw">;
+        durationRounds: number;
+      }
+    | {
+        type: "activate-large-form";
+        minimumLevel: number;
+        durationRounds: number;
+        speedBonusFeet: number;
+        strengthCheckAdvantage: true;
       };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;

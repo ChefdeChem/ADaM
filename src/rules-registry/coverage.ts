@@ -91,6 +91,9 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   if (spell.effect?.turnStartDamage) components.push("trigger", "recurring-effect", "damage-roll");
   if (spell.effect?.turnStartSave) components.push("saving-throw", "duration");
   if (spell.effect?.senseMagic) components.push("detection", "range", "duration");
+  if (spell.effect?.rollBonus) components.push("ability-check", "dice-roll", "trigger", "duration");
+  if (spell.pointEffect?.type === "lights") components.push("light", "movement", "duration");
+  if (spell.pointEffect?.type === "damaging-hazard") components.push("targeting", "saving-throw", "damage-roll", "recurring-effect", "duration");
   if (spell.freeCastResourceName) components.push("resource-spend", "resource-recovery");
   if (spell.trigger) components.push("trigger", "action-economy");
   if (spell.triggeredDamage) components.push("damage-roll");
@@ -105,6 +108,7 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
     || spell.effect.turnStartDamage
     || spell.effect.turnStartSave
     || spell.effect.senseMagic
+    || spell.effect.rollBonus
   );
   if (spell.effect && !executableEffect) components.push("reference");
   return [...new Set(components)];
@@ -164,6 +168,10 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
           ? ["action-economy", "resource-spend", "resource-recovery", "range", "duration", "creature-type", "detection"]
         : executableAction?.resolution.type === "area-saving-throw"
           ? ["action-economy", "targeting", "range", "saving-throw", "damage-roll", "resource-spend", "resource-recovery", ...(executableAction.resolution.area.pushFeetOnFailedSave ? ["movement" as const] : [])]
+        : executableAction?.resolution.type === "grant-roll-bonus"
+          ? ["action-economy", "targeting", "range", "dice-roll", "trigger", "duration", "resource-spend", "resource-recovery"]
+        : executableAction?.resolution.type === "activate-large-form"
+          ? ["action-economy", "size", "advantage", "movement", "duration", "resource-spend", "resource-recovery"]
         : executableTrigger?.resolution.type === "drop-to-one-hit-point"
           ? ["trigger", "replacement-effect", "resource-spend", "resource-recovery"]
           : executableTrigger?.resolution.type === "reduce-damage-by-roll"
@@ -180,6 +188,12 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
             ? ["ability-check", "proficiency"]
           : executablePassive?.resolution.type === "free-spell-cast"
             ? ["resource-spend", "resource-recovery"]
+          : executablePassive?.resolution.type === "rest-alternative"
+            ? ["rest-alternative"]
+          : executablePassive?.resolution.type === "weapon-damage-reroll"
+            ? ["trigger", "damage-roll", "dice-roll"]
+          : executablePassive?.resolution.type === "ability-check-reroll"
+            ? ["ability-check", "trigger", "dice-roll", "resource-spend", "resource-recovery"]
           : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "slow")
             ? ["trigger", "damage-roll", "movement", "duration"]
           : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "sap")
@@ -208,6 +222,10 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
           ? ["inventory", "armor-calculation", "proficiency"]
           : equipmentRule?.resolution.type === "weapon" || equipmentRule?.resolution.type === "ammunition"
             ? ["inventory", "targeting", "range", "attack-roll", "damage-roll", ...(equipmentRule.resolution.expendOnAttackIds?.length ? ["resource-spend" as const] : [])]
+          : equipmentRule?.resolution.type === "spellcasting-focus"
+            ? ["inventory", "reference"]
+          : equipmentRule?.resolution.type === "light-source"
+            ? ["inventory", "action-economy", "light", "duration"]
           : ["inventory"];
       return entry(
         character,

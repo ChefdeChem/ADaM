@@ -48,6 +48,9 @@ export type MechanicComponent =
   | "proficiency"
   | "recurring-effect"
   | "inventory"
+  | "light"
+  | "size"
+  | "rest-alternative"
   | "reference";
 
 export type RuleRegistryEntry = {

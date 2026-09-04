@@ -138,7 +138,7 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
 
 export type DamageResolution=
   |{legal:false;reason:string;encounter:EncounterState}
-  |{legal:true;encounter:EncounterState;roll:DamageRoll;damageApplied:number;summary:string};
+  |{legal:true;encounter:EncounterState;roll:DamageRoll;alternateRoll?:DamageRoll;damageApplied:number;summary:string};
 
 export function applyDamageToCombatant(encounter:EncounterState,targetId:string,amount:number,{critical=false,allowDamageReduction=true,damageType,sourceCombatantId}:{critical?:boolean;allowDamageReduction?:boolean;damageType?:string;sourceCombatantId?:string}={}):EncounterState{
   if(sourceCombatantId&&amount>0){
@@ -215,18 +215,28 @@ function attackSourceId(encounter:EncounterState,attack:CharacterAttack,targetId
   return encounter.combatants.find((combatant)=>combatant.id!==targetId&&combatant.attacks.some((candidate)=>candidate.id===attack.id))?.id;
 }
 
-export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAttack,targetId:string,critical=false,random=Math.random,sourceCombatantId=attackSourceId(encounter,attack,targetId)):DamageResolution{
-  const roll=rollDamage(attack.damage,{critical,random});
+export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAttack,targetId:string,critical=false,random=Math.random,sourceCombatantId=attackSourceId(encounter,attack,targetId),options:{weaponDamageRerollChoice?:"first"|"second"|"higher"|"skip"}={}):DamageResolution{
+  let roll=rollDamage(attack.damage,{critical,random});
   if(!roll)return{legal:false,reason:`ADaM could not read the damage formula “${attack.damage}”.`,encounter};
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return{legal:false,reason:"The target is no longer available.",encounter};
+  const sourceBefore=sourceCombatantId?encounter.combatants.find((combatant)=>combatant.id===sourceCombatantId):undefined;
+  const featureId=sourceBefore?.weaponDamageRerollFeatureId;
+  const canReroll=Boolean(featureId&&sourceBefore?.attacks.some((candidate)=>candidate.id===attack.id)&&!encounter.turn.usedFeatureIds.includes(featureId));
+  let alternateRoll:DamageRoll|undefined;
+  if(canReroll&&options.weaponDamageRerollChoice&&options.weaponDamageRerollChoice!=="skip"){
+    alternateRoll=rollDamage(attack.damage,{critical,random})??undefined;
+    if(alternateRoll&&(options.weaponDamageRerollChoice==="second"||(options.weaponDamageRerollChoice==="higher"&&alternateRoll.total>roll.total)))roll=alternateRoll;
+    encounter={...encounter,turn:{...encounter.turn,usedFeatureIds:[...encounter.turn.usedFeatureIds,featureId!]}};
+  }
   let damaged=applyDamageToCombatant(encounter,targetId,roll.total,{critical,damageType:roll.formula.damageType,sourceCombatantId});
   const damageApplied=damaged.pendingResponse?.type==="damage-reduction-reaction"
     ?roll.total
     :effectiveDamageAmount(encounter,targetId,roll.total,roll.formula.damageType);
   const dice=`${roll.rolls.join(" + ")}${roll.modifier===0?"":` ${roll.modifier>0?"+":"−"} ${Math.abs(roll.modifier)}`}`;
   const resistanceCopy=damageApplied<roll.total?`; ${damageApplied} applied after resistance`:"";
-  const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType} to ${target.name}${resistanceCopy}.`;
+  const rerollCopy=alternateRoll?` Savage Attacker rolled ${alternateRoll.total} as the alternative.`:"";
+  const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType} to ${target.name}${resistanceCopy}.${rerollCopy}`;
   const source=sourceCombatantId?encounter.combatants.find((combatant)=>combatant.id===sourceCombatantId):undefined;
   const updatedTarget=damaged.combatants.find((combatant)=>combatant.id===targetId);
   if(attack.mastery==="slow"&&source?.side==="player"&&damageApplied>0&&(updatedTarget?.hitPoints.current??0)>0&&!damaged.pendingResponse){
@@ -239,7 +249,7 @@ export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAtt
       expiresAt:{round:nextTurnRound(encounter,source.id),combatantId:source.id,phase:"start"},
     }};
   }
-  return{legal:true,roll,damageApplied,summary,encounter:{...damaged,log:[summary,...damaged.log]}};
+  return{legal:true,roll,alternateRoll,damageApplied,summary,encounter:{...damaged,log:[summary,...damaged.log]}};
 }
 
 export function executeAttackChoice(encounter: EncounterState, attack: CharacterAttack, random = Math.random): OptionResolution {
@@ -282,6 +292,7 @@ export function validateSpellAvailability(encounter: EncounterState, spell: Char
 export function validateSpellChoice(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const availability = validateSpellAvailability(encounter, spell);
   if (!availability.legal) return availability;
+  if (spell.target === "point") return { legal: false, reason: `Choose one or more map points for ${spell.name}.` };
   if (spell.target === "area") {
     if (!spell.area) return { legal: false, reason: `${spell.name} has no registered area.` };
     if (!encounter.selectedTargetId) return { legal: false, reason: "Select a creature to set the area's direction." };

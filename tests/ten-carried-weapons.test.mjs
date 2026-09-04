@@ -32,7 +32,7 @@ function player(state) {
 test("the prior ten carried weapons remain executable", () => {
   const reports = BUILT_IN_CHARACTERS.map((character) => buildCharacterMechanicCoverage(character));
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
-  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 85);
+  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 95);
 
   const expected = [
     ["cleira-oestwilde", "equipment-1-dagger", "srd-5.1"],
@@ -66,7 +66,7 @@ test("encounters copy all ten registered weapon quantities from the character pr
   ];
   for (const [character, quantities] of expectations) {
     const inventory = player(encounterFor(character)).inventory;
-    assert.deepEqual(Object.fromEntries(inventory.map((item) => [item.id, item.current])), quantities);
+    assert.deepEqual(Object.fromEntries(inventory.filter((item) => item.attackIds.length).map((item) => [item.id, item.current])), quantities);
   }
 });
 

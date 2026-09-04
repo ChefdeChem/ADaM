@@ -12,6 +12,7 @@ import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolvePostHitSpellChoice, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { recoverRestResources, type RestType } from "../src/engine/resources";
+import { executePointSpell } from "../src/engine/point-effects";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
 import { importCharacterFile, type ImportResult } from "../src/importers";
@@ -32,7 +33,7 @@ type AttackFlow = null | {
 };
 type SpellFlow = null | {
   spell: CharacterSpell;
-  phase: "resource" | "target" | "attack-roll" | "damage-roll";
+  phase: "resource" | "target" | "point" | "attack-roll" | "damage-roll";
   targetId?: string;
   critical?: boolean;
   castingResource?: SpellCastingResourceChoice;
@@ -530,9 +531,9 @@ export default function Home() {
     else { setAttackFlow(null); setChoiceMode(null); }
   }
 
-  function rollSelectedDamage() {
+  function rollSelectedDamage(useSavageAttacker = false) {
     if (!attackFlow || attackFlow.phase !== "damage-roll" || !attackFlow.targetId || encounter.pendingResponse) return;
-    const result = resolveAttackDamage(encounter, attackFlow.attack, attackFlow.targetId, attackFlow.critical);
+    const result = resolveAttackDamage(encounter, attackFlow.attack, attackFlow.targetId, attackFlow.critical, Math.random, undefined, { weaponDamageRerollChoice: useSavageAttacker ? "higher" : "skip" });
     if (!result.legal) { setFeedback(result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
@@ -555,6 +556,12 @@ export default function Home() {
 
   function continueSpellChoice(spell: CharacterSpell, castingResource?: SpellCastingResourceChoice) {
     const hasOtherFriendlyTarget = encounter.combatants.some((combatant) => combatant.id !== activeCombatant.id && combatant.side === activeCombatant.side && combatant.hitPoints.current > 0);
+    if (spell.target === "point") {
+      setSpellFlow({ spell, phase: "point", castingResource });
+      setAttackFlow(null);
+      setFeedback(`${spell.name} selected. Choose a point on the tactical map.`);
+      return;
+    }
     if (spell.target === "self-or-single" && spell.targetSide === "friendly" && !hasOtherFriendlyTarget) {
       const result = executeSpellChoice({ ...encounter, selectedTargetId: activeCombatant.id }, spell, Math.random, { castingResource });
       if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
@@ -646,6 +653,16 @@ export default function Home() {
   function handleGridInteraction(x: number, y: number, occupantId?: string) {
     if (!initiativeReady) { setFeedback("Finish rolling initiative before interacting with the map."); return; }
     if (activeCombatant.side !== "player") { setFeedback("ADaM controls targeting and movement during enemy turns."); return; }
+    if (spellFlow?.phase === "point") {
+      const result = executePointSpell(encounter, spellFlow.spell, [{ x, y }]);
+      if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Point disallowed." : result.reason); return; }
+      setEncounter(result.encounter);
+      if (result.damageRoll) setLastRoll(result.damageRoll);
+      setSpellFlow(null);
+      setChoiceMode(null);
+      setFeedback(result.summary);
+      return;
+    }
     if (attackFlow?.phase === "target") {
       if (!occupantId) { setFeedback(`Choose a highlighted creature for ${attackFlow.attack.name}.`); return; }
       const validation = validateAttackTarget(encounter, attackFlow.attack, occupantId);
@@ -841,6 +858,9 @@ export default function Home() {
           <div><span>Spell selected · Choose target</span><h3>{spellFlow.spell.name}</h3><p>Targets highlighted in gold are legal for this spell&apos;s range, line of sight, and target type.</p></div>
           <div className="target-count"><strong>{legalSpellTargetIds.size}</strong><small>legal targets</small></div>
         </section>}
+        {initiativeReady && spellFlow?.phase === "point" && <section className="roll-coach target-coach" aria-live="polite">
+          <div><span>Point spell · Choose location</span><h3>{spellFlow.spell.name}</h3><p>Choose a map square within {spellFlow.spell.rangeFeet} feet and line of sight.</p></div>
+        </section>}
         {initiativeReady && spellFlow?.phase === "resource" && <section className="roll-coach target-coach" aria-live="polite">
           <div><span>Spell selected · Choose resource</span><h3>{spellFlow.spell.name}</h3><p>Use the once-per-Long-Rest Magic Initiate cast or preserve it and spend a level 1 spell slot.</p></div>
           <button type="button" onClick={() => chooseSpellCastingResource("free-cast")}><small>Magic Initiate</small><strong>Use free cast</strong></button>
@@ -852,7 +872,8 @@ export default function Home() {
         </section>}
         {attackFlow?.phase === "damage-roll" && targetAnalysis && !encounter.pendingResponse && <section className="roll-coach damage-coach" aria-live="polite">
           <div><span>{attackFlow.critical ? "Critical hit · Double the damage dice" : "Hit confirmed · Click to roll damage"}</span><h3>{attackFlow.attack.damage}</h3><p>Damage is rolled separately from the attack. The total will be applied to {targetAnalysis.target.name}&apos;s hit points.</p></div>
-          <button type="button" onClick={rollSelectedDamage}><small>Roll damage</small><strong>{attackFlow.critical ? `Critical · ${attackFlow.attack.damage}` : attackFlow.attack.damage}</strong></button>
+          <button type="button" onClick={() => rollSelectedDamage(false)}><small>Roll damage</small><strong>{attackFlow.critical ? `Critical · ${attackFlow.attack.damage}` : attackFlow.attack.damage}</strong></button>
+          {playerCombatant.weaponDamageRerollFeatureId && !encounter.turn.usedFeatureIds.includes(playerCombatant.weaponDamageRerollFeatureId) && <button type="button" onClick={() => rollSelectedDamage(true)}><small>Savage Attacker · Once this turn</small><strong>Roll twice · Keep higher</strong></button>}
         </section>}
         {spellFlow?.phase === "attack-roll" && targetAnalysis && spellFlow.spell.attackBonus !== undefined && <section className="roll-coach attack-coach" aria-live="polite">
           <div><span>Spell attack roll · Click to roll</span><h3>{spellFlow.spell.name} vs. {targetAnalysis.target.name}</h3><p>Roll a <strong>d20</strong> {validateSpellChoice(encounter, spellFlow.spell).rollMode === "disadvantage" ? "twice and keep the lower result, then" : "and"} add {spellFlow.spell.attackBonus >= 0 ? "+" : "−"}{Math.abs(spellFlow.spell.attackBonus)}. Meet or beat AC {effectiveArmorClass(encounter, targetAnalysis.target.id) + (targetAnalysis.cover === "half" ? 2 : 0)}.</p></div>

@@ -38,6 +38,7 @@ export type TurnResources = {
   reaction: boolean;
   movementRemaining: number;
   disengaged: boolean;
+  usedFeatureIds: string[];
 };
 
 export type MovementContinuation = {
@@ -67,6 +68,15 @@ export type CombatInventoryItem = {
   maximum: number;
   attackIds: string[];
   expendOnAttackIds: string[];
+  spellcastingFocusFor?: string;
+  lightSource?: {
+    mode: "off" | "bright" | "hooded";
+    brightLightFeet: number;
+    dimLightFeet: number;
+    hoodedDimLightFeet: number;
+    fuelMinutesRemaining: number;
+    adjustmentCost: "action" | "bonus-action";
+  };
 };
 
 export type ReactionOption = {
@@ -175,6 +185,8 @@ export type EffectModifiers = {
   bonusActionDash?: boolean;
   conditionImmunities?: string[];
   preventsHarmingSource?: boolean;
+  abilityCheckAdvantages?: string[];
+  size?: "large";
 };
 
 export type ActiveEffect = {
@@ -197,6 +209,12 @@ export type ActiveEffect = {
   endsWhenSourceHarmsTarget?: boolean;
   sense?: { creatureTypes: string[]; rangeFeet: number; blockedByTotalCover: boolean };
   senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
+  rollBonus?: { die: "1d4" | "1d6"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
+  consumeOnRollBonus?: boolean;
+  points?: Array<{ x: number; y: number }>;
+  pointEffect?:
+    | { type: "lights"; dimLightFeet: number; movementFeet: number }
+    | { type: "damaging-hazard"; sizeFeet: number; damage: string; save: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" } };
 };
 
 export type Combatant = {
@@ -204,6 +222,8 @@ export type Combatant = {
   name: string;
   side: "player" | "enemy";
   proficiencyBonus: number;
+  level: number;
+  size: "small" | "medium" | "large";
   baseArmorClass: number;
   baseSpeedFeet: number;
   hitPoints: { current: number; maximum: number };
@@ -223,6 +243,9 @@ export type Combatant = {
   resources: CombatResource[];
   inventory: CombatInventoryItem[];
   triggeredFeatures: CharacterTriggeredFeature[];
+  weaponDamageRerollFeatureId?: string;
+  abilityCheckRerolls: Array<{ featureId: string; skills: string[]; resourceName: string; spendOnlyWhenFailureBecomesSuccess: true }>;
+  restAlternative?: { sleepRequired: false; meditationHours: number; semiconscious: true };
   initiative: number;
   initiativeModifier: number;
   initiativeRolled: boolean;

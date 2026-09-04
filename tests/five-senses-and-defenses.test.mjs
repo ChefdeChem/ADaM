@@ -39,7 +39,7 @@ function sequence(...values) {
 test("the five mechanics raise executable coverage from 55 to 60 without changing the registry size", () => {
   const reports = BUILT_IN_CHARACTERS.map((character) => buildCharacterMechanicCoverage(character));
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
-  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 85);
+  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 95);
 
   const expected = [
     ["cleira-oestwilde", "charm-person", "srd-5.1"],

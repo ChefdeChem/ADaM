@@ -29,6 +29,22 @@ export const cleiraOestwilde: Character = {
     description: "Proficiency in the Perception skill applies to Perception ability checks.",
     resolution: { type: "skill-proficiency", skill: "Perception", ability: "wisdom" },
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Keen Senses" },
+  }, {
+    id: "trance",
+    name: "Trance",
+    description: "Cleira does not need to sleep and instead meditates semiconsciously for 4 hours each day.",
+    resolution: { type: "rest-alternative", sleepRequired: false, meditationHours: 4, semiconscious: true },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Trance" },
+  }],
+  featureActions: [{
+    id: "bardic-inspiration",
+    name: "Bardic Inspiration",
+    cost: "bonus-action",
+    description: "Grant another creature within 60 feet that can hear Cleira one d6 to add to one ability check, attack roll, or saving throw within 10 minutes.",
+    resourceName: "Bardic Inspiration",
+    resourceCost: 1,
+    resolution: { type: "grant-roll-bonus", rangeFeet: 60, excludesSelf: true, requiresHearing: true, die: "1d6", appliesTo: ["ability-check", "attack-roll", "saving-throw"], durationRounds: 100 },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Bard: Bardic Inspiration" },
   }],
   equipmentRules: [{
     id: "leather-armor",
@@ -51,6 +67,13 @@ export const cleiraOestwilde: Character = {
     description: "A carried rapier enables Cleira's registered melee attack.",
     resolution: { type: "weapon", attackIds: ["rapier"] },
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Weapons: Rapier" },
+  }, {
+    id: "lute",
+    name: "Lute",
+    equipped: true,
+    description: "A musical instrument Cleira can use as a spellcasting focus for bard spells.",
+    resolution: { type: "spellcasting-focus", spellcastingClass: "Bard" },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Bard: Spellcasting Focus" },
   }],
   attacks: [
     { id: "rapier", name: "Rapier", kind: "melee", attackBonus: 4, damage: "1d8 + 2 piercing", normalRangeFeet: 5, description: "Martial, finesse, Vex." },
@@ -59,7 +82,7 @@ export const cleiraOestwilde: Character = {
     { id: "unarmed-strike", name: "Unarmed Strike", kind: "melee", attackBonus: 1, damage: "0 bludgeoning", normalRangeFeet: 5, description: "Fixed damage shown on the source sheet." },
   ],
   spells: [
-    { id: "dancing-lights", name: "Dancing Lights", level: 0, castingTime: "action", rangeFeet: 120, target: "self", requiresLineOfSight: true, concentration: true, durationRounds: 10, description: "Creates and moves up to four lights for 1 minute.", unsupportedReason: "Movable point-based light placement is not implemented yet." },
+    { id: "dancing-lights", name: "Dancing Lights", level: 0, castingTime: "action", rangeFeet: 120, target: "point", requiresLineOfSight: true, concentration: true, durationRounds: 10, description: "Creates up to four movable lights that each cast dim light in a 10-foot radius for 1 minute.", pointEffect: { type: "lights", maximumPoints: 4, dimLightFeet: 10, movementFeet: 60 }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dancing Lights" } },
     { id: "vicious-mockery", name: "Vicious Mockery", level: 0, castingTime: "action", rangeFeet: 60, target: "single", targetSide: "hostile", requiresLineOfSight: true, damage: "1d4 psychic", save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, description: "The target makes a DC 12 Wisdom save; on a failure it takes psychic damage and has disadvantage on its next attack roll before the end of its next turn.", effect: { name: "Vicious Mockery", description: "Disadvantage on the next attack roll before the end of this creature's next turn.", modifiers: { outgoingAttacks: "disadvantage" }, expires: "end-of-target-next-turn", consumeOnAttackRoll: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Vicious Mockery" } },
     { id: "minor-illusion", name: "Minor Illusion", level: 0, castingTime: "action", rangeFeet: 30, target: "self", requiresLineOfSight: true, durationRounds: 10, description: "Creates a sound or image in a 5-foot cube for 1 minute.", unsupportedReason: "Illusion placement and adjudication are not implemented yet." },
     { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, targetCreatureTypes: ["humanoid"], hostileSaveAdvantage: true, durationRounds: 600, description: "A humanoid target makes a DC 12 Wisdom save with advantage while fighting the caster or an ally. On a failure, it is charmed for 1 hour or until harmed by the caster or an ally.", effect: { name: "Charm Person", description: "The target is charmed by the caster and cannot harm the caster until the spell ends.", conditionGranted: "charmed", modifiers: { preventsHarmingSource: true }, endsWhenSourceHarmsTarget: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Charm Person" } },
@@ -91,9 +114,9 @@ export const cleiraOestwilde: Character = {
       { name: "Disguise Kit", quantity: 1, weightPounds: 3 },
     ],
     features: [
-      { name: "Bardic Inspiration", description: "Twice per long rest, grant another creature within 60 feet a d6 inspiration die as a bonus action." },
+      { id: "bardic-inspiration", name: "Bardic Inspiration", description: "Twice per long rest, grant another creature within 60 feet a d6 inspiration die as a bonus action.", executableActionId: "bardic-inspiration", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Bard: Bardic Inspiration" } },
       { id: "fey-ancestry", name: "Fey Ancestry", description: "Advantage on saving throws against being charmed; magic cannot put Cleira to sleep.", executablePassiveId: "fey-ancestry", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Fey Ancestry" } },
-      { name: "Trance", description: "Meditates for 4 hours instead of sleeping." },
+      { id: "trance", name: "Trance", description: "Does not need sleep and meditates semiconsciously for 4 hours each day.", executablePassiveId: "trance", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Trance" } },
       { id: "keen-senses", name: "Keen Senses", description: "Proficient in Perception.", executablePassiveId: "keen-senses", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Keen Senses" } },
     ],
   },

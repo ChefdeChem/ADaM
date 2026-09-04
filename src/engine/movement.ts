@@ -3,6 +3,7 @@ import type { D20Result, DamageRoll } from "./dice";
 import { resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options";
 import { queueConcentrationCheck } from "./defensive-responses";
 import { validateSpellSlot } from "./resources";
+import { resolvePointHazardsForCombatant } from "./point-effects";
 
 export type MovementStep = { x: number; y: number; cost: number };
 export type ReachableMovementCell = { x: number; y: number; cost: number; path: MovementStep[] };
@@ -112,7 +113,7 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
         && distanceFromCell(step.x, step.y, combatant) > attack.normalRangeFeet);
 
     if (!threat) {
-      next = applyMovementContinuation(next, continuation, false);
+      next = resolvePointHazardsForCombatant(applyMovementContinuation(next, continuation, false), mover.id, random);
       continue;
     }
 
@@ -121,7 +122,7 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
     lastAttackRoll = attackResult.roll;
     notes.push(`${threat.combatant.name} uses its reaction as ${mover.name} leaves its reach. ${attackResult.summary}`);
     if (!attackResult.hit) {
-      next = applyMovementContinuation(attackResult.encounter, continuation, false);
+      next = resolvePointHazardsForCombatant(applyMovementContinuation(attackResult.encounter, continuation, false), mover.id, random);
       continue;
     }
 
@@ -166,7 +167,7 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
     if (concentrated.pendingResponse?.type === "concentration-check") {
       return { legal: true, reason: `${notes.join(" ")} Resolve the concentration check before movement continues.`, encounter: concentrated, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
     }
-    next = applyMovementContinuation(concentrated, continuation, false);
+    next = resolvePointHazardsForCombatant(applyMovementContinuation(concentrated, continuation, false), mover.id, random);
   }
 
   const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
