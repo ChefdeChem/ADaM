@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import type { AbilityName, Character, CharacterAttack, CharacterFeatureAction, CharacterSpell } from "../src/domain/character";
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
-import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget } from "../src/engine/combat-options";
+import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
 import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds } from "../src/engine/effects";
 import { executeFeatureAction } from "../src/engine/feature-actions";
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
@@ -32,9 +32,10 @@ type AttackFlow = null | {
 };
 type SpellFlow = null | {
   spell: CharacterSpell;
-  phase: "target" | "attack-roll" | "damage-roll";
+  phase: "resource" | "target" | "attack-roll" | "damage-roll";
   targetId?: string;
   critical?: boolean;
+  castingResource?: SpellCastingResourceChoice;
 };
 type FeatureFlow = null | {
   feature: CharacterFeatureAction;
@@ -543,23 +544,38 @@ export default function Home() {
   function chooseSpell(spell: CharacterSpell) {
     const availability = validateSpellAvailability(encounter, spell);
     if (!availability.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : availability.reason ?? "That spell is not available."); return; }
+    const resources = spellCastingResourceOptions(encounter, spell);
+    if (resources.freeCast && resources.spellSlot) {
+      setSpellFlow({ spell, phase: "resource" });
+      setFeedback(`Choose whether to cast ${spell.name} with its free use or a spell slot.`);
+      return;
+    }
+    continueSpellChoice(spell);
+  }
+
+  function continueSpellChoice(spell: CharacterSpell, castingResource?: SpellCastingResourceChoice) {
     const hasOtherFriendlyTarget = encounter.combatants.some((combatant) => combatant.id !== activeCombatant.id && combatant.side === activeCombatant.side && combatant.hitPoints.current > 0);
     if (spell.target === "self-or-single" && spell.targetSide === "friendly" && !hasOtherFriendlyTarget) {
-      const result = executeSpellChoice({ ...encounter, selectedTargetId: activeCombatant.id }, spell);
+      const result = executeSpellChoice({ ...encounter, selectedTargetId: activeCombatant.id }, spell, Math.random, { castingResource });
       if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
       setEncounter(result.encounter); setLastRoll(result.roll); setChoiceMode(null); setSpellFlow(null); setFeedback(result.summary);
       return;
     }
-    if (spell.target === "single" || spell.target === "self-or-single") {
+    if (spell.target === "single" || spell.target === "self-or-single" || spell.target === "area") {
       setEncounter((state) => selectTarget(state, null));
-      setSpellFlow({ spell, phase: "target" });
+      setSpellFlow({ spell, phase: "target", castingResource });
       setAttackFlow(null);
       setFeedback(`${spell.name} selected. Choose one of the highlighted legal targets on the tactical map.`);
       return;
     }
-    const result = executeSpellChoice(encounter, spell);
+    const result = executeSpellChoice(encounter, spell, Math.random, { castingResource });
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter); setLastRoll(result.roll); setChoiceMode(null); setSpellFlow(null); setFeedback(result.summary);
+  }
+
+  function chooseSpellCastingResource(castingResource: SpellCastingResourceChoice) {
+    if (!spellFlow || spellFlow.phase !== "resource") return;
+    continueSpellChoice(spellFlow.spell, castingResource);
   }
 
   function rollSelectedSpellAttack() {
@@ -654,7 +670,7 @@ export default function Home() {
         setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Click to roll the spell attack: d20 ${spellFlow.spell.attackBonus >= 0 ? "+" : "−"} ${Math.abs(spellFlow.spell.attackBonus)}.${rollMode}`);
         return;
       }
-      const result = executeSpellChoice(targetedEncounter, spellFlow.spell);
+      const result = executeSpellChoice(targetedEncounter, spellFlow.spell, Math.random, { castingResource: spellFlow.castingResource });
       if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
       setEncounter(result.encounter);
       setLastRoll(result.roll);
@@ -825,6 +841,11 @@ export default function Home() {
           <div><span>Spell selected · Choose target</span><h3>{spellFlow.spell.name}</h3><p>Targets highlighted in gold are legal for this spell&apos;s range, line of sight, and target type.</p></div>
           <div className="target-count"><strong>{legalSpellTargetIds.size}</strong><small>legal targets</small></div>
         </section>}
+        {initiativeReady && spellFlow?.phase === "resource" && <section className="roll-coach target-coach" aria-live="polite">
+          <div><span>Spell selected · Choose resource</span><h3>{spellFlow.spell.name}</h3><p>Use the once-per-Long-Rest Magic Initiate cast or preserve it and spend a level 1 spell slot.</p></div>
+          <button type="button" onClick={() => chooseSpellCastingResource("free-cast")}><small>Magic Initiate</small><strong>Use free cast</strong></button>
+          <button type="button" onClick={() => chooseSpellCastingResource("spell-slot")}><small>Spellcasting</small><strong>Use level 1 slot</strong></button>
+        </section>}
         {attackFlow?.phase === "attack-roll" && targetAnalysis && <section className="roll-coach attack-coach" aria-live="polite">
           <div><span>Attack roll · Click to roll</span><h3>{attackFlow.attack.name} vs. {targetAnalysis.target.name}</h3><p>Roll a <strong>d20</strong> {validateAttackChoice(encounter, attackFlow.attack).rollMode === "disadvantage" ? "twice and keep the lower result, then" : "and"} add {attackFlow.attack.attackBonus >= 0 ? "+" : "−"}{Math.abs(attackFlow.attack.attackBonus)}. Meet or beat AC {effectiveArmorClass(encounter, targetAnalysis.target.id) + (targetAnalysis.cover === "half" ? 2 : 0)}.</p></div>
           <button type="button" onClick={rollSelectedAttack}><small>Roll attack</small><strong>{validateAttackChoice(encounter, attackFlow.attack).rollMode === "disadvantage" ? "2d20 · lower" : "d20"} {attackFlow.attack.attackBonus >= 0 ? "+" : "−"} {Math.abs(attackFlow.attack.attackBonus)}</strong></button>
@@ -895,9 +916,9 @@ export default function Home() {
             return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{targetingLabel}</span>{experienceMode !== "advanced" && <small>{validation.legal || experienceMode === "beginner" ? action.description : validation.reason}</small>}</button>;
           }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
           {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose weapon</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{playerCombatant.attacks.map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
-          {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
+          {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : spell.freeCastResourceName ? `Level ${spell.level} · free use or slot` : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : spell.target === "area" && spell.area ? `${spell.area.sizeFeet} ft. ${spell.area.shape}` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           {featureFlow && (() => { const target = encounter.combatants.find((combatant) => combatant.id === featureFlow.targetId)!; return <form className="choice-panel feature-choice" onSubmit={confirmFeatureChoice}><div className="choice-heading"><div><span>Choose healing amount</span><strong>{featureFlow.feature.name}</strong></div><button type="button" onClick={() => setFeatureFlow(null)}>Cancel</button></div><div className="feature-choice-form"><div><span>Target</span><strong>{target.name}</strong><small>{target.hitPoints.current}/{target.hitPoints.maximum} Hit Points</small></div><label htmlFor="feature-healing-amount">Pool points to spend<input id="feature-healing-amount" type="number" min="1" max={featureFlow.maximum} step="1" value={featureFlow.amount} onChange={(event) => setFeatureFlow({ ...featureFlow, amount: Number(event.target.value) })} /></label><button type="submit">Spend {featureFlow.amount} · Restore {featureFlow.amount} HP</button></div></form>; })()}
-          <div className="area-effect-note"><span>Area-effect foundation</span><p>Future actions can define cones, cubes, cylinders, lines, spheres, or emanations and specify whether they affect every creature, only hostiles, or chosen creatures.</p></div>
+          <div className="area-effect-note"><span>Area effects</span><p>Cones and cubes now find every creature in the aimed area, resolve one saving throw per target, apply shared damage, and handle forced movement.</p></div>
           <div className="turn-controls"><div><span>Turn control</span><p>{activeCombatant.side === "player" ? "End your turn and let ADaM advance initiative." : "ADaM controls and advances enemy turns automatically."}</p></div><button type="button" disabled={activeCombatant.side !== "player" || outcome !== "active"} onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>{activeCombatant.side === "player" ? "End turn" : "Enemy acting"}</button></div>
           <form className="command-bar" onSubmit={submitCommand}><label htmlFor="command">Or describe your action</label><div><input id="command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Example: I cast a spell at the scout" /><button>Submit</button></div></form>
           <div className="feedback" aria-live="polite"><span>ADaM</span><p>{feedback}</p></div>

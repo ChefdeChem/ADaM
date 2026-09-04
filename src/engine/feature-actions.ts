@@ -1,16 +1,20 @@
 import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
-import { applyEffect, canRegainHitPoints, effectiveSpeed } from "./effects";
+import { applyEffect, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, savingThrowRollMode } from "./effects";
 import { analyzeTarget } from "./targeting";
 import { spendNamedResource, validateNamedResource } from "./resources";
+import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
+import { rollD20, rollDamage } from "./dice";
+import { applyDamageToCombatant } from "./combat-options";
 
 export type FeatureActionResolution =
   | { legal: false; reason: string; encounter: EncounterState }
-  | { legal: true; summary: string; encounter: EncounterState };
+  | { legal: true; summary: string; encounter: EncounterState; roll?: ReturnType<typeof rollDamage> };
 
 export type FeatureActionOptions = {
   resourceAmount?: number;
   targetCombatantId?: string;
+  random?: () => number;
 };
 
 export function featureCombatActions(character: Character): CombatAction[] {
@@ -50,6 +54,11 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
     if (missingHitPoints <= 0) return { legal: false, reason: `${target.name} is already at maximum Hit Points.` };
     if (resourceAmount > missingHitPoints) return { legal: false, reason: `${target.name} can regain at most ${missingHitPoints} Hit Points.` };
   }
+  if (feature.resolution.type === "area-saving-throw") {
+    const targetId = options.targetCombatantId ?? encounter.selectedTargetId;
+    if (!targetId) return { legal: false, reason: "Select a creature to set the area's direction." };
+    return validateAreaAim(encounter, active.id, targetId, feature.resolution.area);
+  }
   if (feature.resolution.type === "activate-effect" && encounter.effects.some((effect) =>
     effect.name === feature.resolution.effect.name
     && effect.sourceCombatantId === active.id
@@ -71,6 +80,28 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
     bonusAction: feature.cost === "bonus-action" ? false : next.turn.bonusAction,
     reaction: feature.cost === "reaction" ? false : next.turn.reaction,
   };
+
+  if (feature.resolution.type === "area-saving-throw") {
+    const targetId = options.targetCombatantId ?? encounter.selectedTargetId!;
+    const random = options.random ?? Math.random;
+    const damageRoll = rollDamage(feature.resolution.damage, { random });
+    if (!damageRoll) return { legal: false, reason: `ADaM could not read the damage formula “${feature.resolution.damage}”.`, encounter };
+    next = { ...next, turn };
+    const results: string[] = [];
+    for (const target of areaTargets(next, active.id, targetId, feature.resolution.area)) {
+      const saveMode = savingThrowRollMode(next, target.id, undefined, "normal", feature.resolution.save.ability);
+      const saveRoll = rollD20({ mode: saveMode, modifier: effectiveSavingThrowModifier(next, target.id, feature.resolution.save.ability), random });
+      const succeeded = saveRoll.total >= feature.resolution.save.dc;
+      const damage = succeeded
+        ? feature.resolution.save.damageOnSuccess === "half" ? Math.floor(damageRoll.total / 2) : 0
+        : damageRoll.total;
+      if (damage > 0) next = applyDamageToCombatant(next, target.id, damage, { damageType: damageRoll.formula.damageType, sourceCombatantId: active.id });
+      if (!succeeded && feature.resolution.area.pushFeetOnFailedSave) next = pushTargetAway(next, active.id, target.id, feature.resolution.area.pushFeetOnFailedSave);
+      results.push(`${target.name} ${succeeded ? "succeeds" : "fails"} (${saveRoll.total}) and takes ${effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType)} damage`);
+    }
+    const summary = `${active.name} uses ${feature.name}; ${damageRoll.total} ${damageRoll.formula.damageType} rolled. ${results.join("; ")}.`;
+    return { legal: true, roll: damageRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
+  }
 
   if (feature.resolution.type === "dash-and-temporary-hit-points") {
     const temporaryHitPoints = feature.resolution.temporaryHitPoints === "proficiency-bonus" ? active.proficiencyBonus : 0;

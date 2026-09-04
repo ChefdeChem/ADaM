@@ -14,6 +14,16 @@ function characterSavingThrows(character:Character):Record<AbilityName,number>{
   return Object.fromEntries(abilities.map((ability)=>[ability,character.savingThrowModifiers?.[ability]??abilityModifier(character.abilities[ability])])) as Record<AbilityName,number>;
 }
 
+function characterSkillModifiers(character: Character): Record<string, number> {
+  const modifiers = Object.fromEntries(Object.entries(character.profile?.skills ?? {}).map(([skill, modifier]) => [skill.toLowerCase(), modifier]));
+  for (const feature of character.passiveFeatures ?? []) {
+    if (feature.resolution.type !== "skill-proficiency") continue;
+    const skill = feature.resolution.skill.toLowerCase();
+    modifiers[skill] = Math.max(modifiers[skill] ?? Number.NEGATIVE_INFINITY, abilityModifier(character.abilities[feature.resolution.ability]) + character.proficiencyBonus);
+  }
+  return modifiers;
+}
+
 function hasEquipmentTraining(character: Character, category: "light" | "medium" | "heavy" | "shield"): boolean {
   const proficiencies = (character.profile?.proficiencies?.armor ?? []).map((entry) => entry.toLowerCase());
   return category === "shield"
@@ -83,6 +93,8 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       temporaryHitPoints: 0,
       damageResistances: [],
       creatureType: profile.creatureType,
+      skillModifiers: {},
+      skillProficiencies: [],
       conditions: [],
       savingThrowAdvantagesAgainstConditions: [],
       conditionImmunities: [],
@@ -124,6 +136,9 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         hitPoints: { ...character.hitPoints },
         temporaryHitPoints: 0,
         creatureType: character.creatureType ?? "humanoid",
+        skillModifiers: characterSkillModifiers(character),
+        skillProficiencies: (character.passiveFeatures ?? []).flatMap((feature) =>
+          feature.resolution.type === "skill-proficiency" ? [feature.resolution.skill.toLowerCase()] : []),
         damageResistances: (character.passiveFeatures ?? []).flatMap((feature) =>
           feature.resolution.type === "damage-resistance" ? feature.resolution.damageTypes : []),
         conditions: [],

@@ -21,6 +21,8 @@ export type EffectInput = {
   conditionGranted?: string;
   endsWhenSourceHarmsTarget?: boolean;
   sense?: ActiveEffect["sense"];
+  senseMagic?: ActiveEffect["senseMagic"];
+  senseMagic?: ActiveEffect["senseMagic"];
   replaceExisting?: boolean;
 };
 
@@ -80,6 +82,8 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     conditionGranted: input.conditionGranted,
     endsWhenSourceHarmsTarget: input.endsWhenSourceHarmsTarget,
     sense: input.sense,
+    senseMagic: input.senseMagic,
+    senseMagic: input.senseMagic,
   };
 
   next = {

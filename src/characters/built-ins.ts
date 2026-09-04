@@ -23,6 +23,12 @@ export const cleiraOestwilde: Character = {
     description: "Advantage on saving throws against being charmed; magic cannot put Cleira to sleep.",
     resolution: { type: "ancestry-defense", savingThrowAdvantageAgainstConditions: ["charmed"], conditionImmunities: ["magical sleep"] },
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Fey Ancestry" },
+  }, {
+    id: "keen-senses",
+    name: "Keen Senses",
+    description: "Proficiency in the Perception skill applies to Perception ability checks.",
+    resolution: { type: "skill-proficiency", skill: "Perception", ability: "wisdom" },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Keen Senses" },
   }],
   equipmentRules: [{
     id: "leather-armor",
@@ -57,9 +63,9 @@ export const cleiraOestwilde: Character = {
     { id: "vicious-mockery", name: "Vicious Mockery", level: 0, castingTime: "action", rangeFeet: 60, target: "single", targetSide: "hostile", requiresLineOfSight: true, damage: "1d4 psychic", save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, description: "The target makes a DC 12 Wisdom save; on a failure it takes psychic damage and has disadvantage on its next attack roll before the end of its next turn.", effect: { name: "Vicious Mockery", description: "Disadvantage on the next attack roll before the end of this creature's next turn.", modifiers: { outgoingAttacks: "disadvantage" }, expires: "end-of-target-next-turn", consumeOnAttackRoll: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Vicious Mockery" } },
     { id: "minor-illusion", name: "Minor Illusion", level: 0, castingTime: "action", rangeFeet: 30, target: "self", requiresLineOfSight: true, durationRounds: 10, description: "Creates a sound or image in a 5-foot cube for 1 minute.", unsupportedReason: "Illusion placement and adjudication are not implemented yet." },
     { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 12, damageOnSuccess: "none" }, targetCreatureTypes: ["humanoid"], hostileSaveAdvantage: true, durationRounds: 600, description: "A humanoid target makes a DC 12 Wisdom save with advantage while fighting the caster or an ally. On a failure, it is charmed for 1 hour or until harmed by the caster or an ally.", effect: { name: "Charm Person", description: "The target is charmed by the caster and cannot harm the caster until the spell ends.", conditionGranted: "charmed", modifiers: { preventsHarmingSource: true }, endsWhenSourceHarmsTarget: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Charm Person" } },
-    { id: "detect-magic", name: "Detect Magic", level: 1, castingTime: "action", rangeFeet: 0, target: "self", requiresLineOfSight: false, ritual: true, concentration: true, durationRounds: 100, description: "Senses magic within 30 feet for up to 10 minutes.", unsupportedReason: "Magic-aura detection and ritual casting are not implemented yet.", effect: { name: "Detect Magic", description: "Cleira is concentrating on Detect Magic within 30 feet." } },
+    { id: "detect-magic", name: "Detect Magic", level: 1, castingTime: "action", rangeFeet: 0, target: "self", requiresLineOfSight: false, ritual: true, concentration: true, durationRounds: 100, description: "Senses the presence of magic within 30 feet for up to 10 minutes.", missingCapabilities: ["Ritual casting and the follow-up action to reveal visible auras and schools of magic are not implemented yet."], provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Detect Magic" }, effect: { name: "Detect Magic", description: "Cleira senses whether registered magic is present within 30 feet.", senseMagic: { rangeFeet: 30, blockedByTotalCover: true } } },
     { id: "healing-word", name: "Healing Word", level: 1, castingTime: "bonus-action", rangeFeet: 60, target: "self-or-single", targetSide: "friendly", requiresLineOfSight: true, healing: "1d4 + 2 healing", description: "A visible creature within 60 feet regains 1d4 + 2 hit points." },
-    { id: "thunderwave", name: "Thunderwave", level: 1, castingTime: "action", rangeFeet: 0, target: "self", targetSide: "hostile", requiresLineOfSight: false, damage: "2d8 thunder", save: { ability: "constitution", dc: 12, damageOnSuccess: "half" }, description: "Creatures in a 15-foot cube make a DC 12 Constitution save; the wave can push them 10 feet.", unsupportedReason: "Directional area selection and forced movement are not implemented yet." },
+    { id: "thunderwave", name: "Thunderwave", level: 1, castingTime: "action", rangeFeet: 0, target: "area", targetSide: "hostile", requiresLineOfSight: false, damage: "2d8 thunder", save: { ability: "constitution", dc: 12, damageOnSuccess: "half" }, area: { origin: "self", shape: "cube", sizeFeet: 15, affects: "all-creatures", pushFeetOnFailedSave: 10 }, description: "Aim a 15-foot cube through a selected creature. Each creature in it makes a DC 12 Constitution save; failed saves are pushed 10 feet.", missingCapabilities: ["Unsecured-object movement and the 300-foot audible boom are not simulated."], provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Thunderwave" } },
   ],
   actions: ["Attack", "Cast a Spell", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Use an Object"],
   profile: {
@@ -88,7 +94,7 @@ export const cleiraOestwilde: Character = {
       { name: "Bardic Inspiration", description: "Twice per long rest, grant another creature within 60 feet a d6 inspiration die as a bonus action." },
       { id: "fey-ancestry", name: "Fey Ancestry", description: "Advantage on saving throws against being charmed; magic cannot put Cleira to sleep.", executablePassiveId: "fey-ancestry", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Fey Ancestry" } },
       { name: "Trance", description: "Meditates for 4 hours instead of sleeping." },
-      { name: "Keen Senses", description: "Proficient in Perception." },
+      { id: "keen-senses", name: "Keen Senses", description: "Proficient in Perception.", executablePassiveId: "keen-senses", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Keen Senses" } },
     ],
   },
   source: { format: "flattened-pdf", fileName: "ChefdeStruct_170365689.pdf", importedAt: "2026-08-29T02:24:02.000Z" },

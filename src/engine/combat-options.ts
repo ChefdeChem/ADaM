@@ -2,9 +2,10 @@ import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
 import { applyEffect, canHarmTarget, canRegainHitPoints, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
-import { spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
+import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { attackInventoryAvailable, consumeAttackInventory } from "./inventory";
-import { analyzeTarget, gridDistanceFeet } from "./targeting";
+import { analyzeTarget, gridDistanceFeet, hasLineOfSightToPoint } from "./targeting";
+import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
 
 export type OptionValidation = {
   legal: boolean;
@@ -16,6 +17,16 @@ export type OptionValidation = {
 export type OptionResolution =
   | { legal: false; reason: string; encounter: EncounterState }
   | { legal: true; encounter: EncounterState; roll: D20Result | DamageRoll | null; summary: string };
+
+export type SpellCastingResourceChoice = "free-cast" | "spell-slot";
+
+export function spellCastingResourceOptions(encounter: EncounterState, spell: CharacterSpell): { freeCast: boolean; spellSlot: boolean } {
+  const active = encounter.combatants[encounter.activeIndex];
+  return {
+    freeCast: Boolean(spell.freeCastResourceName && validateNamedResource(encounter, active.id, spell.freeCastResourceName, 1).legal),
+    spellSlot: validateSpellSlot(encounter, active.id, spell.level).legal,
+  };
+}
 
 export function validateAttackChoice(encounter: EncounterState, attack: CharacterAttack): OptionValidation {
   if (!encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
@@ -260,14 +271,25 @@ export function validateSpellAvailability(encounter: EncounterState, spell: Char
   if (spell.castingTime === "reaction") return { legal: false, reason: `${spell.name} becomes available automatically when its reaction trigger occurs.` };
   if (spell.castingTime === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (spell.castingTime === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
-  const slot = validateSpellSlot(encounter, active.id, spell.level);
-  if (!slot.legal) return slot;
+  const choices = spellCastingResourceOptions(encounter, spell);
+  if (!choices.freeCast && !choices.spellSlot) {
+    const slot = validateSpellSlot(encounter, active.id, spell.level);
+    return { legal: false, reason: spell.freeCastResourceName ? `${spell.freeCastResourceName} and level ${spell.level} spell slots are both unavailable.` : slot.reason };
+  }
   return { legal: true, rollMode: "normal", distanceFeet: 0 };
 }
 
 export function validateSpellChoice(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const availability = validateSpellAvailability(encounter, spell);
   if (!availability.legal) return availability;
+  if (spell.target === "area") {
+    if (!spell.area) return { legal: false, reason: `${spell.name} has no registered area.` };
+    if (!encounter.selectedTargetId) return { legal: false, reason: "Select a creature to set the area's direction." };
+    const active = encounter.combatants[encounter.activeIndex];
+    const aim = encounter.combatants.find((combatant) => combatant.id === encounter.selectedTargetId);
+    if (spell.targetSide === "hostile" && aim?.side === active.side) return { legal: false, reason: `${spell.name} requires a hostile creature to set its direction.` };
+    return validateAreaAim(encounter, active.id, encounter.selectedTargetId, spell.area);
+  }
   if (spell.target === "single" || spell.target === "self-or-single") {
     if (!encounter.selectedTargetId) return { legal: false, reason: "Select a target on the tactical map first." };
     const active = encounter.combatants[encounter.activeIndex];
@@ -396,13 +418,21 @@ function applySpellEffect(encounter: EncounterState, spell: CharacterSpell, cast
   });
 }
 
-export function executeSpellChoice(encounter: EncounterState, spell: CharacterSpell, random = Math.random): OptionResolution {
+export function executeSpellChoice(encounter: EncounterState, spell: CharacterSpell, random = Math.random, options: { castingResource?: SpellCastingResourceChoice } = {}): OptionResolution {
   const validation = validateSpellChoice(encounter, spell);
   if (!validation.legal) return { legal: false, reason: validation.reason ?? "That spell is not legal.", encounter };
   const active = encounter.combatants[encounter.activeIndex];
   const targetId = spell.target === "self" ? active.id : encounter.selectedTargetId!;
   const targetName = encounter.combatants.find((combatant) => combatant.id === targetId)?.name ?? "target";
-  let next = spendSpellSlot(encounter, active.id, spell.level);
+  const resourceOptions = spellCastingResourceOptions(encounter, spell);
+  const castingResource = options.castingResource
+    ?? (resourceOptions.freeCast && resourceOptions.spellSlot ? undefined : resourceOptions.freeCast ? "free-cast" : "spell-slot");
+  if (!castingResource) return { legal: false, reason: `Choose whether to cast ${spell.name} with ${spell.freeCastResourceName} or a level ${spell.level} spell slot.`, encounter };
+  if (castingResource === "free-cast" && !resourceOptions.freeCast) return { legal: false, reason: `${spell.freeCastResourceName ?? "The free cast"} is unavailable.`, encounter };
+  if (castingResource === "spell-slot" && !resourceOptions.spellSlot) return { legal: false, reason: `No level ${spell.level} spell slots remain.`, encounter };
+  let next = castingResource === "free-cast"
+    ? spendNamedResource(encounter, active.id, spell.freeCastResourceName!, 1)
+    : spendSpellSlot(encounter, active.id, spell.level);
   next = {
     ...next,
     turn: {
@@ -412,6 +442,26 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       reaction: spell.castingTime === "reaction" ? false : next.turn.reaction,
     },
   };
+  if (spell.target === "area" && spell.area && spell.save && spell.damage) {
+    const targets = areaTargets(next, active.id, targetId, spell.area);
+    const damageRoll = rollDamage(spell.damage, { random });
+    if (!damageRoll) return { legal: false, reason: `ADaM could not read the damage formula “${spell.damage}”.`, encounter };
+    const results: string[] = [];
+    for (const target of targets) {
+      const saveMode = savingThrowRollMode(next, target.id, undefined, "normal", spell.save.ability);
+      const saveRoll = rollD20({ mode: saveMode, modifier: effectiveSavingThrowModifier(next, target.id, spell.save.ability), random });
+      const succeeded = saveRoll.total >= spell.save.dc;
+      const damage = succeeded
+        ? spell.save.damageOnSuccess === "half" ? Math.floor(damageRoll.total / 2) : 0
+        : damageRoll.total;
+      if (damage > 0) next = applyDamageToCombatant(next, target.id, damage, { damageType: damageRoll.formula.damageType, sourceCombatantId: active.id });
+      if (!succeeded && spell.area.pushFeetOnFailedSave) next = pushTargetAway(next, active.id, target.id, spell.area.pushFeetOnFailedSave);
+      results.push(`${target.name} ${succeeded ? "succeeds" : "fails"} (${saveRoll.total}) and takes ${effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType)} damage`);
+    }
+    const sourceCopy = castingResource === "free-cast" ? spell.freeCastResourceName : `a level ${spell.level} slot`;
+    const summary = `${active.name} casts ${spell.name} using ${sourceCopy}; ${damageRoll.total} ${damageRoll.formula.damageType} rolled. ${results.join("; ")}.`;
+    return { legal: true, roll: damageRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
+  }
   if (spell.save) {
     const target = next.combatants.find((combatant) => combatant.id === targetId);
     if (!target) return { legal: false, reason: "The target is no longer available.", encounter };
@@ -451,8 +501,16 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
     ? null
     : rollD20({ mode: outgoingAttackRollMode(next, active.id, targetId), modifier: spell.attackBonus + effectiveAttackModifier(next, active.id), random });
   if (roll) next = consumeAttackRollEffects(next, active.id, targetId);
-  const slotCopy = spell.level === 0 ? "cantrip" : `level ${spell.level} slot`;
+  const slotCopy = spell.level === 0 ? "cantrip" : castingResource === "free-cast" ? spell.freeCastResourceName! : `level ${spell.level} slot`;
   const rollCopy = roll ? ` Attack roll: ${roll.total} (${roll.kept} + ${roll.modifier}).` : "";
-  const summary = `${spell.name} cast on ${targetName} using ${slotCopy}.${rollCopy}`;
+  const detectedMagic = spell.effect?.senseMagic
+    ? next.map.terrain.filter((cell) => cell.magicAura
+      && Math.max(Math.abs(active.position.x - cell.x), Math.abs(active.position.y - cell.y)) * 5 <= spell.effect!.senseMagic!.rangeFeet
+      && (!spell.effect!.senseMagic!.blockedByTotalCover || hasLineOfSightToPoint(next, active.id, cell.x, cell.y)))
+    : [];
+  const detectionCopy = spell.effect?.senseMagic
+    ? detectedMagic.length ? " Magic is present within range." : " No registered magic is present within range."
+    : "";
+  const summary = `${spell.name} cast on ${targetName} using ${slotCopy}.${rollCopy}${detectionCopy}`;
   return { legal: true, roll, summary, encounter: { ...next, log: [`${active.name}: ${summary}`, ...next.log] } };
 }

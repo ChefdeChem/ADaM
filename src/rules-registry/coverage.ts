@@ -70,6 +70,7 @@ function attackEntry(character: Character, attack: CharacterAttack): RuleRegistr
 
 function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   const components: MechanicComponent[] = ["targeting", "range"];
+  if (spell.area) components.push("targeting");
   if (spell.attackBonus !== undefined) components.push("attack-roll");
   if (spell.save) components.push("saving-throw");
   if (spell.targetCreatureTypes?.length) components.push("creature-type");
@@ -89,6 +90,8 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   if (spell.effect?.turnStartTemporaryHitPoints) components.push("trigger", "recurring-effect", "temporary-hit-points");
   if (spell.effect?.turnStartDamage) components.push("trigger", "recurring-effect", "damage-roll");
   if (spell.effect?.turnStartSave) components.push("saving-throw", "duration");
+  if (spell.effect?.senseMagic) components.push("detection", "range", "duration");
+  if (spell.freeCastResourceName) components.push("resource-spend", "resource-recovery");
   if (spell.trigger) components.push("trigger", "action-economy");
   if (spell.triggeredDamage) components.push("damage-roll");
   const executableEffect = spell.effect && (
@@ -101,6 +104,7 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
     || spell.effect.turnStartTemporaryHitPoints
     || spell.effect.turnStartDamage
     || spell.effect.turnStartSave
+    || spell.effect.senseMagic
   );
   if (spell.effect && !executableEffect) components.push("reference");
   return [...new Set(components)];
@@ -158,6 +162,8 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
           ? ["action-economy", "resource-spend", "resource-recovery", "duration", "damage-resistance"]
         : executableAction?.resolution.type === "sense-creature-types"
           ? ["action-economy", "resource-spend", "resource-recovery", "range", "duration", "creature-type", "detection"]
+        : executableAction?.resolution.type === "area-saving-throw"
+          ? ["action-economy", "targeting", "range", "saving-throw", "damage-roll", "resource-spend", "resource-recovery", ...(executableAction.resolution.area.pushFeetOnFailedSave ? ["movement" as const] : [])]
         : executableTrigger?.resolution.type === "drop-to-one-hit-point"
           ? ["trigger", "replacement-effect", "resource-spend", "resource-recovery"]
           : executableTrigger?.resolution.type === "reduce-damage-by-roll"
@@ -170,6 +176,10 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
             ? ["saving-throw", "advantage", "condition-immunity"]
           : executablePassive?.resolution.type === "unarmored-defense"
             ? ["armor-calculation"]
+          : executablePassive?.resolution.type === "skill-proficiency"
+            ? ["ability-check", "proficiency"]
+          : executablePassive?.resolution.type === "free-spell-cast"
+            ? ["resource-spend", "resource-recovery"]
           : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "slow")
             ? ["trigger", "damage-roll", "movement", "duration"]
           : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "sap")
@@ -196,7 +206,7 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
         ? ["inventory", "armor-calculation", "proficiency", ...(equipmentRule.resolution.strengthRequirement ? ["movement" as const] : []), ...(equipmentRule.resolution.stealthDisadvantage ? ["ability-check" as const] : [])]
         : equipmentRule?.resolution.type === "shield"
           ? ["inventory", "armor-calculation", "proficiency"]
-          : equipmentRule?.resolution.type === "weapon"
+          : equipmentRule?.resolution.type === "weapon" || equipmentRule?.resolution.type === "ammunition"
             ? ["inventory", "targeting", "range", "attack-roll", "damage-roll", ...(equipmentRule.resolution.expendOnAttackIds?.length ? ["resource-spend" as const] : [])]
           : ["inventory"];
       return entry(

@@ -49,7 +49,13 @@ function inferObjective(text: string): ScenarioObjective {
 }
 
 function createGrid(environment: ScenarioEnvironment, objective: ScenarioObjective): ScenarioGrid {
-  const objectiveCell = { x: 10, y: objective === "hold" ? 4 : 6, kind: "objective" as const, label: objectiveCopy[objective] };
+  const objectiveCell = {
+    x: 10,
+    y: objective === "hold" ? 4 : 6,
+    kind: "objective" as const,
+    label: objectiveCopy[objective],
+    ...(environment === "crypt" ? { magicAura: "abjuration" } : {}),
+  };
   const terrainByEnvironment: Record<ScenarioEnvironment, ScenarioGrid["terrain"]> = {
     crypt: [
       { x: 4, y: 1, kind: "wall", label: "Stone wall" }, { x: 4, y: 2, kind: "wall", label: "Stone wall" },

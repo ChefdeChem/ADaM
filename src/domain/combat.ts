@@ -196,6 +196,7 @@ export type ActiveEffect = {
   conditionGranted?: string;
   endsWhenSourceHarmsTarget?: boolean;
   sense?: { creatureTypes: string[]; rangeFeet: number; blockedByTotalCover: boolean };
+  senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
 };
 
 export type Combatant = {
@@ -210,6 +211,8 @@ export type Combatant = {
   temporaryHitPointsSourceEffectId?: string;
   damageResistances: string[];
   creatureType?: string;
+  skillModifiers: Record<string, number>;
+  skillProficiencies: string[];
   conditions: string[];
   savingThrowAdvantagesAgainstConditions: string[];
   conditionImmunities: string[];

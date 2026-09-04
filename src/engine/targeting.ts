@@ -15,7 +15,7 @@ export function gridDistanceFeet(origin: Combatant, target: Combatant): number {
   return Math.max(dx, dy) * 5;
 }
 
-function cellsBetween(origin: Combatant, target: Combatant): Array<{ x: number; y: number }> {
+function cellsBetween(origin: Combatant, target: Pick<Combatant, "position">): Array<{ x: number; y: number }> {
   const cells: Array<{ x: number; y: number }> = [];
   let x = origin.position.x;
   let y = origin.position.y;
@@ -34,6 +34,13 @@ function cellsBetween(origin: Combatant, target: Combatant): Array<{ x: number; 
     if (x !== targetX || y !== targetY) cells.push({ x, y });
   }
   return cells;
+}
+
+export function hasLineOfSightToPoint(encounter: EncounterState, originId: string, x: number, y: number): boolean {
+  const origin = encounter.combatants.find((combatant) => combatant.id === originId);
+  if (!origin) return false;
+  return !cellsBetween(origin, { position: { x, y } }).some((cell) =>
+    encounter.map.terrain.some((terrain) => terrain.x === cell.x && terrain.y === cell.y && terrain.kind === "wall"));
 }
 
 export function analyzeTarget(encounter: EncounterState, targetId: string): TargetAnalysis | null {

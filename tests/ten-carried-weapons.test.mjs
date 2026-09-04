@@ -29,10 +29,10 @@ function player(state) {
   return state.combatants.find((combatant) => combatant.side === "player");
 }
 
-test("ten carried weapons raise executable coverage from 65 to 75", () => {
+test("the prior ten carried weapons remain executable", () => {
   const reports = BUILT_IN_CHARACTERS.map((character) => buildCharacterMechanicCoverage(character));
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
-  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 75);
+  assert.equal(reports.reduce((total, report) => total + report.executable, 0), 85);
 
   const expected = [
     ["cleira-oestwilde", "equipment-1-dagger", "srd-5.1"],

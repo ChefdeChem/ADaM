@@ -38,7 +38,7 @@ export type CharacterSpell = {
   level: number;
   castingTime: "action" | "bonus-action" | "reaction";
   rangeFeet: number;
-  target: "self" | "single" | "self-or-single";
+  target: "self" | "single" | "self-or-single" | "area";
   targetSide?: "friendly" | "hostile" | "any";
   requiresLineOfSight: boolean;
   attackBonus?: number;
@@ -54,6 +54,14 @@ export type CharacterSpell = {
   unsupportedReason?: string;
   missingCapabilities?: string[];
   provenance?: MechanicProvenance;
+  freeCastResourceName?: string;
+  area?: {
+    origin: "self";
+    shape: "cone" | "cube";
+    sizeFeet: number;
+    affects: "all-creatures" | "hostile-creatures";
+    pushFeetOnFailedSave?: number;
+  };
   trigger?: "after-melee-hit";
   triggeredDamage?: string;
   onHitEffect?: {
@@ -77,6 +85,7 @@ export type CharacterSpell = {
     conditionGranted?: string;
     preventsHarmingSource?: boolean;
     endsWhenSourceHarmsTarget?: boolean;
+    senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
   };
 };
 
@@ -87,7 +96,9 @@ export type CharacterPassiveFeature = {
   resolution:
     | { type: "damage-resistance"; damageTypes: string[] }
     | { type: "ancestry-defense"; savingThrowAdvantageAgainstConditions: string[]; conditionImmunities: string[] }
-    | { type: "unarmored-defense"; abilityModifiers: ["dexterity", "constitution"]; allowsShield: boolean };
+    | { type: "unarmored-defense"; abilityModifiers: ["dexterity", "constitution"]; allowsShield: boolean }
+    | { type: "skill-proficiency"; skill: string; ability: AbilityName }
+    | { type: "free-spell-cast"; spellId: string; resourceName: string };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;
 };
@@ -115,6 +126,11 @@ export type CharacterEquipmentRule = {
         type: "weapon";
         attackIds: string[];
         expendOnAttackIds?: string[];
+      }
+    | {
+        type: "ammunition";
+        attackIds: string[];
+        expendOnAttackIds: string[];
       };
   provenance: MechanicProvenance;
 };
@@ -150,6 +166,12 @@ export type CharacterFeatureAction = {
         rangeFeet: number;
         duration: "end-of-next-turn";
         blockedByTotalCover: boolean;
+      }
+    | {
+        type: "area-saving-throw";
+        area: NonNullable<CharacterSpell["area"]>;
+        save: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" };
+        damage: string;
       };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;

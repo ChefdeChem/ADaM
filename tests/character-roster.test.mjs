@@ -56,9 +56,9 @@ test("verified martial profiles preserve core defenses and legal weapon ranges",
   assert.equal(irvenWeber.attacks.find((attack) => attack.id === "thrown-javelin").normalRangeFeet, 30);
 });
 
-test("verified spellcasters preserve slots while exposing the executable five-spell slice", () => {
+test("verified spellcasters preserve slots while exposing executable spell slices", () => {
   assert.equal(irvenWeber.resources.find((resource) => resource.id === "spell-slot-1").maximum, 2);
-  assert.match(irvenWeber.spells.find((spell) => spell.id === "burning-hands").unsupportedReason, /cone targeting/i);
+  assert.equal(irvenWeber.spells.find((spell) => spell.id === "burning-hands").area.shape, "cone");
 
   assert.equal(pharos.profile.spellcasting.saveDc, 13);
   assert.equal(pharos.resources.find((resource) => resource.id === "spell-slot-1").recovery, "short-rest");

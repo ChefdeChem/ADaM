@@ -58,6 +58,15 @@ export const surinaDaardendrian: Character = {
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Damage Resistance" },
   }],
   featureActions: [{
+    id: "breath-weapon-gold",
+    name: "Breath Weapon (Gold)",
+    cost: "action",
+    description: "Aim a 15-foot cone through a selected creature. Each creature in it makes a DC 11 Dexterity save against fire damage.",
+    resourceName: "Breath Weapon (Gold)",
+    resourceCost: 1,
+    resolution: { type: "area-saving-throw", area: { origin: "self", shape: "cone", sizeFeet: 15, affects: "all-creatures" }, save: { ability: "dexterity", dc: 11, damageOnSuccess: "half" }, damage: "2d6 fire" },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Breath Weapon (Gold)" },
+  }, {
     id: "divine-sense",
     name: "Divine Sense",
     cost: "action",
@@ -102,7 +111,7 @@ export const surinaDaardendrian: Character = {
     ],
     features: [
       { id: "fire-resistance", name: "Fire Resistance", description: "Resistance to fire damage from Gold Dragon ancestry.", executablePassiveId: "fire-resistance", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Damage Resistance" } },
-      { name: "Breath Weapon (Gold)", description: "Once per short rest, creatures in a 15-foot cone make a DC 11 Dexterity save; 2d6 fire damage on a failure and half on a success. Area targeting is not implemented yet." },
+      { id: "breath-weapon-gold", name: "Breath Weapon (Gold)", description: "Once per short rest, creatures in a 15-foot cone make a DC 11 Dexterity save; 2d6 fire damage on a failure and half on a success.", executableActionId: "breath-weapon-gold", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Breath Weapon (Gold)" } },
       { id: "divine-sense", name: "Divine Sense", description: "Three times per long rest, sense certain celestials, fiends, undead, and hallowed places within 60 feet until the end of the next turn.", executableActionId: "divine-sense", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Divine Sense" } },
       { id: "lay-on-hands", name: "Lay on Hands", description: "Spend points from a 5-point pool as an Action to heal by touch, or spend 5 points to cure one disease or neutralize one poison.", executableActionId: "lay-on-hands", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Lay on Hands" } },
     ],
@@ -259,6 +268,13 @@ export const irvenWeber: Character = {
     resolution: { type: "weapon", attackIds: ["quarterstaff"] },
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Weapons: Quarterstaff" },
   }],
+  passiveFeatures: [{
+    id: "magic-initiate-wizard",
+    name: "Magic Initiate (Wizard)",
+    description: "Burning Hands can be cast once without a spell slot per Long Rest, or with an available spell slot.",
+    resolution: { type: "free-spell-cast", spellId: "burning-hands", resourceName: "Magic Initiate Free Cast" },
+    provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Origin Feat: Magic Initiate" },
+  }],
   featureActions: [{
     id: "lay-on-hands",
     name: "Lay On Hands",
@@ -282,7 +298,7 @@ export const irvenWeber: Character = {
     { id: "control-flames", name: "Control Flames", level: 0, castingTime: "action", rangeFeet: 60, target: "self", requiresLineOfSight: true, description: "Manipulates nonmagical flame in a 5-foot cube.", unsupportedReason: "Environmental flame selection and adjudication are not implemented yet." },
     { id: "searing-smite", name: "Searing Smite", level: 1, castingTime: "bonus-action", rangeFeet: 0, target: "self", requiresLineOfSight: false, trigger: "after-melee-hit", triggeredDamage: "1d6 fire", durationRounds: 10, description: "Immediately after a melee weapon or Unarmed Strike hit, deal extra fire damage and ignite the target until it succeeds on a Constitution save.", effect: { name: "Searing Smite", description: "At the start of each turn, the target takes 1d6 fire damage and then makes a DC 12 Constitution save, ending the spell on a success.", turnStartDamage: "1d6 fire", turnStartSave: { ability: "constitution", dc: 12, endsOnSuccess: true } }, provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Searing Smite" } },
     { id: "heroism", name: "Heroism", level: 1, castingTime: "action", rangeFeet: 5, target: "self-or-single", targetSide: "friendly", requiresLineOfSight: true, concentration: true, durationRounds: 10, description: "A willing creature is immune to the Frightened condition and gains temporary hit points at the start of each turn.", effect: { name: "Heroism", description: "The target is immune to Frightened and gains 2 temporary hit points at the start of each turn.", applyTo: "target", modifiers: { conditionImmunities: ["frightened"] }, turnStartTemporaryHitPoints: 2 }, provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Heroism" } },
-    { id: "burning-hands", name: "Burning Hands", level: 1, castingTime: "action", rangeFeet: 0, target: "self", targetSide: "hostile", requiresLineOfSight: false, damage: "3d6 fire", save: { ability: "dexterity", dc: 12, damageOnSuccess: "half" }, description: "Creatures in a 15-foot cone make a Dexterity save; this Magic Initiate spell has one free cast per long rest.", unsupportedReason: "Cone targeting and the free-cast-or-slot resource choice are not implemented yet." },
+    { id: "burning-hands", name: "Burning Hands", level: 1, castingTime: "action", rangeFeet: 0, target: "area", targetSide: "hostile", requiresLineOfSight: false, damage: "3d6 fire", save: { ability: "dexterity", dc: 12, damageOnSuccess: "half" }, freeCastResourceName: "Magic Initiate Free Cast", area: { origin: "self", shape: "cone", sizeFeet: 15, affects: "all-creatures" }, description: "Aim a 15-foot cone through a selected creature. Each creature in it makes a DC 12 Dexterity save; choose the free Magic Initiate cast or a spell slot.", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Burning Hands" } },
   ],
   actions: standardActions2024,
   profile: {
@@ -297,7 +313,7 @@ export const irvenWeber: Character = {
     equipment: [{ name: "Shield", quantity: 1, weightPounds: 6 }, { name: "Chain Mail", quantity: 1, weightPounds: 55 }, { name: "Longsword", quantity: 1, weightPounds: 3 }, { name: "Javelin", quantity: 6, weightPounds: 2 }, { name: "Quarterstaff", quantity: 1, weightPounds: 4 }],
     features: [
       { id: "lay-on-hands", name: "Lay On Hands", description: "Spend points from a 5-point pool as a Bonus Action to heal by touch, or spend 5 points to remove Poisoned.", executableActionId: "lay-on-hands", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Paladin: Lay On Hands" } },
-      { name: "Magic Initiate (Wizard)", description: "Knows two wizard cantrips and Burning Hands, which can be cast once free per long rest or with spell slots." },
+      { id: "magic-initiate-wizard", name: "Magic Initiate (Wizard)", description: "Knows two wizard cantrips and Burning Hands, which can be cast once free per long rest or with spell slots.", executablePassiveId: "magic-initiate-wizard", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Origin Feat: Magic Initiate" } },
       { id: "javelin-mastery-slow", name: "Javelin Mastery (Slow)", description: "After a damaging javelin hit, choose whether to reduce the target's Speed by 10 feet until the start of the next turn.", executableAttackIds: ["javelin", "thrown-javelin"], provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Weapon Mastery: Slow" } },
       { id: "longsword-mastery-sap", name: "Longsword Mastery (Sap)", description: "A longsword hit gives the target disadvantage on its next attack before the start of the next turn.", executableAttackIds: ["longsword"], provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Weapon Mastery: Sap" } },
     ],
@@ -330,6 +346,34 @@ export const pharos: Character = {
     description: "Light armor that sets AC to 11 plus the wearer’s Dexterity modifier.",
     resolution: { type: "armor", category: "light", baseArmorClass: 11, dexterityModifier: "full" },
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Armor and Shields: Leather" },
+  }, {
+    id: "dagger",
+    name: "Dagger",
+    equipped: true,
+    description: "Two carried daggers support melee and thrown attacks; each thrown attack removes one dagger from carried inventory.",
+    resolution: { type: "weapon", attackIds: ["dagger", "thrown-dagger"], expendOnAttackIds: ["thrown-dagger"] },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Weapons: Dagger and Thrown" },
+  }, {
+    id: "club",
+    name: "Club",
+    equipped: true,
+    description: "A carried club enables Pharos's registered melee attack.",
+    resolution: { type: "weapon", attackIds: ["club"] },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Weapons: Club" },
+  }, {
+    id: "light-crossbow",
+    name: "Light Crossbow",
+    equipped: true,
+    description: "A carried light crossbow enables its ranged attack while at least one bolt remains.",
+    resolution: { type: "weapon", attackIds: ["light-crossbow"] },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Weapons: Light Crossbow and Ammunition" },
+  }, {
+    id: "crossbow-bolts",
+    name: "Crossbow Bolts",
+    equipped: true,
+    description: "Each Light Crossbow attack expends one bolt, including on a miss.",
+    resolution: { type: "ammunition", attackIds: ["light-crossbow"], expendOnAttackIds: ["light-crossbow"] },
+    provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Weapon Properties: Ammunition" },
   }],
   featureActions: [{
     id: "adrenaline-rush",
