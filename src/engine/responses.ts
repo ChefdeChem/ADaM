@@ -258,7 +258,7 @@ export function rollOpportunityDamage(encounter: EncounterState, random = Math.r
   if (!result.legal) return { encounter, playerRoll: null, damageRoll: null, summary: result.reason };
   if (result.encounter.pendingResponse?.type === "weapon-mastery-choice") {
     const next = { ...result.encounter, pendingResponse: { ...result.encounter.pendingResponse, continuation: pending.continuation } };
-    return { encounter: next, playerRoll: null, damageRoll: result.roll, summary: `${result.summary} Decide whether to apply Slow before movement continues.` };
+    return { encounter: next, playerRoll: null, damageRoll: result.roll, summary: `${result.summary} Decide whether to apply ${next.pendingResponse.mastery === "slow" ? "Slow" : "Topple"} before movement continues.` };
   }
   const target = result.encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
   const resumed = target.hitPoints.current > 0 ? resumeMovementContinuation(result.encounter, pending.continuation, random) : null;
@@ -275,21 +275,28 @@ export function resolveWeaponMasteryChoice(encounter: EncounterState, useMastery
   if (!source || !target) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The weapon-mastery choice can no longer be resolved." };
 
   let next: EncounterState = { ...encounter, pendingResponse: null };
-  let summary = `${source.name} declines Slow; ${target.name}'s Speed is unchanged.`;
-  if (useMastery) {
+  let summary = `${source.name} declines ${pending.mastery === "slow" ? "Slow" : "Topple"}.`;
+  if (useMastery && pending.mastery === "slow") {
     next = applyEffect(next, {
       name: "Slow",
       description: "Speed is reduced by 10 feet until the start of the attacker's next turn.",
       sourceCombatantId: source.id,
       targetCombatantId: target.id,
       modifiers: { speedFeet: -10 },
-      expiresAt: pending.expiresAt,
+      expiresAt: pending.expiresAt!,
       replaceExisting: true,
     });
     if (encounter.combatants[encounter.activeIndex]?.id === target.id) {
       next = { ...next, turn: { ...next.turn, movementRemaining: Math.min(next.turn.movementRemaining, effectiveSpeed(next, target.id)) } };
     }
     summary = `${source.name} applies Slow with ${pending.attackName}; ${target.name}'s Speed is reduced by 10 feet.`;
+  }
+  if (useMastery && pending.mastery === "topple") {
+    const modifier = effectiveSavingThrowModifier(next, target.id, "constitution");
+    const save = rollD20({ mode: savingThrowRollMode(next, target.id, undefined, "normal", "constitution"), modifier, random });
+    const failed = save.total < (pending.saveDc ?? 8);
+    if (failed) next = { ...next, combatants: next.combatants.map((combatant) => combatant.id === target.id && !combatant.conditions.some((condition) => condition.toLowerCase() === "prone") ? { ...combatant, conditions: [...combatant.conditions, "prone"] } : combatant) };
+    summary = `${source.name} applies Topple with ${pending.attackName}; ${target.name} rolls ${save.total} vs DC ${pending.saveDc ?? 8} and ${failed ? "falls Prone" : "remains standing"}.`;
   }
   next = { ...next, log: [summary, ...next.log] };
 

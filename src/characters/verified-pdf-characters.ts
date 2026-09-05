@@ -79,11 +79,10 @@ export const surinaDaardendrian: Character = {
     id: "lay-on-hands",
     name: "Lay on Hands",
     cost: "action",
-    description: "As an Action, touch yourself or an ally and choose how many Lay on Hands points to spend as Hit Point healing.",
+    description: "As an Action, touch a creature to heal it, or spend 5 pool points for each registered disease or poison removed.",
     resourceName: "Lay on Hands Pool",
     resourceCost: "variable",
-    resolution: { type: "healing-pool", rangeFeet: 5, excludedCreatureTypes: ["undead", "construct"] },
-    missingCapabilities: ["Disease curing and individual poison neutralization are not executable yet."],
+    resolution: { type: "healing-pool", rangeFeet: 5, excludedCreatureTypes: ["undead", "construct"], removesPoisoned: true, removesAfflictions: ["disease", "poison"] },
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Lay on Hands" },
   }],
   attacks: [
@@ -182,12 +181,11 @@ export const goliathBarbarian: Character = {
       type: "activate-effect",
       effect: {
         name: "Rage",
-        description: "Resistance to bludgeoning, piercing, and slashing damage.",
+        description: "Physical resistance, +2 Strength-attack damage, and advantage on Strength checks and saves.",
         duration: "end-of-next-turn",
-        modifiers: { damageResistances: ["bludgeoning", "piercing", "slashing"], preventsSpellcasting: true, endsOnIncapacitated: true },
+        modifiers: { damageResistances: ["bludgeoning", "piercing", "slashing"], preventsSpellcasting: true, endsOnIncapacitated: true, abilityCheckAdvantages: ["strength"], savingThrowAdvantages: ["strength"], weaponDamageBonus: 2, rageExtension: true },
       },
     },
-    missingCapabilities: ["Rage Damage, Strength Advantage, duration extension, and Heavy armor restrictions are not executable yet."],
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" },
   }, {
     id: "large-form",
@@ -196,8 +194,7 @@ export const goliathBarbarian: Character = {
     description: "At level 5, become Large for 10 minutes, gain advantage on Strength checks, and increase Speed by 10 feet.",
     resourceName: "Large Form",
     resourceCost: 1,
-    resolution: { type: "activate-large-form", minimumLevel: 5, durationRounds: 100, speedBonusFeet: 10, strengthCheckAdvantage: true },
-    missingCapabilities: ["The tactical token remains one grid cell while the Large size state is active."],
+    resolution: { type: "activate-large-form", minimumLevel: 5, durationRounds: 100, speedBonusFeet: 10, strengthCheckAdvantage: true, requiresLargeSpace: true },
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Large Form" },
   }],
   triggeredFeatures: [{
@@ -212,10 +209,10 @@ export const goliathBarbarian: Character = {
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Giant Ancestry (Stone's Endurance)" },
   }],
   attacks: [
-    { id: "maul", name: "Maul", kind: "melee", attackBonus: 4, damage: "2d6 + 2 bludgeoning", normalRangeFeet: 5, description: "Martial, heavy, two-handed, Topple." },
-    { id: "spear", name: "Spear", kind: "melee", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 5, description: "Simple, versatile, Sap; one-handed damage." },
-    { id: "thrown-spear", name: "Thrown Spear", kind: "ranged", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 20, longRangeFeet: 60, description: "Normal to 20 feet; disadvantage from 25 to 60 feet." },
-    { id: "unarmed-strike", name: "Unarmed Strike", kind: "melee", attackBonus: 4, damage: "3 bludgeoning", normalRangeFeet: 5, description: "Fixed damage shown on the source sheet." },
+    { id: "maul", name: "Maul", kind: "melee", attackBonus: 4, damage: "2d6 + 2 bludgeoning", normalRangeFeet: 5, description: "Martial, heavy, two-handed, Topple.", ability: "strength", mastery: "topple", masteryProvenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian Weapon Mastery and Topple" } },
+    { id: "spear", name: "Spear", kind: "melee", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 5, description: "Simple, versatile, Sap; one-handed damage.", ability: "strength", mastery: "sap", masteryProvenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian Weapon Mastery and Sap" } },
+    { id: "thrown-spear", name: "Thrown Spear", kind: "ranged", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 20, longRangeFeet: 60, description: "Normal to 20 feet; disadvantage from 25 to 60 feet.", ability: "strength" },
+    { id: "unarmed-strike", name: "Unarmed Strike", kind: "melee", attackBonus: 4, damage: "3 bludgeoning", normalRangeFeet: 5, description: "Fixed damage shown on the source sheet.", ability: "strength" },
   ],
   actions: standardActions2024,
   profile: {
@@ -228,7 +225,7 @@ export const goliathBarbarian: Character = {
     proficiencies: { armor: ["Light Armor", "Medium Armor", "Shields"], weapons: ["Martial Weapons", "Simple Weapons"], tools: ["Darts"], languages: ["Common", "Giant", "Orc"] },
     equipment: [{ name: "Spear", quantity: 5, weightPounds: 3 }, { name: "Maul", quantity: 1, weightPounds: 10 }, { name: "Hooded Lantern", quantity: 1, weightPounds: 2 }],
     features: [
-      { id: "rage", name: "Rage", description: "Enter Rage as a Bonus Action. Gain physical damage resistance, end concentration, and prevent spellcasting. Incapacitation ends Rage. Rage Damage, Strength Advantage, duration extension, and Heavy armor restrictions remain partial.", executableActionId: "rage", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" } },
+      { id: "rage", name: "Rage", description: "Enter Rage as a Bonus Action. Gain physical resistance, Strength damage and roll benefits, and extend it with qualifying actions.", executableActionId: "rage", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" } },
       { id: "unarmored-defense", name: "Unarmored Defense", description: "While not wearing armor, base AC is 13 plus any shield bonus.", executablePassiveId: "unarmored-defense", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Unarmored Defense" } },
       { id: "stones-endurance", name: "Stone's Endurance", description: "Twice per long rest, react after taking damage to reduce it by 1d12 + 2.", executableTriggerId: "stones-endurance", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Giant Ancestry (Stone's Endurance)" } },
       { id: "savage-attacker", name: "Savage Attacker", description: "Once per turn on a weapon hit, roll the weapon damage dice twice and choose either result.", executablePassiveId: "savage-attacker", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Origin Feat: Savage Attacker" } },
@@ -454,7 +451,7 @@ export const pharos: Character = {
     ], provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Druidcraft" } },
     { id: "guidance", name: "Guidance", level: 0, castingTime: "action", rangeFeet: 5, target: "self-or-single", targetSide: "friendly", requiresLineOfSight: true, concentration: true, durationRounds: 10, description: "A touched creature can choose to add 1d4 to one ability check before the spell ends.", effect: { name: "Guidance", description: "Add 1d4 to one ability check.", applyTo: "target", rollBonus: { die: "1d4", appliesTo: ["ability-check"] }, consumeOnRollBonus: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Guidance" } },
     { id: "expeditious-retreat", name: "Expeditious Retreat", level: 1, castingTime: "bonus-action", rangeFeet: 0, target: "self", requiresLineOfSight: false, concentration: true, durationRounds: 100, description: "Dash when cast, then Dash as a Bonus Action on each turn while concentration lasts.", effect: { name: "Expeditious Retreat", description: "The caster can take the Dash action as a Bonus Action until concentration ends.", applyTo: "caster", modifiers: { bonusActionDash: true }, dashOnCast: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Expeditious Retreat" } },
-    { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 13, damageOnSuccess: "none" }, targetCreatureTypes: ["humanoid"], hostileSaveAdvantage: true, durationRounds: 600, description: "A humanoid target makes a DC 13 Wisdom save with advantage while fighting the caster or an ally. On a failure, it is charmed for 1 hour or until harmed by the caster or an ally.", effect: { name: "Charm Person", description: "The target is charmed by the caster and cannot harm the caster until the spell ends.", conditionGranted: "charmed", modifiers: { preventsHarmingSource: true }, endsWhenSourceHarmsTarget: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Charm Person" } },
+    { id: "charm-person", name: "Charm Person", level: 1, castingTime: "action", rangeFeet: 30, target: "single", targetSide: "hostile", requiresLineOfSight: true, save: { ability: "wisdom", dc: 13, damageOnSuccess: "none" }, targetCreatureTypes: ["humanoid"], hostileSaveAdvantage: true, durationRounds: 600, description: "A humanoid target makes a DC 13 Wisdom save with advantage while fighting the caster or an ally. On a failure, it is charmed for 1 hour or until harmed by the caster or an ally.", effect: { name: "Charm Person", description: "The target is charmed by the caster and cannot harm the caster until the spell ends.", conditionGranted: "charmed", modifiers: { preventsHarmingSource: true }, endsWhenSourceHarmsTarget: true, revealsSourceOnEnd: true }, provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Charm Person" } },
   ],
   actions: standardActions2014,
   profile: {

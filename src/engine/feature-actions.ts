@@ -1,6 +1,6 @@
 import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
-import { applyEffect, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, isIncapacitated, removeCondition, savingThrowRollMode } from "./effects";
+import { applyEffect, canOccupyCells, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, extendRage, isIncapacitated, removeCondition, removeEffect, savingThrowRollMode } from "./effects";
 import { analyzeTarget, hasLineOfSightToPoint } from "./targeting";
 import { spendNamedResource, validateNamedResource } from "./resources";
 import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
@@ -16,6 +16,7 @@ export type FeatureActionOptions = {
   targetCombatantId?: string;
   random?: () => number;
   removePoisoned?: boolean;
+  afflictionEffectIds?: string[];
 };
 
 export function featureCombatActions(character: Character): CombatAction[] {
@@ -41,9 +42,11 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
   const resourceAmount = feature.resourceCost === "variable" ? options.resourceAmount : feature.resourceCost;
   if (resourceAmount === undefined) return { legal: false, reason: `Choose how many points to spend on ${feature.name}.` };
   const removingPoison = Boolean(options.removePoisoned && feature.resolution.type === "healing-pool" && feature.resolution.removesPoisoned);
+  const afflictionEffectIds = feature.resolution.type === "healing-pool" ? [...new Set(options.afflictionEffectIds ?? [])] : [];
+  const afflictionCost = afflictionEffectIds.length * 5;
   if (options.removePoisoned && !removingPoison) return { legal: false, reason: "This feature does not support Poisoned-condition removal." };
-  if (!Number.isInteger(resourceAmount) || resourceAmount < (removingPoison ? 0 : 1)) return { legal: false, reason: `${feature.name} must spend a positive whole number of points, or 5 points to remove Poisoned.` };
-  const resource = validateNamedResource(encounter, active.id, feature.resourceName, resourceAmount + (removingPoison ? 5 : 0));
+  if (!Number.isInteger(resourceAmount) || resourceAmount < (removingPoison || afflictionEffectIds.length ? 0 : 1)) return { legal: false, reason: `${feature.name} must spend a positive whole number of points, or 5 points for each recovery choice.` };
+  const resource = validateNamedResource(encounter, active.id, feature.resourceName, resourceAmount + (removingPoison ? 5 : 0) + afflictionCost);
   if (!resource.legal) return resource;
 
   if (feature.resolution.type === "healing-pool") {
@@ -55,9 +58,13 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
     if (!hasLineOfSightToPoint(encounter, active.id, target.position.x, target.position.y)) return { legal: false, reason: "A solid obstacle prevents touching that creature." };
     if (target.deathSaves.failures >= 3) return { legal: false, reason: `${target.name} has died and cannot regain Hit Points from ${feature.name}.` };
     if (removingPoison && !target.conditions.some((condition) => condition.toLowerCase() === "poisoned")) return { legal: false, reason: `${target.name} is not Poisoned.` };
+    for (const effectId of afflictionEffectIds) {
+      const affliction = encounter.effects.find((effect) => effect.id === effectId && effect.targetCombatantId === target.id && effect.afflictionKind);
+      if (!affliction || !feature.resolution.removesAfflictions?.includes(affliction.afflictionKind!)) return { legal: false, reason: "Choose a registered disease or poison affecting the target." };
+    }
     if (resourceAmount > 0 && !canRegainHitPoints(encounter, target.id)) return { legal: false, reason: `${target.name} cannot regain Hit Points right now.` };
     const missingHitPoints = target.hitPoints.maximum - target.hitPoints.current;
-    if (missingHitPoints <= 0 && !removingPoison) return { legal: false, reason: `${target.name} is already at maximum Hit Points.` };
+    if (missingHitPoints <= 0 && !removingPoison && !afflictionEffectIds.length) return { legal: false, reason: `${target.name} is already at maximum Hit Points.` };
     if (resourceAmount > missingHitPoints) return { legal: false, reason: `${target.name} can regain at most ${missingHitPoints} Hit Points.` };
   }
   if (feature.resolution.type === "area-saving-throw") {
@@ -77,6 +84,7 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
   if (feature.resolution.type === "activate-large-form") {
     if (active.level < feature.resolution.minimumLevel) return { legal: false, reason: `${feature.name} requires level ${feature.resolution.minimumLevel}.` };
     if (active.size === "large" || encounter.effects.some((effect) => effect.sourceCombatantId === active.id && effect.modifiers.size === "large")) return { legal: false, reason: `${active.name} is already Large.` };
+    if (feature.resolution.requiresLargeSpace && !canOccupyCells(encounter, active.id, active.position, true)) return { legal: false, reason: `${active.name} does not have an open 10-foot-by-10-foot space for Large Form.` };
   }
   if (feature.resolution.type === "activate-effect" && encounter.effects.some((effect) =>
     effect.name === feature.resolution.effect.name
@@ -84,6 +92,7 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
     && effect.targetCombatantId === active.id)) {
     return { legal: false, reason: `${feature.resolution.effect.name} is already active.` };
   }
+  if (feature.id === "rage" && active.armorCategory === "heavy") return { legal: false, reason: "Rage cannot begin while wearing Heavy armor." };
   return { legal: true };
 }
 
@@ -92,7 +101,8 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
   if (!validation.legal) return { legal: false, reason: validation.reason ?? "That feature is not available.", encounter };
   const active = encounter.combatants[encounter.activeIndex];
   const resourceAmount = feature.resourceCost === "variable" ? options.resourceAmount! : feature.resourceCost;
-  let next = spendNamedResource(encounter, active.id, feature.resourceName, resourceAmount + (options.removePoisoned ? 5 : 0));
+  const afflictionEffectIds = feature.resolution.type === "healing-pool" ? [...new Set(options.afflictionEffectIds ?? [])] : [];
+  let next = spendNamedResource(encounter, active.id, feature.resourceName, resourceAmount + (options.removePoisoned ? 5 : 0) + afflictionEffectIds.length * 5);
   const turn = {
     ...next.turn,
     action: feature.cost === "action" ? false : next.turn.action,
@@ -118,6 +128,7 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
       if (!succeeded && feature.resolution.area.pushFeetOnFailedSave) next = pushTargetAway(next, active.id, target.id, feature.resolution.area.pushFeetOnFailedSave);
       results.push(`${target.name} ${succeeded ? "succeeds" : "fails"} (${saveRoll.total}) and takes ${effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType)} damage`);
     }
+    next = extendRage(next, active.id);
     const summary = `${active.name} uses ${feature.name}; ${damageRoll.total} ${damageRoll.formula.damageType} rolled. ${results.join("; ")}.`;
     return { legal: true, roll: damageRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
@@ -157,7 +168,10 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
         : combatant),
     };
     if (options.removePoisoned) next = removeCondition(next, targetId, "poisoned");
-    const summary = `${active.name} uses ${feature.name}; ${target.name} regains ${resourceAmount} Hit Point${resourceAmount === 1 ? "" : "s"}${options.removePoisoned ? " and loses Poisoned for 5 additional pool points" : ""}.`;
+    const removedAfflictions = afflictionEffectIds.map((effectId) => next.effects.find((effect) => effect.id === effectId)).filter(Boolean);
+    for (const effectId of afflictionEffectIds) next = removeEffect(next, effectId, "Lay on Hands removed the affliction");
+    const recoveryCopy = [options.removePoisoned ? "Poisoned" : "", ...removedAfflictions.map((effect) => effect!.name)].filter(Boolean);
+    const summary = `${active.name} uses ${feature.name}; ${target.name} regains ${resourceAmount} Hit Point${resourceAmount === 1 ? "" : "s"}${recoveryCopy.length ? ` and loses ${recoveryCopy.join(" and ")}` : ""}.`;
     return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
 
@@ -171,6 +185,7 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
       expiresAt: feature.resolution.effect.duration === "end-of-next-turn"
         ? { round: encounter.round + 1, combatantId: active.id, phase: "end" }
         : undefined,
+      maximumExpiresAtRound: feature.id === "rage" ? encounter.round + 100 : undefined,
     });
     const summary = `${active.name} uses ${feature.name}; ${feature.resolution.effect.name} is active until the end of their next turn.`;
     return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
@@ -241,4 +256,14 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
   }
 
   return { legal: false, reason: `${feature.name} does not have an executable resolution.`, encounter };
+}
+
+export function extendRageWithBonusAction(encounter: EncounterState, combatantId: string): FeatureActionResolution {
+  const actor = encounter.combatants.find((combatant) => combatant.id === combatantId);
+  if (!actor || encounter.combatants[encounter.activeIndex]?.id !== combatantId || actor.side !== "player") return { legal: false, reason: "Rage can be extended only on the raging character's turn.", encounter };
+  if (!encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn.", encounter };
+  const next = extendRage(encounter, combatantId);
+  if (next === encounter) return { legal: false, reason: "No active Rage can be extended right now.", encounter };
+  const summary = `${actor.name} uses a Bonus Action to extend Rage.`;
+  return { legal: true, summary, encounter: { ...next, turn: { ...next.turn, bonusAction: false }, log: [summary, ...next.log] } };
 }

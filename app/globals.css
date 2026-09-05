@@ -231,6 +231,9 @@ button{cursor:pointer}
 .token.defeated{background:#555;color:#ddd;border-color:#777;opacity:.52;box-shadow:none}
 .token.unconscious{background:#403634;color:#f0d2c3;border-color:#a77965;box-shadow:0 0 0 3px #0004}
 .token.selected{outline:3px solid #ffe09d;outline-offset:3px}
+.token-footprint{position:absolute;inset:5px;z-index:1;display:grid;place-items:center;border:2px dashed currentColor;border-radius:8px;font-size:13px;font-weight:900;opacity:.72}
+.token-footprint.player{color:var(--gold)}
+.token-footprint.enemy{color:var(--red)}
 .map-help{display:flex;gap:18px;padding:10px 18px;border-top:1px solid #ffffff18;color:#aeb0ab;font-size:9px}
 .map-help span:before{content:"•";margin-right:6px;color:var(--gold)}
 @media(max-width:850px){.target-panel.has-target{grid-template-columns:1fr 1fr}.target-panel.has-target>div{border-bottom:1px solid #ffffff18}.target-panel button{min-height:42px;grid-column:1/-1}.map-heading{align-items:flex-start;flex-direction:column}.map-legend{justify-content:flex-start}}

@@ -4,6 +4,7 @@ import { resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options
 import { queueConcentrationCheck } from "./defensive-responses";
 import { validateSpellSlot } from "./resources";
 import { resolvePointHazardsForCombatant } from "./point-effects";
+import { canOccupyCells } from "./effects";
 
 export type MovementStep = { x: number; y: number; cost: number };
 export type ReachableMovementCell = { x: number; y: number; cost: number; path: MovementStep[] };
@@ -40,8 +41,7 @@ export function legalMovementDestinations(encounter: EncounterState): ReachableM
       const y = current.y + dy;
       if (x < 0 || y < 0 || x >= encounter.map.width || y >= encounter.map.height) continue;
       const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
-      if (terrain?.kind === "wall") continue;
-      if (encounter.combatants.some((combatant) => combatant.id !== active.id && combatant.position.x === x && combatant.position.y === y)) continue;
+      if (!canOccupyCells(encounter, active.id, { x, y })) continue;
       const stepCost = terrain?.kind === "difficult" ? 10 : 5;
       const nextCost = current.cost + stepCost;
       if (nextCost > encounter.turn.movementRemaining) continue;

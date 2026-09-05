@@ -38,14 +38,14 @@ function withoutStoneReaction(encounter) {
   };
 }
 
-test("Rage is an executable partial 2024 feature with official provenance", () => {
+test("Rage is a fully supported executable 2024 feature with official provenance", () => {
   const rage = buildCharacterMechanicCoverage(goliathBarbarian).entries.find((entry) => entry.entityId === "rage" && entry.kind === "feature");
   assert.equal(rage.rulesetId, "dnd-2024");
   assert.equal(rage.sourceId, "srd-5.2.1");
-  assert.equal(rage.status, "partial");
+  assert.equal(rage.status, "supported");
   assert.equal(rage.executable, true);
-  assert.deepEqual(rage.components, ["action-economy", "resource-spend", "resource-recovery", "duration", "damage-resistance"]);
-  assert.match(rage.missingCapabilities.join(" "), /Rage Damage/i);
+  assert.deepEqual(rage.components, ["action-economy", "resource-spend", "resource-recovery", "duration", "damage-resistance", "ability-check", "advantage", "saving-throw", "damage-roll", "concentration"]);
+  assert.deepEqual(rage.missingCapabilities, []);
 });
 
 test("Rage spends one use and the Bonus Action, then creates a self effect", () => {

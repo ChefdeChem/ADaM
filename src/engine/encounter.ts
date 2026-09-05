@@ -77,6 +77,11 @@ function armorTrainingViolation(character: Character): boolean {
   return Boolean(armor?.resolution.type === "armor" && !hasEquipmentTraining(character, armor.resolution.category));
 }
 
+function equippedArmorCategory(character: Character): "light" | "medium" | "heavy" | undefined {
+  const armor = equippedEquipmentRules(character).find((rule) => rule.resolution.type === "armor");
+  return armor?.resolution.type === "armor" ? armor.resolution.category : undefined;
+}
+
 export function createEncounter(character: Character, scenario: Scenario): EncounterState {
   const characterInventory = combatInventoryForCharacter(character);
   const enemyPositions = [{ x: 9, y: 2 }, { x: 9, y: 5 }, { x: 10, y: 3 }];
@@ -101,6 +106,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
       abilityModifiers: Object.fromEntries(abilities.map((ability) => [ability, 0])) as Record<AbilityName, number>,
       toolProficiencies: [],
       conditions: [],
+      knownCharmSources: [],
       savingThrowAdvantagesAgainstConditions: [],
       conditionImmunities: [],
       abilityCheckDisadvantages: [],
@@ -140,6 +146,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         level: character.level,
         rulesetId: character.rulesetId,
         size: "medium",
+        armorCategory: equippedArmorCategory(character),
         baseArmorClass: characterBaseArmorClass(character),
         baseSpeedFeet: characterBaseSpeed(character),
         hitPoints: { ...character.hitPoints },
@@ -154,6 +161,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         damageResistances: (character.passiveFeatures ?? []).flatMap((feature) =>
           feature.resolution.type === "damage-resistance" ? feature.resolution.damageTypes : []),
         conditions: [],
+        knownCharmSources: [],
         savingThrowAdvantagesAgainstConditions: (character.passiveFeatures ?? []).flatMap((feature) =>
           feature.resolution.type === "ancestry-defense" ? feature.resolution.savingThrowAdvantageAgainstConditions : []),
         conditionImmunities: (character.passiveFeatures ?? []).flatMap((feature) =>

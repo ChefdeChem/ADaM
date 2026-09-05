@@ -4,9 +4,9 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import type { AbilityName, Character, CharacterAttack, CharacterEquipmentRule, CharacterFeatureAction, CharacterSpell } from "../src/domain/character";
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
-import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
-import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration } from "../src/engine/effects";
-import { executeFeatureAction } from "../src/engine/feature-actions";
+import { executeSpellChoice, revealDetectMagicAuras, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
+import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration, occupiedCells, removeEffect } from "../src/engine/effects";
+import { executeFeatureAction, extendRageWithBonusAction } from "../src/engine/feature-actions";
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolvePostHitSpellChoice, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
@@ -46,6 +46,7 @@ type FeatureFlow = null | {
   amount: number;
   maximum: number;
   removePoisoned?: boolean;
+  afflictionEffectIds?: string[];
 };
 type ToolFlow = null | { rule: CharacterEquipmentRule };
 
@@ -458,11 +459,12 @@ export default function Home() {
         const pool = activeCombatant.resources.find((resource) => resource.name.toLowerCase() === feature.resourceName.toLowerCase());
         const maximum = Math.min(pool?.current ?? 0, target.hitPoints.maximum - target.hitPoints.current);
         const canRemovePoison = feature.resolution.removesPoisoned && (pool?.current ?? 0) >= 5 && target.conditions.some((condition) => condition.toLowerCase() === "poisoned");
-        if (maximum < 1 && !canRemovePoison) { setFeedback(pool?.current ? `${target.name} is already at maximum Hit Points.` : `${feature.resourceName} has no points remaining.`); return; }
+        const afflictions = encounter.effects.filter((effect) => effect.targetCombatantId === target.id && effect.afflictionKind && feature.resolution.type === "healing-pool" && feature.resolution.removesAfflictions?.includes(effect.afflictionKind));
+        if (maximum < 1 && !canRemovePoison && !afflictions.length) { setFeedback(pool?.current ? `${target.name} is already at maximum Hit Points.` : `${feature.resourceName} has no points remaining.`); return; }
         setChoiceMode(null);
         setAttackFlow(null);
         setSpellFlow(null);
-        setFeatureFlow({ feature, targetId: target.id, amount: maximum, maximum, removePoisoned: maximum === 0 && Boolean(canRemovePoison) });
+        setFeatureFlow({ feature, targetId: target.id, amount: maximum, maximum, removePoisoned: maximum === 0 && Boolean(canRemovePoison), afflictionEffectIds: [] });
         setToolFlow(null);
         setFeedback(`Choose 1 to ${maximum} points to restore to ${target.name}. One pool point restores one Hit Point.`);
         return;
@@ -525,7 +527,7 @@ export default function Home() {
   function confirmFeatureChoice(event: FormEvent) {
     event.preventDefault();
     if (!featureFlow) return;
-    const result = executeFeatureAction(encounter, featureFlow.feature, { resourceAmount: featureFlow.amount, targetCombatantId: featureFlow.targetId, removePoisoned: featureFlow.removePoisoned });
+    const result = executeFeatureAction(encounter, featureFlow.feature, { resourceAmount: featureFlow.amount, targetCombatantId: featureFlow.targetId, removePoisoned: featureFlow.removePoisoned, afflictionEffectIds: featureFlow.afflictionEffectIds });
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter);
     setFeatureFlow(null);
@@ -549,6 +551,25 @@ export default function Home() {
     }
     setEncounter(next);
     setFeedback("Concentration ended. No Action was spent.");
+  }
+
+  function extendRageNow() {
+    const result = extendRageWithBonusAction(encounter, playerCombatant.id);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
+  }
+
+  function endLargeForm(effectId: string) {
+    setEncounter(removeEffect(encounter, effectId, `${playerCombatant.name} chose to return to normal size`));
+    setFeedback("Large Form ended. No Action was spent.");
+  }
+
+  function inspectMagicAuras() {
+    const result = revealDetectMagicAuras(encounter, playerCombatant.id);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
   }
 
   function rollInitiative() {
@@ -889,8 +910,9 @@ export default function Home() {
         {encounter.pendingResponse?.type === "weapon-mastery-choice" && (() => {
           const pending = encounter.pendingResponse;
           const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
+          const slow = pending.mastery === "slow";
           return <section className="roll-coach response-coach reaction-coach" aria-live="assertive">
-            <div><span>Player choice · Weapon mastery</span><h3>Apply Slow with {pending.attackName}?</h3><p>The attack damaged {target.name}. You may reduce the target&apos;s Speed by 10 feet until the start of your next turn. Multiple Slow applications cannot reduce Speed by more than 10 feet.</p><div className="response-actions"><button type="button" onClick={() => chooseWeaponMastery(true)}><small>Use Slow</small><strong>Reduce Speed by 10 feet</strong><em>This does not spend an action or resource.</em></button><button type="button" className="decline-response" onClick={() => chooseWeaponMastery(false)}><small>Skip Slow</small><strong>Keep current Speed</strong></button></div></div>
+            <div><span>Player choice · Weapon mastery</span><h3>Apply {slow ? "Slow" : "Topple"} with {pending.attackName}?</h3><p>{slow ? `The attack damaged ${target.name}. You may reduce its Speed by 10 feet until the start of your next turn.` : `${target.name} can make a Constitution save against DC ${pending.saveDc}; on a failure it becomes Prone.`}</p><div className="response-actions"><button type="button" onClick={() => chooseWeaponMastery(true)}><small>Use {slow ? "Slow" : "Topple"}</small><strong>{slow ? "Reduce Speed by 10 feet" : `Force DC ${pending.saveDc} save`}</strong><em>This does not spend an action or resource.</em></button><button type="button" className="decline-response" onClick={() => chooseWeaponMastery(false)}><small>Skip {slow ? "Slow" : "Topple"}</small><strong>Leave the target unchanged</strong></button></div></div>
           </section>;
         })()}
         {encounter.pendingResponse?.type === "post-hit-spell-choice" && (() => {
@@ -956,7 +978,8 @@ export default function Home() {
                 const y = Math.floor(index / encounter.map.width);
                 const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
                 const pointEffect = encounter.effects.find((effect) => effect.points?.some((point) => point.x === x && point.y === y));
-                const occupant = encounter.combatants.find((combatant) => combatant.position.x === x && combatant.position.y === y);
+                const occupant = encounter.combatants.find((combatant) => occupiedCells(encounter, combatant.id).some((cell) => cell.x === x && cell.y === y));
+                const occupantAnchor = occupant?.position.x === x && occupant?.position.y === y;
                 const movementCell = legalMovementByCell.get(`${x},${y}`);
                 const reachable = !attackFlow && !spellFlow && initiativeReady && activeCombatant.side === "player" && !occupant && Boolean(movementCell);
                 const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
@@ -969,7 +992,8 @@ export default function Home() {
                   <small>{coordinate}</small>
                   {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : terrain.kind === "flame" ? terrain.flame?.lit ? "♨" : "○" : "◆"}</span>}
                   {pointEffect && <span className={`point-effect-mark point-effect-${pointEffect.pointEffect?.type ?? "effect"}`} aria-hidden="true">{pointEffect.pointEffect?.type === "illusion" ? pointEffect.pointEffect.mode === "image" ? "◇" : "◌" : pointEffect.pointEffect?.type === "utility-marker" ? pointEffect.pointEffect.kind === "bloom" ? "✦" : "☁" : "•"}</span>}
-                  {occupant && <span className={`token ${occupant.side} ${occupant.hitPoints.current <= 0 ? occupant.side === "player" && !occupant.stabilized && occupant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.hitPoints.current <= 0 ? occupant.stabilized ? "S" : "0" : occupant.name.slice(0, 2).toUpperCase()}</span>}
+                  {occupant && occupantAnchor && <span className={`token ${occupant.side} ${occupant.hitPoints.current <= 0 ? occupant.side === "player" && !occupant.stabilized && occupant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""} ${targeted ? "selected" : ""}`} title={occupant.name}>{occupant.hitPoints.current <= 0 ? occupant.stabilized ? "S" : "0" : occupant.name.slice(0, 2).toUpperCase()}</span>}
+                  {occupant && !occupantAnchor && <span className={`token-footprint ${occupant.side}`} aria-hidden="true">↖</span>}
                 </button>;
               })}
             </div>
@@ -983,7 +1007,7 @@ export default function Home() {
 
         <section className="state-tray" aria-label="Character resources and temporary effects">
           <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses and carried weapons</h3></div><div className="resource-pills">{playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>)}{playerCombatant.inventory.map((item) => <div key={`inventory-${item.id}`}><span>{item.name}</span><strong>{item.current}/{item.maximum}</strong></div>)}{!playerCombatant.resources.length && !playerCombatant.inventory.length && <p>No tracked resources imported.</p>}</div>{outcome === "victory" && <div className="rest-recovery"><span>Post-encounter recovery</span><div><button type="button" onClick={() => recoverAfterRest("short-rest")}>Recover after Short Rest</button><button type="button" onClick={() => recoverAfterRest("long-rest")}>Recover after Long Rest</button></div><small>Refreshes only resources whose registered rules recover on that rest.</small></div>}</div>
-          <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3>{encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === playerCombatant.id) && <button type="button" onClick={releaseConcentration}>End concentration · No Action</button>}</div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.description}</small></div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
+          <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3>{encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === playerCombatant.id) && <button type="button" onClick={releaseConcentration}>End concentration · No Action</button>}{encounter.effects.some((effect) => effect.sourceCombatantId === playerCombatant.id && effect.modifiers.rageExtension) && <button type="button" onClick={extendRageNow}>Extend Rage · Bonus Action</button>}{encounter.effects.some((effect) => effect.sourceCombatantId === playerCombatant.id && effect.senseMagic) && <button type="button" onClick={inspectMagicAuras}>Reveal magic auras · Action</button>}</div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.description}</small>{effect.modifiers.size === "large" && <button type="button" onClick={() => endLargeForm(effect.id)}>End Large Form · No Action</button>}</div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
         </section>
 
         <section className="action-console">
@@ -1003,11 +1027,14 @@ export default function Home() {
           {featureFlow && (() => {
             const target = encounter.combatants.find((combatant) => combatant.id === featureFlow.targetId)!;
             const pool = playerCombatant.resources.find((resource) => resource.name.toLowerCase() === featureFlow.feature.resourceName.toLowerCase())?.current ?? 0;
-            const maximum = Math.min(featureFlow.maximum, Math.max(0, pool - (featureFlow.removePoisoned ? 5 : 0)));
+            const afflictionCost = (featureFlow.afflictionEffectIds?.length ?? 0) * 5;
+            const maximum = Math.min(featureFlow.maximum, Math.max(0, pool - (featureFlow.removePoisoned ? 5 : 0) - afflictionCost));
             const poisonChoice = featureFlow.feature.resolution.type === "healing-pool" && featureFlow.feature.resolution.removesPoisoned && target.conditions.some((condition) => condition.toLowerCase() === "poisoned");
+            const afflictions = featureFlow.feature.resolution.type === "healing-pool" ? encounter.effects.filter((effect) => effect.targetCombatantId === target.id && effect.afflictionKind && featureFlow.feature.resolution.type === "healing-pool" && featureFlow.feature.resolution.removesAfflictions?.includes(effect.afflictionKind)) : [];
             return <form className="choice-panel feature-choice" onSubmit={confirmFeatureChoice}><div className="choice-heading"><div><span>Choose healing and recovery</span><strong>{featureFlow.feature.name}</strong></div><button type="button" onClick={() => setFeatureFlow(null)}>Cancel</button></div><div className="feature-choice-form"><div><span>Target</span><strong>{target.name}</strong><small>{target.hitPoints.current}/{target.hitPoints.maximum} Hit Points</small></div>
-              {poisonChoice && <label><input type="checkbox" checked={Boolean(featureFlow.removePoisoned)} disabled={pool < 5} onChange={(event) => setFeatureFlow({ ...featureFlow, removePoisoned: event.target.checked, amount: event.target.checked ? Math.min(featureFlow.amount, Math.max(0, pool - 5)) : featureFlow.amount })} />Remove Poisoned · 5 additional points</label>}
-              <label htmlFor="feature-healing-amount">Points for healing<input id="feature-healing-amount" type="number" min={featureFlow.removePoisoned ? 0 : 1} max={maximum} step="1" value={featureFlow.amount} onChange={(event) => setFeatureFlow({ ...featureFlow, amount: Number(event.target.value) })} /></label><button type="submit">Spend {featureFlow.amount + (featureFlow.removePoisoned ? 5 : 0)} · Restore {featureFlow.amount} HP{featureFlow.removePoisoned ? " · Remove Poisoned" : ""}</button></div></form>;
+              {poisonChoice && <label><input type="checkbox" checked={Boolean(featureFlow.removePoisoned)} disabled={!featureFlow.removePoisoned && pool - afflictionCost < 5} onChange={(event) => { const reserved = afflictionCost + (event.target.checked ? 5 : 0); setFeatureFlow({ ...featureFlow, removePoisoned: event.target.checked, amount: Math.min(featureFlow.amount, Math.max(0, pool - reserved)) }); }} />Remove Poisoned · 5 additional points</label>}
+              {afflictions.map((effect) => { const selected = featureFlow.afflictionEffectIds?.includes(effect.id) ?? false; return <label key={effect.id}><input type="checkbox" checked={selected} disabled={!selected && pool - (featureFlow.removePoisoned ? 5 : 0) - afflictionCost < 5} onChange={(event) => { const ids = event.target.checked ? [...(featureFlow.afflictionEffectIds ?? []), effect.id] : (featureFlow.afflictionEffectIds ?? []).filter((id) => id !== effect.id); const reserved = (featureFlow.removePoisoned ? 5 : 0) + ids.length * 5; setFeatureFlow({ ...featureFlow, afflictionEffectIds: ids, amount: Math.min(featureFlow.amount, Math.max(0, pool - reserved)) }); }} />Remove {effect.name} · 5 points</label>; })}
+              <label htmlFor="feature-healing-amount">Points for healing<input id="feature-healing-amount" type="number" min={featureFlow.removePoisoned || featureFlow.afflictionEffectIds?.length ? 0 : 1} max={maximum} step="1" value={featureFlow.amount} onChange={(event) => setFeatureFlow({ ...featureFlow, amount: Number(event.target.value) })} /></label><button type="submit">Spend {featureFlow.amount + (featureFlow.removePoisoned ? 5 : 0) + afflictionCost} · Restore {featureFlow.amount} HP{featureFlow.removePoisoned ? " · Remove Poisoned" : ""}{featureFlow.afflictionEffectIds?.length ? ` · Remove ${featureFlow.afflictionEffectIds.length} affliction${featureFlow.afflictionEffectIds.length === 1 ? "" : "s"}` : ""}</button></div></form>;
           })()}
           {toolFlow && toolFlow.rule.resolution.type === "tool-check" && <div className="choice-panel"><div className="choice-heading"><div><span>Choose check ability</span><strong>{toolFlow.rule.name}</strong></div><button type="button" onClick={() => setToolFlow(null)}>Cancel</button></div><div className="choice-grid">{abilityLabels.filter((ability) => toolFlow.rule.resolution.type === "tool-check" && toolFlow.rule.resolution.allowedAbilities.includes(ability.id)).map((ability) => <button type="button" key={ability.id} onClick={() => chooseToolAbility(ability.id)}><span>Ability check</span><strong>{ability.label}</strong><small>{playerCombatant.inventory.find((item) => item.id === toolFlow.rule.id)?.tool?.proficient ? `Ability modifier + ${playerCombatant.proficiencyBonus} proficiency` : "Ability modifier only"}</small></button>)}</div></div>}
           <div className="area-effect-note"><span>Area effects</span><p>Cones and cubes now find every creature in the aimed area, resolve one saving throw per target, apply shared damage, and handle forced movement.</p></div>

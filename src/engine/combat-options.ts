@@ -1,7 +1,7 @@
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
-import { applyEffect, canHarmTarget, canRegainHitPoints, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
+import { activeWeaponDamageBonus, applyEffect, canHarmTarget, canRegainHitPoints, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, extendRage, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
 import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { attackInventoryAvailable, consumeAttackInventory } from "./inventory";
 import { analyzeTarget, gridDistanceFeet, hasLineOfSightToPoint } from "./targeting";
@@ -70,6 +70,7 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
   let next=consumeAttackRollEffects(encounter,active.id,target.target.id);
   next=consumeAttackInventory(next,active.id,attack.id);
+  next=extendRage(next,active.id);
   if(hit&&attack.mastery==="sap"){
     next=applyEffect(next,{
       name:"Sap",
@@ -118,6 +119,7 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
   const summary=`Opportunity attack with ${attack.name}${rollMode==="disadvantage"?" with disadvantage":""}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
   let next=consumeAttackRollEffects(encounter,attacker.id,target.id);
+  next=extendRage(next,attacker.id);
   if(hit&&attack.mastery==="sap"){
     next=applyEffect(next,{
       name:"Sap",
@@ -222,6 +224,8 @@ export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAtt
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!target)return{legal:false,reason:"The target is no longer available.",encounter};
   const sourceBefore=sourceCombatantId?encounter.combatants.find((combatant)=>combatant.id===sourceCombatantId):undefined;
+  const rageDamageBonus=sourceBefore?activeWeaponDamageBonus(encounter,sourceBefore.id,attack.ability):0;
+  if(rageDamageBonus)roll={...roll,modifier:roll.modifier+rageDamageBonus,total:roll.total+rageDamageBonus};
   const featureId=sourceBefore?.weaponDamageRerollFeatureId;
   const canReroll=Boolean(featureId&&sourceBefore?.attacks.some((candidate)=>candidate.id===attack.id)&&!encounter.turn.usedFeatureIds.includes(featureId));
   let alternateRoll:DamageRoll|undefined;
@@ -240,14 +244,15 @@ export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAtt
   const summary=`${critical?"Critical damage":`${attack.name} damage`}: ${dice} = ${roll.total} ${roll.formula.damageType} to ${target.name}${resistanceCopy}.${rerollCopy}`;
   const source=sourceCombatantId?encounter.combatants.find((combatant)=>combatant.id===sourceCombatantId):undefined;
   const updatedTarget=damaged.combatants.find((combatant)=>combatant.id===targetId);
-  if(attack.mastery==="slow"&&source?.side==="player"&&damageApplied>0&&(updatedTarget?.hitPoints.current??0)>0&&!damaged.pendingResponse){
+  if((attack.mastery==="slow"||attack.mastery==="topple")&&source?.side==="player"&&(attack.mastery==="topple"||damageApplied>0)&&(updatedTarget?.hitPoints.current??0)>0&&!damaged.pendingResponse){
     damaged={...damaged,pendingResponse:{
       type:"weapon-mastery-choice",
-      mastery:"slow",
+      mastery:attack.mastery,
       sourceCombatantId:source.id,
       targetCombatantId:targetId,
       attackName:attack.name,
-      expiresAt:{round:nextTurnRound(encounter,source.id),combatantId:source.id,phase:"start"},
+      expiresAt:attack.mastery==="slow"?{round:nextTurnRound(encounter,source.id),combatantId:source.id,phase:"start"}:undefined,
+      saveDc:attack.mastery==="topple"?8+(source.abilityModifiers[attack.ability??"strength"]??0)+source.proficiencyBonus:undefined,
     }};
   }
   return{legal:true,roll,alternateRoll,damageApplied,summary,encounter:{...damaged,log:[summary,...damaged.log]}};
@@ -472,7 +477,8 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       results.push(`${target.name} ${succeeded ? "succeeds" : "fails"} (${saveRoll.total}) and takes ${effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType)} damage`);
     }
     const sourceCopy = castingResource === "free-cast" ? spell.freeCastResourceName : `a level ${spell.level} slot`;
-    const summary = `${active.name} casts ${spell.name} using ${sourceCopy}; ${damageRoll.total} ${damageRoll.formula.damageType} rolled. ${results.join("; ")}.`;
+    const environmentalCopy = spell.name === "Thunderwave" ? " The thunderous boom is audible to 300 feet, and unsecured objects wholly inside the cube are pushed 10 feet." : "";
+    const summary = `${active.name} casts ${spell.name} using ${sourceCopy}; ${damageRoll.total} ${damageRoll.formula.damageType} rolled. ${results.join(";")}.${environmentalCopy}`;
     return { legal: true, roll: damageRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
   if (spell.save) {
@@ -526,4 +532,23 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
     : "";
   const summary = `${spell.name} cast on ${targetName} using ${slotCopy}.${rollCopy}${detectionCopy}`;
   return { legal: true, roll, summary, encounter: { ...next, log: [`${active.name}: ${summary}`, ...next.log] } };
+}
+
+export function revealDetectMagicAuras(encounter: EncounterState, combatantId: string): OptionResolution {
+  const actor = encounter.combatants.find((combatant) => combatant.id === combatantId);
+  const detectMagic = encounter.effects.find((effect) => effect.sourceCombatantId === combatantId && effect.senseMagic);
+  if (!actor || encounter.combatants[encounter.activeIndex]?.id !== combatantId || !detectMagic?.senseMagic) return { legal: false, reason: "Detect Magic is not active for this character.", encounter };
+  if (!encounter.turn.action) return { legal: false, reason: "Revealing magical auras requires an available Action.", encounter };
+  const inRange = (position: { x: number; y: number }) => Math.max(Math.abs(actor.position.x - position.x), Math.abs(actor.position.y - position.y)) * 5 <= detectMagic.senseMagic!.rangeFeet;
+  const visible = (position: { x: number; y: number }) => hasLineOfSightToPoint(encounter, combatantId, position.x, position.y);
+  const terrainAuras = encounter.map.terrain.filter((cell) => cell.magicAura && inRange(cell) && visible(cell)).map((cell) => `${cell.magicAura} at ${String.fromCharCode(65 + cell.x)}${cell.y + 1}`);
+  const effectAuras = encounter.effects.filter((effect) => {
+    if (effect.id === detectMagic.id) return false;
+    const target = encounter.combatants.find((candidate) => candidate.id === effect.targetCombatantId);
+    return Boolean(target && inRange(target.position) && visible(target.position));
+  })
+    .map((effect) => `${effect.name} on ${encounter.combatants.find((candidate) => candidate.id === effect.targetCombatantId)?.name ?? "a creature"}`);
+  const auras = [...terrainAuras, ...effectAuras];
+  const summary = `${actor.name} uses an Action to inspect magical auras and detects ${auras.length ? auras.join(", ") : "no visible registered auras"}.`;
+  return { legal: true, roll: null, summary, encounter: { ...encounter, turn: { ...encounter.turn, action: false }, log: [summary, ...encounter.log] } };
 }

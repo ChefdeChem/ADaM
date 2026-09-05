@@ -2,6 +2,7 @@ import type { EncounterState } from "../domain/combat";
 import { applyDamageToCombatant } from "./combat-options";
 import { rollD20, rollDamage } from "./dice";
 import { effectHasStarted, effectiveDamageAmount, effectiveSavingThrowModifier, removeEffect } from "./effects";
+import { queueConcentrationCheck } from "./defensive-responses";
 
 export function resolveTurnStartEffects(encounter: EncounterState, combatantId: string, random = Math.random): EncounterState {
   const target = encounter.combatants.find((combatant) => combatant.id === combatantId);
@@ -10,6 +11,7 @@ export function resolveTurnStartEffects(encounter: EncounterState, combatantId: 
   const effects = encounter.effects.filter((effect) => effect.targetCombatantId === combatantId && effectHasStarted(encounter, effect));
 
   for (const effect of effects) {
+    let damageApplied = 0;
     if (effect.turnStartTemporaryHitPoints) {
       const amount = effect.turnStartTemporaryHitPoints;
       const current = next.combatants.find((combatant) => combatant.id === combatantId)?.temporaryHitPoints ?? 0;
@@ -26,6 +28,7 @@ export function resolveTurnStartEffects(encounter: EncounterState, combatantId: 
       const damageRoll = rollDamage(effect.turnStartDamage, { random });
       if (!damageRoll) continue;
       const applied = effectiveDamageAmount(next, combatantId, damageRoll.total, damageRoll.formula.damageType);
+      damageApplied = applied;
       next = applyDamageToCombatant(next, combatantId, damageRoll.total, {
         damageType: damageRoll.formula.damageType,
         sourceCombatantId: effect.sourceCombatantId,
@@ -45,6 +48,7 @@ export function resolveTurnStartEffects(encounter: EncounterState, combatantId: 
       };
       if (succeeded && effect.turnStartSave.endsOnSuccess) next = removeEffect(next, effect.id, "the saving throw succeeded");
     }
+    if (damageApplied > 0 && !next.pendingResponse) next = queueConcentrationCheck(next, combatantId, damageApplied);
   }
   return next;
 }

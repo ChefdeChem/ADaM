@@ -56,6 +56,7 @@ function attackEntry(character: Character, attack: CharacterAttack): RuleRegistr
   const components: MechanicComponent[] = ["targeting", "range", "attack-roll", "damage-roll"];
   if (attack.mastery === "sap") components.push("trigger", "duration");
   if (attack.mastery === "slow") components.push("trigger", "movement", "duration");
+  if (attack.mastery === "topple") components.push("trigger", "saving-throw", "condition");
   return entry(
     character,
     "attack",
@@ -65,6 +66,7 @@ function attackEntry(character: Character, attack: CharacterAttack): RuleRegistr
     components,
     hasUnresolvedRider ? ["Weapon property or rider resolution"] : [],
     true,
+    attack.masteryProvenance,
   );
 }
 
@@ -164,9 +166,16 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
       const components: MechanicComponent[] = executableAction?.resolution.type === "dash-and-temporary-hit-points"
         ? ["action-economy", "movement", "resource-spend", "resource-recovery", "temporary-hit-points"]
         : executableAction?.resolution.type === "healing-pool"
-          ? ["action-economy", "targeting", "range", "resource-spend", "resource-recovery", "hit-point-restoration"]
+          ? ["action-economy", "targeting", "range", "resource-spend", "resource-recovery", "hit-point-restoration",
+              ...(executableAction.resolution.excludedCreatureTypes?.length ? ["creature-type" as const] : []),
+              ...(executableAction.resolution.removesPoisoned || executableAction.resolution.removesAfflictions?.length ? ["condition" as const] : [])]
         : executableAction?.resolution.type === "activate-effect"
-          ? ["action-economy", "resource-spend", "resource-recovery", "duration", "damage-resistance"]
+          ? ["action-economy", "resource-spend", "resource-recovery", "duration",
+              ...(executableAction.resolution.effect.modifiers.damageResistances?.length ? ["damage-resistance" as const] : []),
+              ...(executableAction.resolution.effect.modifiers.abilityCheckAdvantages?.length ? ["ability-check" as const, "advantage" as const] : []),
+              ...(executableAction.resolution.effect.modifiers.savingThrowAdvantages?.length ? ["saving-throw" as const, ...(executableAction.resolution.effect.modifiers.abilityCheckAdvantages?.length ? [] : ["advantage" as const])] : []),
+              ...(executableAction.resolution.effect.modifiers.weaponDamageBonus ? ["damage-roll" as const] : []),
+              ...(executableAction.resolution.effect.modifiers.preventsSpellcasting ? ["concentration" as const] : [])]
         : executableAction?.resolution.type === "sense-creature-types"
           ? ["action-economy", "resource-spend", "resource-recovery", "range", "duration", "creature-type", "detection"]
         : executableAction?.resolution.type === "area-saving-throw"
@@ -201,6 +210,8 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
             ? ["trigger", "damage-roll", "movement", "duration"]
           : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "sap")
             ? ["trigger", "attack-roll", "duration"]
+          : attackMechanicExecutable && executableAttacks.some((attack) => attack.mastery === "topple")
+            ? ["trigger", "saving-throw", "condition"]
         : ["reference"];
       const missingCapabilities = executable?.missingCapabilities ?? [];
       const isExecutable = Boolean(executable) || attackMechanicExecutable;

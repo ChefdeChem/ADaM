@@ -162,11 +162,12 @@ export type PendingPlayerResponse =
     }
   | {
       type: "weapon-mastery-choice";
-      mastery: "slow";
+      mastery: "slow" | "topple";
       sourceCombatantId: string;
       targetCombatantId: string;
       attackName: string;
-      expiresAt: { round: number; combatantId: string; phase: "start" };
+      expiresAt?: { round: number; combatantId: string; phase: "start" };
+      saveDc?: number;
       continuation?: MovementContinuation;
     }
   | {
@@ -191,9 +192,12 @@ export type EffectModifiers = {
   conditionImmunities?: string[];
   preventsHarmingSource?: boolean;
   abilityCheckAdvantages?: string[];
+  savingThrowAdvantages?: AbilityName[];
+  weaponDamageBonus?: number;
   preventsSpellcasting?: boolean;
   endsOnIncapacitated?: boolean;
   size?: "large";
+  rageExtension?: boolean;
 };
 
 export type ActiveEffect = {
@@ -214,6 +218,7 @@ export type ActiveEffect = {
   turnStartSave?: { ability: AbilityName; dc: number; endsOnSuccess: boolean };
   conditionGranted?: string;
   endsWhenSourceHarmsTarget?: boolean;
+  revealsSourceOnEnd?: boolean;
   sense?: { creatureTypes: string[]; rangeFeet: number; blockedByTotalCover: boolean };
   senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
   rollBonus?: { die: "1d4" | "1d6"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
@@ -224,6 +229,8 @@ export type ActiveEffect = {
     | { type: "damaging-hazard"; sizeFeet: number; damage: string; save: { ability: AbilityName; dc: number; damageOnSuccess: "half" | "none" } }
     | { type: "illusion"; mode: "sound" | "image"; sizeFeet: 5; investigationDc: number; discoveredBy: string[] }
     | { type: "utility-marker"; kind: "weather-sensor" | "bloom"; sizeFeet: number };
+  maximumExpiresAtRound?: number;
+  afflictionKind?: "disease" | "poison";
 };
 
 export type Combatant = {
@@ -234,6 +241,7 @@ export type Combatant = {
   proficiencyBonus: number;
   level: number;
   size: "small" | "medium" | "large";
+  armorCategory?: "light" | "medium" | "heavy";
   baseArmorClass: number;
   baseSpeedFeet: number;
   hitPoints: { current: number; maximum: number };
@@ -247,6 +255,7 @@ export type Combatant = {
   toolProficiencies: string[];
   spellSaveDc?: number;
   conditions: string[];
+  knownCharmSources?: string[];
   savingThrowAdvantagesAgainstConditions: string[];
   conditionImmunities: string[];
   abilityCheckDisadvantages: string[];

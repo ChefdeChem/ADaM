@@ -29,7 +29,9 @@ export type CharacterAttack = {
   normalRangeFeet: number;
   longRangeFeet?: number;
   description?: string;
-  mastery?: "sap" | "slow";
+  ability?: AbilityName;
+  mastery?: "sap" | "slow" | "topple";
+  masteryProvenance?: MechanicProvenance;
 };
 
 export type CharacterSpell = {
@@ -85,6 +87,7 @@ export type CharacterSpell = {
     conditionGranted?: string;
     preventsHarmingSource?: boolean;
     endsWhenSourceHarmsTarget?: boolean;
+    revealsSourceOnEnd?: boolean;
     senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
     rollBonus?: { die: "1d4" | "1d6"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
     consumeOnRollBonus?: boolean;
@@ -189,6 +192,7 @@ export type CharacterFeatureAction = {
         rangeFeet: 5;
         excludedCreatureTypes?: string[];
         removesPoisoned?: boolean;
+        removesAfflictions?: Array<"disease" | "poison">;
       }
     | {
         type: "activate-effect";
@@ -227,6 +231,7 @@ export type CharacterFeatureAction = {
         durationRounds: number;
         speedBonusFeet: number;
         strengthCheckAdvantage: true;
+        requiresLargeSpace?: boolean;
       };
   missingCapabilities?: string[];
   provenance: MechanicProvenance;

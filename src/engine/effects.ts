@@ -20,12 +20,15 @@ export type EffectInput = {
   turnStartSave?: ActiveEffect["turnStartSave"];
   conditionGranted?: string;
   endsWhenSourceHarmsTarget?: boolean;
+  revealsSourceOnEnd?: boolean;
   sense?: ActiveEffect["sense"];
   senseMagic?: ActiveEffect["senseMagic"];
   rollBonus?: ActiveEffect["rollBonus"];
   consumeOnRollBonus?: boolean;
   points?: ActiveEffect["points"];
   pointEffect?: ActiveEffect["pointEffect"];
+  maximumExpiresAtRound?: number;
+  afflictionKind?: "disease" | "poison";
   replaceExisting?: boolean;
 };
 
@@ -43,9 +46,12 @@ function cleanRemovedEffectState(encounter: EncounterState, effectIds: Set<strin
         .map((effect) => effect.conditionGranted!.toLowerCase()));
       const withoutExpiredConditions = (combatant.conditions ?? []).filter((condition) =>
         !removedConditions.has(condition.toLowerCase()) || retainedConditions.has(condition.toLowerCase()));
+      const revealedSources = removedEffects.filter((effect) => effect.targetCombatantId === combatant.id && effect.revealsSourceOnEnd)
+        .map((effect) => effect.sourceCombatantId);
+      const knownCharmSources = [...new Set([...(combatant.knownCharmSources ?? []), ...revealedSources])];
       return effectIds.has(combatant.temporaryHitPointsSourceEffectId ?? "")
-        ? { ...combatant, conditions: withoutExpiredConditions, temporaryHitPoints: 0, temporaryHitPointsSourceEffectId: undefined }
-        : { ...combatant, conditions: withoutExpiredConditions };
+        ? { ...combatant, conditions: withoutExpiredConditions, knownCharmSources, temporaryHitPoints: 0, temporaryHitPointsSourceEffectId: undefined }
+        : { ...combatant, conditions: withoutExpiredConditions, knownCharmSources };
     }),
   };
 }
@@ -85,12 +91,15 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     turnStartSave: input.turnStartSave,
     conditionGranted: input.conditionGranted,
     endsWhenSourceHarmsTarget: input.endsWhenSourceHarmsTarget,
+    revealsSourceOnEnd: input.revealsSourceOnEnd,
     sense: input.sense,
     senseMagic: input.senseMagic,
     rollBonus: input.rollBonus,
     consumeOnRollBonus: input.consumeOnRollBonus,
     points: input.points,
     pointEffect: input.pointEffect,
+    maximumExpiresAtRound: input.maximumExpiresAtRound,
+    afflictionKind: input.afflictionKind,
   };
 
   next = {
@@ -164,6 +173,11 @@ export function reconcileConcentration(encounter: EncounterState): EncounterStat
     // A zero-HP replacement decision precedes actually falling unconscious.
     if (encounter.pendingResponse?.type === "zero-hit-point-replacement" && encounter.pendingResponse.targetCombatantId === actor.id) continue;
     if (!canMaintainConcentration(next, actor.id)) next = endConcentration(next, actor.id, `${actor.name} can no longer concentrate`);
+    if (actor.armorCategory === "heavy") {
+      for (const effect of next.effects.filter((candidate) => candidate.targetCombatantId === actor.id && candidate.modifiers.rageExtension)) {
+        next = removeEffect(next, effect.id, `${actor.name} is wearing Heavy armor`);
+      }
+    }
     if (isIncapacitated(next, actor.id)) {
       for (const effect of next.effects.filter((candidate) => candidate.targetCombatantId === actor.id && candidate.modifiers.endsOnIncapacitated)) {
         next = removeEffect(next, effect.id, `${actor.name} is incapacitated`);
@@ -300,7 +314,8 @@ export function endEffectsBrokenByHarm(encounter: EncounterState, sourceCombatan
 export function savingThrowRollMode(encounter: EncounterState, combatantId: string, condition?: string, situationalMode: RollMode = "normal", ability?: AbilityName): RollMode {
   const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
   const hasAdvantage = situationalMode === "advantage" || Boolean(condition && combatant?.savingThrowAdvantagesAgainstConditions
-    .some((candidate) => candidate.toLowerCase() === condition.toLowerCase()));
+    .some((candidate) => candidate.toLowerCase() === condition.toLowerCase())) || Boolean(ability && effectsForCombatant(encounter, combatantId)
+      .some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.savingThrowAdvantages?.includes(ability)));
   const hasDisadvantage = situationalMode === "disadvantage" || Boolean(ability && combatant?.savingThrowDisadvantages?.includes(ability));
   if (hasAdvantage && hasDisadvantage) return "normal";
   if (hasAdvantage) return "advantage";
@@ -326,6 +341,42 @@ export function effectiveSize(encounter: EncounterState, combatantId: string): "
   return effectsForCombatant(encounter, combatantId).some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.size === "large")
     ? "large"
     : combatant?.size ?? "medium";
+}
+
+export function occupiedCells(encounter: EncounterState, combatantId: string, position?: { x: number; y: number }): Array<{ x: number; y: number }> {
+  const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  if (!combatant) return [];
+  const origin = position ?? combatant.position;
+  const width = effectiveSize(encounter, combatantId) === "large" ? 2 : 1;
+  return Array.from({ length: width * width }, (_, index) => ({ x: origin.x + index % width, y: origin.y + Math.floor(index / width) }));
+}
+
+export function canOccupyCells(encounter: EncounterState, combatantId: string, position: { x: number; y: number }, assumeLarge = false): boolean {
+  const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  if (!combatant) return false;
+  const width = assumeLarge || effectiveSize(encounter, combatantId) === "large" ? 2 : 1;
+  const cells = Array.from({ length: width * width }, (_, index) => ({ x: position.x + index % width, y: position.y + Math.floor(index / width) }));
+  return cells.every((cell) => cell.x >= 0 && cell.y >= 0 && cell.x < encounter.map.width && cell.y < encounter.map.height
+    && encounter.map.terrain.every((terrain) => terrain.x !== cell.x || terrain.y !== cell.y || terrain.kind !== "wall")
+    && encounter.combatants.every((other) => other.id === combatantId || !occupiedCells(encounter, other.id).some((occupied) => occupied.x === cell.x && occupied.y === cell.y)));
+}
+
+export function extendRage(encounter: EncounterState, combatantId: string): EncounterState {
+  let extended = false;
+  const effects = encounter.effects.map((effect) => {
+    if (effect.sourceCombatantId !== combatantId || !effect.modifiers.rageExtension || !effect.expiresAt || effect.expiresAt.phase !== "end") return effect;
+    const nextRound = Math.min(encounter.round + 1, effect.maximumExpiresAtRound ?? encounter.round + 1);
+    if (nextRound <= effect.expiresAt.round) return effect;
+    extended = true;
+    return { ...effect, expiresAt: { ...effect.expiresAt, round: nextRound } };
+  });
+  return extended ? { ...encounter, effects, log: ["Rage extended until the end of the next turn.", ...encounter.log] } : encounter;
+}
+
+export function activeWeaponDamageBonus(encounter: EncounterState, combatantId: string, ability?: AbilityName): number {
+  if (ability !== "strength") return 0;
+  return effectsForCombatant(encounter, combatantId).filter((effect) => effectHasStarted(encounter, effect))
+    .reduce((total, effect) => total + (effect.modifiers.weaponDamageBonus ?? 0), 0);
 }
 
 export function hasBonusActionDash(encounter: EncounterState, combatantId: string): boolean {
