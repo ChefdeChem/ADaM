@@ -5,6 +5,7 @@ import { applyEffect, effectiveDamageAmount, effectiveSavingThrowModifier, effec
 import { queueConcentrationCheck } from "./defensive-responses";
 import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { resumeMovementContinuation } from "./movement";
+import { canCastSpells, isIncapacitated, reconcileConcentration, savingThrowRollMode } from "./effects";
 
 export { queueConcentrationCheck } from "./defensive-responses";
 
@@ -27,6 +28,7 @@ export function resolvePostHitSpellChoice(encounter: EncounterState, castSpell: 
     return { encounter: { ...encounter, pendingResponse: null, log: [summary, ...encounter.log] }, playerRoll: null, damageRoll: null, summary };
   }
   if (!encounter.turn.bonusAction) return { encounter, playerRoll: null, damageRoll: null, summary: `${source.name}'s Bonus Action is unavailable.` };
+  if (!canCastSpells(encounter, source.id)) return { encounter, playerRoll: null, damageRoll: null, summary: `${source.name} cannot cast spells right now.` };
   const slot = validateSpellSlot(encounter, source.id, spell.level);
   if (!slot.legal) return { encounter, playerRoll: null, damageRoll: null, summary: slot.reason ?? `${spell.name} is unavailable.` };
   const damageRoll = spell.triggeredDamage ? rollDamage(spell.triggeredDamage, { critical: pending.critical, random }) : null;
@@ -169,6 +171,7 @@ export function resolveAttackReaction(encounter: EncounterState, reactionId: str
     const option = target.reactionOptions.find((candidate) => candidate.id === reactionId && pending.availableReactionIds.includes(candidate.id));
     if (!option || !target.reactionAvailable) return { encounter, playerRoll: null, damageRoll: null, summary: "That reaction is unavailable." };
     if (option.spellLevel) {
+      if (!canCastSpells(next, target.id)) return { encounter, playerRoll: null, damageRoll: null, summary: `${target.name} cannot cast a reaction spell right now.` };
       const slot = validateSpellSlot(next, target.id, option.spellLevel);
       if (!slot.legal) return { encounter, playerRoll: null, damageRoll: null, summary: slot.reason ?? "The required spell slot is unavailable." };
       next = spendSpellSlot(next, target.id, option.spellLevel);
@@ -306,8 +309,14 @@ export function resolveConcentrationResponse(encounter: EncounterState, random =
   if (!pending || pending.type !== "concentration-check") return { encounter, playerRoll: null, damageRoll: null, summary: "No concentration check is pending." };
   const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId);
   if (!target) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The concentration check can no longer be resolved." };
+  encounter = reconcileConcentration(encounter);
+  if (!encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === target.id)) {
+    const next = { ...encounter, pendingResponse: null };
+    const resumed = pending.continuation && !isIncapacitated(next, target.id) ? resumeMovementContinuation(next, pending.continuation, random) : null;
+    return { encounter: resumed?.encounter ?? next, playerRoll: null, damageRoll: resumed?.damageRoll ?? null, summary: "Concentration has already ended; no saving throw is needed." };
+  }
   const modifier = effectiveSavingThrowModifier(encounter, target.id, "constitution");
-  const playerRoll = rollD20({ mode: "normal", modifier, random });
+  const playerRoll = rollD20({ mode: savingThrowRollMode(encounter, target.id, undefined, "normal", "constitution"), modifier, random });
   const succeeded = playerRoll.total >= pending.dc;
   let next: EncounterState = { ...encounter, pendingResponse: null };
   if (!succeeded) next = endConcentration(next, target.id, `failed DC ${pending.dc} Constitution save`);

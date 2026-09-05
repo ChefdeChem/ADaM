@@ -191,6 +191,8 @@ export type EffectModifiers = {
   conditionImmunities?: string[];
   preventsHarmingSource?: boolean;
   abilityCheckAdvantages?: string[];
+  preventsSpellcasting?: boolean;
+  endsOnIncapacitated?: boolean;
   size?: "large";
 };
 
@@ -226,6 +228,7 @@ export type ActiveEffect = {
 
 export type Combatant = {
   id: string;
+  rulesetId?: RulesetId;
   name: string;
   side: "player" | "enemy";
   proficiencyBonus: number;

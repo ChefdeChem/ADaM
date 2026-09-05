@@ -5,7 +5,7 @@ import type { AbilityName, Character, CharacterAttack, CharacterEquipmentRule, C
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
 import { executeSpellChoice, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
-import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds } from "../src/engine/effects";
+import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration } from "../src/engine/effects";
 import { executeFeatureAction } from "../src/engine/feature-actions";
 import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
@@ -45,6 +45,7 @@ type FeatureFlow = null | {
   targetId: string;
   amount: number;
   maximum: number;
+  removePoisoned?: boolean;
 };
 type ToolFlow = null | { rule: CharacterEquipmentRule };
 
@@ -453,14 +454,15 @@ export default function Home() {
     if (feature) {
       if (feature.resolution.type === "healing-pool") {
         const selected = encounter.combatants.find((combatant) => combatant.id === encounter.selectedTargetId);
-        const target = selected?.side === activeCombatant.side ? selected : activeCombatant;
+        const target = selected ?? activeCombatant;
         const pool = activeCombatant.resources.find((resource) => resource.name.toLowerCase() === feature.resourceName.toLowerCase());
         const maximum = Math.min(pool?.current ?? 0, target.hitPoints.maximum - target.hitPoints.current);
-        if (maximum < 1) { setFeedback(pool?.current ? `${target.name} is already at maximum Hit Points.` : `${feature.resourceName} has no points remaining.`); return; }
+        const canRemovePoison = feature.resolution.removesPoisoned && (pool?.current ?? 0) >= 5 && target.conditions.some((condition) => condition.toLowerCase() === "poisoned");
+        if (maximum < 1 && !canRemovePoison) { setFeedback(pool?.current ? `${target.name} is already at maximum Hit Points.` : `${feature.resourceName} has no points remaining.`); return; }
         setChoiceMode(null);
         setAttackFlow(null);
         setSpellFlow(null);
-        setFeatureFlow({ feature, targetId: target.id, amount: maximum, maximum });
+        setFeatureFlow({ feature, targetId: target.id, amount: maximum, maximum, removePoisoned: maximum === 0 && Boolean(canRemovePoison) });
         setToolFlow(null);
         setFeedback(`Choose 1 to ${maximum} points to restore to ${target.name}. One pool point restores one Hit Point.`);
         return;
@@ -523,7 +525,7 @@ export default function Home() {
   function confirmFeatureChoice(event: FormEvent) {
     event.preventDefault();
     if (!featureFlow) return;
-    const result = executeFeatureAction(encounter, featureFlow.feature, { resourceAmount: featureFlow.amount, targetCombatantId: featureFlow.targetId });
+    const result = executeFeatureAction(encounter, featureFlow.feature, { resourceAmount: featureFlow.amount, targetCombatantId: featureFlow.targetId, removePoisoned: featureFlow.removePoisoned });
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter);
     setFeatureFlow(null);
@@ -538,6 +540,15 @@ export default function Home() {
     setLastRoll(result.roll);
     setToolFlow(null);
     setFeedback(result.summary);
+  }
+
+  function releaseConcentration() {
+    let next = endConcentration(encounter, playerCombatant.id, `${playerCombatant.name} chose to stop`);
+    if (next.pendingResponse?.type === "concentration-check" && next.pendingResponse.targetCombatantId === playerCombatant.id) {
+      next = resolveConcentrationResponse(next).encounter;
+    }
+    setEncounter(next);
+    setFeedback("Concentration ended. No Action was spent.");
   }
 
   function rollInitiative() {
@@ -772,7 +783,7 @@ export default function Home() {
         </div>
         <div className="import-ability-grid">{abilityLabels.map((ability) => <label key={ability.id}>{ability.label}<input required min="1" max="30" type="number" value={reviewCharacter.abilities[ability.id]} onChange={(event) => updateReviewAbility(ability.id, event.target.value)} /></label>)}</div>
         {(reviewCharacter.attacks?.length ?? 0) > 0 && <div className="import-attacks"><span>Imported attacks</span><p>{reviewCharacter.attacks?.map((attack) => `${attack.name} (${attack.attackBonus >= 0 ? "+" : ""}${attack.attackBonus}, ${attack.damage}, ${attack.normalRangeFeet}${attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.)`).join(" · ")}</p></div>}
-        {importMechanicCoverage && <div className="mechanic-coverage import-coverage"><div><span>Mechanic coverage</span><strong>{importMechanicCoverage.executable}/{importMechanicCoverage.total} executable</strong></div><p><b>{importMechanicCoverage.counts.supported}</b> supported · <b>{importMechanicCoverage.counts.partial}</b> partial · <b>{importMechanicCoverage.counts["reference-only"]}</b> reference only</p><small>Source: {reviewCharacter.source.fileName ?? "ADaM sample"} · {importMechanicCoverage.rulesetId === "dnd-2014" ? "2014 rules" : "2024 rules"}</small></div>}
+        {importMechanicCoverage && <div className="mechanic-coverage import-coverage"><div><span>Mechanic coverage</span><strong>{importMechanicCoverage.supportSummary.fullySupported}/{importMechanicCoverage.total} fully supported</strong></div><p><b>{importMechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{importMechanicCoverage.supportSummary.partial}</b> partial · <b>{importMechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>Source: {reviewCharacter.source.fileName ?? "ADaM sample"} · {importMechanicCoverage.rulesetId === "dnd-2014" ? "2014 rules" : "2024 rules"}</small></div>}
         <div className="import-review-actions"><button type="button" onClick={() => { setPendingImport(null); setReviewCharacter(null); setMessage("Import canceled; the previous character remains active."); }}>Cancel</button><button type="submit">Use this character</button></div>
       </form>
     </div>}
@@ -791,7 +802,7 @@ export default function Home() {
         <div className="character-card"><div className="portrait">{character.name[0]?.toUpperCase()}</div><div><p className="character-name">{character.name}</p><p>{character.className} · Level {character.level}</p></div></div>
         <div className="stats"><div><span>AC</span><strong>{playerArmorClass}</strong>{playerArmorClass !== character.armorClass && <small>base {character.armorClass}</small>}</div><div><span>HP</span><strong>{playerCombatant.hitPoints.current}/{playerCombatant.hitPoints.maximum}</strong>{playerCombatant.temporaryHitPoints > 0 && <small>+{playerCombatant.temporaryHitPoints} temp</small>}</div><div><span>PROF</span><strong>+{character.proficiencyBonus}</strong></div></div>
         <div className="weapon-summary"><span>Weapon attacks</span><strong>{character.attacks?.length ?? 0} ready</strong><p>{character.attacks?.map((attack) => attack.name).join(" · ") || "No weapon attacks imported."}</p></div>
-        <div className="mechanic-coverage"><div><span>Mechanic coverage</span><strong>{mechanicCoverage.executable}/{mechanicCoverage.total} executable</strong></div><p><b>{mechanicCoverage.counts.supported}</b> supported · <b>{mechanicCoverage.counts.partial}</b> partial · <b>{mechanicCoverage.counts["reference-only"]}</b> reference only</p><small>{mechanicCoverage.sourceId === "user-imported" ? character.source.fileName ?? "Imported sheet" : "ADaM original"} · {mechanicCoverage.rulesetId === "dnd-2014" ? "2014" : "2024"}</small></div>
+        <div className="mechanic-coverage"><div><span>Mechanic coverage</span><strong>{mechanicCoverage.supportSummary.fullySupported}/{mechanicCoverage.total} fully supported</strong></div><p><b>{mechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{mechanicCoverage.supportSummary.partial}</b> partial · <b>{mechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>{mechanicCoverage.sourceId === "user-imported" ? character.source.fileName ?? "Imported sheet" : "ADaM original"} · {mechanicCoverage.rulesetId === "dnd-2014" ? "2014" : "2024"}</small></div>
         <div className="panel"><div className="panel-heading"><span>02</span><h2>Experience</h2></div><div className="mode-list">{(Object.keys(modeCopy) as ExperienceMode[]).map((mode) => <button key={mode} className={experienceMode === mode ? "selected" : ""} onClick={() => { setExperienceMode(mode); setFeedback(modeCopy[mode].detail); }}><strong>{modeCopy[mode].label}</strong><small>{modeCopy[mode].detail}</small></button>)}</div></div>
         <div className="panel"><div className="panel-heading"><span>03</span><h2>Ruleset</h2></div><div className="ruleset-list">{rulesets.map((ruleset) => <button key={ruleset.id} className={ruleset.id === rulesetId ? "selected" : ""} onClick={() => setRulesetId(ruleset.id)}><strong>{ruleset.name}</strong><small>{ruleset.description}</small></button>)}</div></div>
       </aside>
@@ -972,7 +983,7 @@ export default function Home() {
 
         <section className="state-tray" aria-label="Character resources and temporary effects">
           <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses and carried weapons</h3></div><div className="resource-pills">{playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>)}{playerCombatant.inventory.map((item) => <div key={`inventory-${item.id}`}><span>{item.name}</span><strong>{item.current}/{item.maximum}</strong></div>)}{!playerCombatant.resources.length && !playerCombatant.inventory.length && <p>No tracked resources imported.</p>}</div>{outcome === "victory" && <div className="rest-recovery"><span>Post-encounter recovery</span><div><button type="button" onClick={() => recoverAfterRest("short-rest")}>Recover after Short Rest</button><button type="button" onClick={() => recoverAfterRest("long-rest")}>Recover after Long Rest</button></div><small>Refreshes only resources whose registered rules recover on that rest.</small></div>}</div>
-          <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3></div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.description}</small></div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
+          <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3>{encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === playerCombatant.id) && <button type="button" onClick={releaseConcentration}>End concentration · No Action</button>}</div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.description}</small></div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
         </section>
 
         <section className="action-console">
@@ -989,7 +1000,15 @@ export default function Home() {
           }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
           {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose weapon</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{playerCombatant.attacks.map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : spell.freeCastResourceName ? `Level ${spell.level} · free use or slot` : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : spell.target === "area" && spell.area ? `${spell.area.sizeFeet} ft. ${spell.area.shape}` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
-          {featureFlow && (() => { const target = encounter.combatants.find((combatant) => combatant.id === featureFlow.targetId)!; return <form className="choice-panel feature-choice" onSubmit={confirmFeatureChoice}><div className="choice-heading"><div><span>Choose healing amount</span><strong>{featureFlow.feature.name}</strong></div><button type="button" onClick={() => setFeatureFlow(null)}>Cancel</button></div><div className="feature-choice-form"><div><span>Target</span><strong>{target.name}</strong><small>{target.hitPoints.current}/{target.hitPoints.maximum} Hit Points</small></div><label htmlFor="feature-healing-amount">Pool points to spend<input id="feature-healing-amount" type="number" min="1" max={featureFlow.maximum} step="1" value={featureFlow.amount} onChange={(event) => setFeatureFlow({ ...featureFlow, amount: Number(event.target.value) })} /></label><button type="submit">Spend {featureFlow.amount} · Restore {featureFlow.amount} HP</button></div></form>; })()}
+          {featureFlow && (() => {
+            const target = encounter.combatants.find((combatant) => combatant.id === featureFlow.targetId)!;
+            const pool = playerCombatant.resources.find((resource) => resource.name.toLowerCase() === featureFlow.feature.resourceName.toLowerCase())?.current ?? 0;
+            const maximum = Math.min(featureFlow.maximum, Math.max(0, pool - (featureFlow.removePoisoned ? 5 : 0)));
+            const poisonChoice = featureFlow.feature.resolution.type === "healing-pool" && featureFlow.feature.resolution.removesPoisoned && target.conditions.some((condition) => condition.toLowerCase() === "poisoned");
+            return <form className="choice-panel feature-choice" onSubmit={confirmFeatureChoice}><div className="choice-heading"><div><span>Choose healing and recovery</span><strong>{featureFlow.feature.name}</strong></div><button type="button" onClick={() => setFeatureFlow(null)}>Cancel</button></div><div className="feature-choice-form"><div><span>Target</span><strong>{target.name}</strong><small>{target.hitPoints.current}/{target.hitPoints.maximum} Hit Points</small></div>
+              {poisonChoice && <label><input type="checkbox" checked={Boolean(featureFlow.removePoisoned)} disabled={pool < 5} onChange={(event) => setFeatureFlow({ ...featureFlow, removePoisoned: event.target.checked, amount: event.target.checked ? Math.min(featureFlow.amount, Math.max(0, pool - 5)) : featureFlow.amount })} />Remove Poisoned · 5 additional points</label>}
+              <label htmlFor="feature-healing-amount">Points for healing<input id="feature-healing-amount" type="number" min={featureFlow.removePoisoned ? 0 : 1} max={maximum} step="1" value={featureFlow.amount} onChange={(event) => setFeatureFlow({ ...featureFlow, amount: Number(event.target.value) })} /></label><button type="submit">Spend {featureFlow.amount + (featureFlow.removePoisoned ? 5 : 0)} · Restore {featureFlow.amount} HP{featureFlow.removePoisoned ? " · Remove Poisoned" : ""}</button></div></form>;
+          })()}
           {toolFlow && toolFlow.rule.resolution.type === "tool-check" && <div className="choice-panel"><div className="choice-heading"><div><span>Choose check ability</span><strong>{toolFlow.rule.name}</strong></div><button type="button" onClick={() => setToolFlow(null)}>Cancel</button></div><div className="choice-grid">{abilityLabels.filter((ability) => toolFlow.rule.resolution.type === "tool-check" && toolFlow.rule.resolution.allowedAbilities.includes(ability.id)).map((ability) => <button type="button" key={ability.id} onClick={() => chooseToolAbility(ability.id)}><span>Ability check</span><strong>{ability.label}</strong><small>{playerCombatant.inventory.find((item) => item.id === toolFlow.rule.id)?.tool?.proficient ? `Ability modifier + ${playerCombatant.proficiencyBonus} proficiency` : "Ability modifier only"}</small></button>)}</div></div>}
           <div className="area-effect-note"><span>Area effects</span><p>Cones and cubes now find every creature in the aimed area, resolve one saving throw per target, apply shared damage, and handle forced movement.</p></div>
           <div className="turn-controls"><div><span>Turn control</span><p>{activeCombatant.side === "player" ? "End your turn and let ADaM advance initiative." : "ADaM controls and advances enemy turns automatically."}</p></div><button type="button" disabled={activeCombatant.side !== "player" || outcome !== "active"} onClick={() => runAction(actionCatalog.find((action) => action.id === "end-turn")!)}>{activeCombatant.side === "player" ? "End turn" : "Enemy acting"}</button></div>

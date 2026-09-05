@@ -3,7 +3,7 @@ import type { EncounterState } from "../domain/combat";
 import type { Scenario } from "../scenarios/types";
 import { enemyProfile } from "../rulesets/enemy-profiles";
 import { rollD20, type D20Result } from "./dice";
-import { effectiveSpeed, expireEffectsAtTurnEnd, expireEffectsAtTurnStart } from "./effects";
+import { effectiveSpeed, expireEffectsAtTurnEnd, expireEffectsAtTurnStart, reconcileConcentration } from "./effects";
 import { availableCharacterAttacks, combatInventoryForCharacter } from "./inventory";
 import { resolveTurnStartEffects } from "./turn-effects";
 import { resolvePointHazardsForCombatant } from "./point-effects";
@@ -138,6 +138,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         side: "player",
         proficiencyBonus: character.proficiencyBonus,
         level: character.level,
+        rulesetId: character.rulesetId,
         size: "medium",
         baseArmorClass: characterBaseArmorClass(character),
         baseSpeedFeet: characterBaseSpeed(character),
@@ -226,6 +227,7 @@ export function rollCombatantInitiative(encounter:EncounterState,combatantId:str
 }
 
 export function endTurn(encounter: EncounterState, random = Math.random): EncounterState {
+  encounter = reconcileConcentration(encounter);
   const endingCombatant = encounter.combatants[encounter.activeIndex];
   const afterHazards = endingCombatant ? resolvePointHazardsForCombatant(encounter, endingCombatant.id, random) : encounter;
   const afterEndEffects = endingCombatant ? expireEffectsAtTurnEnd(afterHazards, encounter.round, endingCombatant.id) : afterHazards;

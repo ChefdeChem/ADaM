@@ -81,5 +81,6 @@ export type CharacterMechanicCoverage = {
   counts: MechanicCoverageCounts;
   total: number;
   executable: number;
+  supportSummary: { fullySupported: number; partial: number; descriptive: number; needsReview: number };
   entries: RuleRegistryEntry[];
 };

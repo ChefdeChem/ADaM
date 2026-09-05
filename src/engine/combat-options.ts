@@ -6,6 +6,7 @@ import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpel
 import { attackInventoryAvailable, consumeAttackInventory } from "./inventory";
 import { analyzeTarget, gridDistanceFeet, hasLineOfSightToPoint } from "./targeting";
 import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
+import { canCastSpells, reconcileConcentration } from "./effects";
 
 export type OptionValidation = {
   legal: boolean;
@@ -202,11 +203,11 @@ export function applyDamageToCombatant(encounter:EncounterState,targetId:string,
   const resistanceSummary=effectiveAmount<amount
     ?`${target.name}'s damage resistance reduces ${amount} ${damageType} damage to ${effectiveAmount}.`
     :null;
-  return{
+  return reconcileConcentration({
     ...encounter,
     combatants,
     log:[...(defeatSummary?[defeatSummary]:[]),...(resistanceSummary?[resistanceSummary]:[]),...encounter.log],
-  };
+  });
 }
 
 function attackSourceId(encounter:EncounterState,attack:CharacterAttack,targetId:string):string|undefined{
@@ -276,6 +277,7 @@ export function executeAttackChoice(encounter: EncounterState, attack: Character
 export function validateSpellAvailability(encounter: EncounterState, spell: CharacterSpell): OptionValidation {
   const active = encounter.combatants[encounter.activeIndex];
   if (active?.spellcastingBlockedByArmor) return { legal: false, reason: `${active.name} cannot cast spells while wearing armor without training.` };
+  if (!active || !canCastSpells(encounter, active.id)) return { legal: false, reason: "Spells cannot be cast while incapacitated or while Rage is active." };
   if (spell.unsupportedReason) return { legal: false, reason: spell.unsupportedReason };
   if (spell.trigger === "after-melee-hit") return { legal: false, reason: `${spell.name} becomes available immediately after you hit with a melee weapon or Unarmed Strike.` };
   if (spell.castingTime === "reaction") return { legal: false, reason: `${spell.name} becomes available automatically when its reaction trigger occurs.` };

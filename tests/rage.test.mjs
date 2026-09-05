@@ -83,7 +83,7 @@ test("weapon damage carries its parsed type into Rage resistance", () => {
   assert.match(damage.summary, /4 applied after resistance/i);
 });
 
-test("Stone's Endurance reduces damage before Rage resistance and concentration uses the final damage", () => {
+test("Stone's Endurance reduces damage before Rage resistance, and Rage ends concentration", () => {
   const concentrating = applyEffect(readyEncounter(), {
     name: "Test concentration",
     description: "Regression fixture.",
@@ -102,8 +102,8 @@ test("Stone's Endurance reduces damage before Rage resistance and concentration 
   const player = resolved.encounter.combatants.find((combatant) => combatant.id === goliathBarbarian.id);
   assert.equal(resolved.damageRoll.total, 3);
   assert.equal(player.hitPoints.current, 11);
-  assert.equal(resolved.encounter.pendingResponse.type, "concentration-check");
-  assert.equal(resolved.encounter.pendingResponse.damageTaken, 3);
+  assert.equal(resolved.encounter.pendingResponse, null);
+  assert.equal(resolved.encounter.effects.some((effect) => effect.concentration), false);
   assert.match(resolved.summary, /resistance further reduces it to 3/i);
 });
 

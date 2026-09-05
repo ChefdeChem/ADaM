@@ -187,6 +187,8 @@ export type CharacterFeatureAction = {
     | {
         type: "healing-pool";
         rangeFeet: 5;
+        excludedCreatureTypes?: string[];
+        removesPoisoned?: boolean;
       }
     | {
         type: "activate-effect";

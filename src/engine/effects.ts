@@ -51,6 +51,7 @@ function cleanRemovedEffectState(encounter: EncounterState, effectIds: Set<strin
 }
 
 export function applyEffect(encounter: EncounterState, input: EffectInput): EncounterState {
+  if (input.concentration && !canMaintainConcentration(encounter, input.sourceCombatantId)) return encounter;
   const concentrationIds = new Set(encounter.effects
     .filter((effect) => input.concentration && effect.concentration && effect.sourceCombatantId === input.sourceCombatantId)
     .map((effect) => effect.id));
@@ -136,7 +137,50 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
       };
     }
   }
+  return reconcileConcentration(next);
+}
+
+export function isIncapacitated(encounter: EncounterState, combatantId: string): boolean {
+  const actor = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  return !actor || actor.hitPoints.current <= 0 || (actor.deathSaves?.failures ?? 0) >= 3
+    || (actor.conditions ?? []).some((condition) => ["incapacitated", "unconscious", "stunned", "paralyzed", "petrified"].includes(condition.toLowerCase()));
+}
+
+export function canCastSpells(encounter: EncounterState, combatantId: string): boolean {
+  const actor = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  return !isIncapacitated(encounter, combatantId) && !actor?.spellcastingBlockedByArmor
+    && !effectsForCombatant(encounter, combatantId).some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.preventsSpellcasting);
+}
+
+export function canMaintainConcentration(encounter: EncounterState, combatantId: string): boolean {
+  return !isIncapacitated(encounter, combatantId)
+    && !effectsForCombatant(encounter, combatantId).some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.preventsSpellcasting);
+}
+
+// Applies at state transitions, including conditions applied to a caster on another turn.
+export function reconcileConcentration(encounter: EncounterState): EncounterState {
+  let next = encounter;
+  for (const actor of encounter.combatants) {
+    // A zero-HP replacement decision precedes actually falling unconscious.
+    if (encounter.pendingResponse?.type === "zero-hit-point-replacement" && encounter.pendingResponse.targetCombatantId === actor.id) continue;
+    if (!canMaintainConcentration(next, actor.id)) next = endConcentration(next, actor.id, `${actor.name} can no longer concentrate`);
+    if (isIncapacitated(next, actor.id)) {
+      for (const effect of next.effects.filter((candidate) => candidate.targetCombatantId === actor.id && candidate.modifiers.endsOnIncapacitated)) {
+        next = removeEffect(next, effect.id, `${actor.name} is incapacitated`);
+      }
+    }
+  }
   return next;
+}
+
+export function removeCondition(encounter: EncounterState, combatantId: string, condition: string): EncounterState {
+  const normalized = condition.toLowerCase();
+  let next = encounter;
+  for (const effect of encounter.effects.filter((candidate) => candidate.targetCombatantId === combatantId && candidate.conditionGranted?.toLowerCase() === normalized)) {
+    next = removeEffect(next, effect.id, `${condition} was removed`);
+  }
+  return { ...next, combatants: next.combatants.map((actor) => actor.id === combatantId
+    ? { ...actor, conditions: actor.conditions.filter((value) => value.toLowerCase() !== normalized) } : actor) };
 }
 
 export function expireEffectsAtTurnStart(encounter: EncounterState, round: number, combatantId: string): EncounterState {
@@ -196,7 +240,8 @@ export function outgoingAttackRollMode(encounter: EncounterState, combatantId: s
     .map((effect) => effect.modifiers.outgoingAttacks)
     .filter((mode): mode is "advantage" | "disadvantage" => Boolean(mode));
   const hasAdvantage = situationalMode === "advantage" || modifiers.includes("advantage");
-  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage");
+  const poisoned = encounter.combatants.find((actor) => actor.id === combatantId)?.conditions?.some((condition) => condition.toLowerCase() === "poisoned");
+  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage") || Boolean(poisoned);
   if (hasAdvantage && hasDisadvantage) return "normal";
   if (hasAdvantage) return "advantage";
   if (hasDisadvantage) return "disadvantage";
@@ -267,7 +312,8 @@ export function abilityCheckRollMode(encounter: EncounterState, combatantId: str
   const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
   const hasEffectAdvantage = effectsForCombatant(encounter, combatantId).some((effect) => effectHasStarted(encounter, effect)
     && effect.modifiers.abilityCheckAdvantages?.some((candidate) => candidate.toLowerCase() === check.toLowerCase()));
-  const hasDisadvantage = situationalMode === "disadvantage" || Boolean(combatant?.abilityCheckDisadvantages?.some((candidate) => candidate.toLowerCase() === check.toLowerCase()));
+  const hasDisadvantage = situationalMode === "disadvantage" || Boolean(combatant?.abilityCheckDisadvantages?.some((candidate) => candidate.toLowerCase() === check.toLowerCase()))
+    || Boolean(combatant?.conditions?.some((condition) => condition.toLowerCase() === "poisoned"));
   const hasAdvantage = situationalMode === "advantage" || hasEffectAdvantage;
   if (hasAdvantage && hasDisadvantage) return "normal";
   if (hasAdvantage) return "advantage";

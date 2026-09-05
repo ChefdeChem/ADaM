@@ -76,12 +76,12 @@ test("Lay on Hands healing is executable with edition-specific provenance", () =
   assert.equal(currentEntry.rulesetId, "dnd-2024");
   assert.equal(currentEntry.sourceId, "srd-5.2.1");
   for (const entry of [legacyEntry, currentEntry]) {
-    assert.equal(entry.status, "partial");
+    assert.equal(entry.status, entry.rulesetId === "dnd-2014" ? "partial" : "supported");
     assert.equal(entry.executable, true);
     assert.deepEqual(entry.components, ["action-economy", "targeting", "range", "resource-spend", "resource-recovery", "hit-point-restoration"]);
   }
   assert.match(legacyEntry.missingCapabilities.join(" "), /disease/i);
-  assert.match(currentEntry.missingCapabilities.join(" "), /Poisoned/i);
+  assert.deepEqual(currentEntry.missingCapabilities, []);
 });
 
 test("coverage marks Vicious Mockery's full save, damage, and attack rider executable", () => {

@@ -1,7 +1,7 @@
 import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
-import { applyEffect, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, savingThrowRollMode } from "./effects";
-import { analyzeTarget } from "./targeting";
+import { applyEffect, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, isIncapacitated, removeCondition, savingThrowRollMode } from "./effects";
+import { analyzeTarget, hasLineOfSightToPoint } from "./targeting";
 import { spendNamedResource, validateNamedResource } from "./resources";
 import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
 import { rollD20, rollDamage } from "./dice";
@@ -15,6 +15,7 @@ export type FeatureActionOptions = {
   resourceAmount?: number;
   targetCombatantId?: string;
   random?: () => number;
+  removePoisoned?: boolean;
 };
 
 export function featureCombatActions(character: Character): CombatAction[] {
@@ -33,25 +34,30 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
   if (encounter.pendingResponse) return { legal: false, reason: "Resolve the pending player response first." };
   if (!active || active.side !== "player") return { legal: false, reason: "Feature actions are available only on the player's turn." };
   if (active.hitPoints.current <= 0) return { legal: false, reason: "An unconscious character cannot use this feature." };
+  if (isIncapacitated(encounter, active.id)) return { legal: false, reason: "An incapacitated character cannot use this feature." };
   if (feature.cost === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (feature.cost === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
   if (feature.cost === "reaction" && !encounter.turn.reaction) return { legal: false, reason: "Your Reaction is unavailable." };
   const resourceAmount = feature.resourceCost === "variable" ? options.resourceAmount : feature.resourceCost;
   if (resourceAmount === undefined) return { legal: false, reason: `Choose how many points to spend on ${feature.name}.` };
-  if (!Number.isInteger(resourceAmount) || resourceAmount < 1) return { legal: false, reason: `${feature.name} must spend a positive whole number of points.` };
-  const resource = validateNamedResource(encounter, active.id, feature.resourceName, resourceAmount);
+  const removingPoison = Boolean(options.removePoisoned && feature.resolution.type === "healing-pool" && feature.resolution.removesPoisoned);
+  if (options.removePoisoned && !removingPoison) return { legal: false, reason: "This feature does not support Poisoned-condition removal." };
+  if (!Number.isInteger(resourceAmount) || resourceAmount < (removingPoison ? 0 : 1)) return { legal: false, reason: `${feature.name} must spend a positive whole number of points, or 5 points to remove Poisoned.` };
+  const resource = validateNamedResource(encounter, active.id, feature.resourceName, resourceAmount + (removingPoison ? 5 : 0));
   if (!resource.legal) return resource;
 
   if (feature.resolution.type === "healing-pool") {
     const target = encounter.combatants.find((combatant) => combatant.id === (options.targetCombatantId ?? active.id));
     if (!target) return { legal: false, reason: "The healing target is no longer available." };
-    if (target.side !== active.side) return { legal: false, reason: `${feature.name} can target only the acting creature or an ally.` };
+    if (feature.resolution.excludedCreatureTypes?.some((type) => type.toLowerCase() === target.creatureType?.toLowerCase())) return { legal: false, reason: `${feature.name} has no effect on ${target.creatureType} creatures in this edition.` };
     const distanceFeet = Math.max(Math.abs(active.position.x - target.position.x), Math.abs(active.position.y - target.position.y)) * 5;
     if (distanceFeet > feature.resolution.rangeFeet) return { legal: false, reason: `${target.name} is ${distanceFeet} feet away; ${feature.name} requires touch.` };
+    if (!hasLineOfSightToPoint(encounter, active.id, target.position.x, target.position.y)) return { legal: false, reason: "A solid obstacle prevents touching that creature." };
     if (target.deathSaves.failures >= 3) return { legal: false, reason: `${target.name} has died and cannot regain Hit Points from ${feature.name}.` };
-    if (!canRegainHitPoints(encounter, target.id)) return { legal: false, reason: `${target.name} cannot regain Hit Points right now.` };
+    if (removingPoison && !target.conditions.some((condition) => condition.toLowerCase() === "poisoned")) return { legal: false, reason: `${target.name} is not Poisoned.` };
+    if (resourceAmount > 0 && !canRegainHitPoints(encounter, target.id)) return { legal: false, reason: `${target.name} cannot regain Hit Points right now.` };
     const missingHitPoints = target.hitPoints.maximum - target.hitPoints.current;
-    if (missingHitPoints <= 0) return { legal: false, reason: `${target.name} is already at maximum Hit Points.` };
+    if (missingHitPoints <= 0 && !removingPoison) return { legal: false, reason: `${target.name} is already at maximum Hit Points.` };
     if (resourceAmount > missingHitPoints) return { legal: false, reason: `${target.name} can regain at most ${missingHitPoints} Hit Points.` };
   }
   if (feature.resolution.type === "area-saving-throw") {
@@ -86,7 +92,7 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
   if (!validation.legal) return { legal: false, reason: validation.reason ?? "That feature is not available.", encounter };
   const active = encounter.combatants[encounter.activeIndex];
   const resourceAmount = feature.resourceCost === "variable" ? options.resourceAmount! : feature.resourceCost;
-  let next = spendNamedResource(encounter, active.id, feature.resourceName, resourceAmount);
+  let next = spendNamedResource(encounter, active.id, feature.resourceName, resourceAmount + (options.removePoisoned ? 5 : 0));
   const turn = {
     ...next.turn,
     action: feature.cost === "action" ? false : next.turn.action,
@@ -145,12 +151,13 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
         ? {
             ...combatant,
             hitPoints: { ...combatant.hitPoints, current: combatant.hitPoints.current + resourceAmount },
-            deathSaves: combatant.hitPoints.current === 0 ? { successes: 0, failures: 0 } : combatant.deathSaves,
-            stabilized: false,
+            deathSaves: resourceAmount > 0 && combatant.hitPoints.current === 0 ? { successes: 0, failures: 0 } : combatant.deathSaves,
+            stabilized: resourceAmount > 0 ? false : combatant.stabilized,
           }
         : combatant),
     };
-    const summary = `${active.name} uses ${feature.name}; ${target.name} regains ${resourceAmount} Hit Point${resourceAmount === 1 ? "" : "s"}.`;
+    if (options.removePoisoned) next = removeCondition(next, targetId, "poisoned");
+    const summary = `${active.name} uses ${feature.name}; ${target.name} regains ${resourceAmount} Hit Point${resourceAmount === 1 ? "" : "s"}${options.removePoisoned ? " and loses Poisoned for 5 additional pool points" : ""}.`;
     return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
 

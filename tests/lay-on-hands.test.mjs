@@ -75,15 +75,16 @@ test("Lay on Hands can restore an adjacent ally from 0 Hit Points", () => {
   assert.equal(healed.stabilized, false);
 });
 
-test("Lay on Hands rejects missing, excessive, hostile, and out-of-touch choices", () => {
+test("Lay on Hands rejects missing, excessive and out-of-touch choices, but can heal a reachable hostile creature", () => {
   const state = readyEncounter(surinaDaardendrian, 9);
   const feature = surinaDaardendrian.featureActions.find((candidate) => candidate.id === "lay-on-hands");
   const enemy = state.combatants.find((combatant) => combatant.side === "enemy");
   assert.match(validateFeatureAction(state, feature).reason, /Choose how many points/i);
   assert.match(validateFeatureAction(state, feature, { resourceAmount: 3 }).reason, /at most 2 Hit Points/i);
-  assert.match(validateFeatureAction(state, feature, { resourceAmount: 1, targetCombatantId: enemy.id }).reason, /only the acting creature or an ally/i);
 
   const source = state.combatants.find((combatant) => combatant.id === surinaDaardendrian.id);
+  const reachable = { ...state, combatants: state.combatants.map((c) => c.id === enemy.id ? { ...c, creatureType: "humanoid", position: { x: source.position.x + 1, y: source.position.y }, hitPoints: { current: 1, maximum: 10 } } : c) };
+  assert.equal(executeFeatureAction(reachable, feature, { resourceAmount: 1, targetCombatantId: enemy.id }).legal, true);
   const distantAlly = { ...source, id: "distant-ally", position: { x: source.position.x + 2, y: source.position.y }, hitPoints: { current: 5, maximum: 8 }, resources: [] };
   const withDistantAlly = { ...state, combatants: [...state.combatants, distantAlly] };
   assert.match(validateFeatureAction(withDistantAlly, feature, { resourceAmount: 1, targetCombatantId: distantAlly.id }).reason, /requires touch/i);

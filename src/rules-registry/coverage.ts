@@ -247,11 +247,16 @@ export function buildCharacterMechanicCoverage(character: Character): CharacterM
   ];
   const counts = { supported: 0, partial: 0, "reference-only": 0, "needs-review": 0 } satisfies CharacterMechanicCoverage["counts"];
   for (const mechanic of entries) counts[mechanic.status] += 1;
+  const descriptive = entries.filter((mechanic) => mechanic.status === "reference-only"
+    || (mechanic.kind === "spell" && (character.spells ?? []).some((spell) => spell.id === mechanic.entityId
+      && spell.utilityChoices?.length && spell.utilityChoices.every((choice) => choice.resolution.type === "flame" && choice.resolution.operation === "control"))));
+  const descriptivePartial = descriptive.filter((mechanic) => mechanic.status === "partial").length;
   return {
     characterId: character.id,
     rulesetId: rulesetFor(character),
     sourceId: sourceFor(character),
     counts,
+    supportSummary: { fullySupported: counts.supported, partial: counts.partial - descriptivePartial, descriptive: descriptive.length, needsReview: counts["needs-review"] },
     total: entries.length,
     executable: entries.filter((mechanic) => mechanic.executable).length,
     entries,

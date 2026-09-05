@@ -82,8 +82,8 @@ export const surinaDaardendrian: Character = {
     description: "As an Action, touch yourself or an ally and choose how many Lay on Hands points to spend as Hit Point healing.",
     resourceName: "Lay on Hands Pool",
     resourceCost: "variable",
-    resolution: { type: "healing-pool", rangeFeet: 5 },
-    missingCapabilities: ["Disease curing, poison neutralization, and undead or construct target validation are not executable yet."],
+    resolution: { type: "healing-pool", rangeFeet: 5, excludedCreatureTypes: ["undead", "construct"] },
+    missingCapabilities: ["Disease curing and individual poison neutralization are not executable yet."],
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Lay on Hands" },
   }],
   attacks: [
@@ -184,10 +184,10 @@ export const goliathBarbarian: Character = {
         name: "Rage",
         description: "Resistance to bludgeoning, piercing, and slashing damage.",
         duration: "end-of-next-turn",
-        modifiers: { damageResistances: ["bludgeoning", "piercing", "slashing"] },
+        modifiers: { damageResistances: ["bludgeoning", "piercing", "slashing"], preventsSpellcasting: true, endsOnIncapacitated: true },
       },
     },
-    missingCapabilities: ["Rage Damage, Strength Advantage, duration extension, and early-ending conditions are not executable yet."],
+    missingCapabilities: ["Rage Damage, Strength Advantage, duration extension, and Heavy armor restrictions are not executable yet."],
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" },
   }, {
     id: "large-form",
@@ -228,7 +228,7 @@ export const goliathBarbarian: Character = {
     proficiencies: { armor: ["Light Armor", "Medium Armor", "Shields"], weapons: ["Martial Weapons", "Simple Weapons"], tools: ["Darts"], languages: ["Common", "Giant", "Orc"] },
     equipment: [{ name: "Spear", quantity: 5, weightPounds: 3 }, { name: "Maul", quantity: 1, weightPounds: 10 }, { name: "Hooded Lantern", quantity: 1, weightPounds: 2 }],
     features: [
-      { id: "rage", name: "Rage", description: "Enter Rage as a Bonus Action. Damage resistance and the initial duration are executable; Rage Damage, Strength Advantage, duration extension, and early-ending conditions are not implemented yet.", executableActionId: "rage", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" } },
+      { id: "rage", name: "Rage", description: "Enter Rage as a Bonus Action. Gain physical damage resistance, end concentration, and prevent spellcasting. Incapacitation ends Rage. Rage Damage, Strength Advantage, duration extension, and Heavy armor restrictions remain partial.", executableActionId: "rage", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" } },
       { id: "unarmored-defense", name: "Unarmored Defense", description: "While not wearing armor, base AC is 13 plus any shield bonus.", executablePassiveId: "unarmored-defense", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Unarmored Defense" } },
       { id: "stones-endurance", name: "Stone's Endurance", description: "Twice per long rest, react after taking damage to reduce it by 1d12 + 2.", executableTriggerId: "stones-endurance", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Giant Ancestry (Stone's Endurance)" } },
       { id: "savage-attacker", name: "Savage Attacker", description: "Once per turn on a weapon hit, roll the weapon damage dice twice and choose either result.", executablePassiveId: "savage-attacker", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Origin Feat: Savage Attacker" } },
@@ -305,8 +305,7 @@ export const irvenWeber: Character = {
     description: "As a Bonus Action, touch yourself or an ally and choose how many Lay On Hands points to spend as Hit Point healing.",
     resourceName: "Lay On Hands: Healing Pool",
     resourceCost: "variable",
-    resolution: { type: "healing-pool", rangeFeet: 5 },
-    missingCapabilities: ["Poisoned-condition removal is not executable yet."],
+    resolution: { type: "healing-pool", rangeFeet: 5, removesPoisoned: true },
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Paladin: Lay On Hands" },
   }],
   attacks: [
