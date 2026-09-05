@@ -29,6 +29,7 @@ export type EffectInput = {
   pointEffect?: ActiveEffect["pointEffect"];
   maximumExpiresAtRound?: number;
   afflictionKind?: "disease" | "poison";
+  magical?: boolean;
   replaceExisting?: boolean;
 };
 
@@ -100,6 +101,7 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     pointEffect: input.pointEffect,
     maximumExpiresAtRound: input.maximumExpiresAtRound,
     afflictionKind: input.afflictionKind,
+    magical: input.magical,
   };
 
   next = {
@@ -325,9 +327,11 @@ export function savingThrowRollMode(encounter: EncounterState, combatantId: stri
 
 export function abilityCheckRollMode(encounter: EncounterState, combatantId: string, check: string, situationalMode: RollMode = "normal"): RollMode {
   const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
+  const normalizedCheck = check.toLowerCase();
+  const matchingCheck = (candidate: string) => candidate.toLowerCase() === normalizedCheck || (candidate.toLowerCase() === "strength" && normalizedCheck === "athletics");
   const hasEffectAdvantage = effectsForCombatant(encounter, combatantId).some((effect) => effectHasStarted(encounter, effect)
-    && effect.modifiers.abilityCheckAdvantages?.some((candidate) => candidate.toLowerCase() === check.toLowerCase()));
-  const hasDisadvantage = situationalMode === "disadvantage" || Boolean(combatant?.abilityCheckDisadvantages?.some((candidate) => candidate.toLowerCase() === check.toLowerCase()))
+    && effect.modifiers.abilityCheckAdvantages?.some(matchingCheck));
+  const hasDisadvantage = situationalMode === "disadvantage" || Boolean(combatant?.abilityCheckDisadvantages?.some(matchingCheck))
     || Boolean(combatant?.conditions?.some((condition) => condition.toLowerCase() === "poisoned"));
   const hasAdvantage = situationalMode === "advantage" || hasEffectAdvantage;
   if (hasAdvantage && hasDisadvantage) return "normal";
@@ -362,10 +366,11 @@ export function canOccupyCells(encounter: EncounterState, combatantId: string, p
 }
 
 export function extendRage(encounter: EncounterState, combatantId: string): EncounterState {
+  if (isIncapacitated(encounter, combatantId)) return encounter;
   let extended = false;
   const effects = encounter.effects.map((effect) => {
     if (effect.sourceCombatantId !== combatantId || !effect.modifiers.rageExtension || !effect.expiresAt || effect.expiresAt.phase !== "end") return effect;
-    const nextRound = Math.min(encounter.round + 1, effect.maximumExpiresAtRound ?? encounter.round + 1);
+    const nextRound = Math.min(nextTurnRound(encounter, combatantId), effect.maximumExpiresAtRound ?? encounter.round + 1);
     if (nextRound <= effect.expiresAt.round) return effect;
     extended = true;
     return { ...effect, expiresAt: { ...effect.expiresAt, round: nextRound } };

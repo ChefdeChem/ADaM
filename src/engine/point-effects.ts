@@ -33,6 +33,7 @@ function resolveUtilityChoice(
   const coordinate = `${String.fromCharCode(65 + point.x)}${point.y + 1}`;
   if (choice.resolution.type === "illusion") {
     const next = applyEffect(encounter, {
+      magical: true,
       name: spell.name,
       description: `${choice.name} at ${coordinate}. ${choice.description}`,
       sourceCombatantId: caster.id,
@@ -52,6 +53,7 @@ function resolveUtilityChoice(
   }
   if (choice.resolution.type === "weather-sensor") {
     const next = applyEffect(encounter, {
+      magical: true,
       name: `${spell.name}: Weather Sign`,
       description: `A tiny sign at ${coordinate} represents the local weather outlook for the next 24 hours.`,
       sourceCombatantId: caster.id,
@@ -143,6 +145,7 @@ export function executePointSpell(encounter: EncounterState, spell: CharacterSpe
   if (!spell.pointEffect) return { legal: false, reason: `${spell.name} is missing its point-effect definition.`, encounter };
   next = applyEffect(next, {
     name: spell.name,
+    magical: true,
     description: spell.description ?? spell.name,
     sourceCombatantId: caster.id,
     targetCombatantId: caster.id,

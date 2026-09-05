@@ -37,10 +37,11 @@ export function resolvePostHitSpellChoice(encounter: EncounterState, castSpell: 
   next = { ...next, turn: { ...next.turn, bonusAction: false } };
   const damageApplied = effectiveDamageAmount(next, target.id, damageRoll.total, damageRoll.formula.damageType);
   next = applyDamageToCombatant(next, target.id, damageRoll.total, { damageType: damageRoll.formula.damageType, sourceCombatantId: source.id });
-  const updatedTarget = next.combatants.find((combatant) => combatant.id === target.id);
-  if (spell.effect && (updatedTarget?.hitPoints.current ?? 0) > 0 && !next.pendingResponse) {
+  // A hit ignites the target even when damage opens a defensive choice or drops it to 0 HP.
+  if (spell.effect) {
     next = applyEffect(next, {
       ...spell.effect,
+      magical: true,
       sourceCombatantId: source.id,
       targetCombatantId: target.id,
       durationRounds: spell.durationRounds,
@@ -68,7 +69,7 @@ export function resolveDamageReductionReaction(encounter: EncounterState, useFea
   if (useFeature) {
     if (!feature.resourceName || feature.resourceCost === undefined) return { encounter, playerRoll: null, damageRoll: null, summary: `${feature.name} is missing its resource rule.` };
     const resource = validateNamedResource(next, target.id, feature.resourceName, feature.resourceCost);
-    if (!target.reactionAvailable || !resource.legal) return { encounter, playerRoll: null, damageRoll: null, summary: !target.reactionAvailable ? `${target.name}'s Reaction is unavailable.` : resource.reason ?? `${feature.name} is unavailable.` };
+    if (!target.reactionAvailable || !resource.legal) return { encounter, playerRoll: null, damageRoll: null, summary: !target.reactionAvailable ? `${target.name}'s Reaction is unavailable.` : !resource.legal ? resource.reason : `${feature.name} is unavailable.` };
     reductionRoll = rollDamage(`${feature.resolution.die} + ${feature.resolution.modifier}`, { random });
     if (!reductionRoll) return { encounter, playerRoll: null, damageRoll: null, summary: `ADaM could not roll ${feature.name}.` };
     damageAfterReduction = Math.max(0, pending.damageTaken - reductionRoll.total);

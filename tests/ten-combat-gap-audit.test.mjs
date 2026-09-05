@@ -165,8 +165,8 @@ test("the audited registry remains 99 entries with disjoint support counts", () 
   const reports = BUILT_IN_CHARACTERS.map(buildCharacterMechanicCoverage);
   const sum = (key) => reports.reduce((total, report) => total + report.supportSummary[key], 0);
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
-  assert.equal(sum("fullySupported"), 89);
-  assert.equal(sum("partial"), 9);
+  assert.equal(sum("fullySupported"), 85);
+  assert.equal(sum("partial"), 13);
   assert.equal(sum("descriptive"), 1);
   assert.equal(sum("needsReview"), 0);
 });

@@ -1,7 +1,7 @@
 import type { EncounterState } from "../domain/combat";
 import { applyDamageToCombatant } from "./combat-options";
 import { rollD20, rollDamage } from "./dice";
-import { effectHasStarted, effectiveDamageAmount, effectiveSavingThrowModifier, removeEffect } from "./effects";
+import { effectHasStarted, effectiveDamageAmount, effectiveSavingThrowModifier, removeEffect, savingThrowRollMode } from "./effects";
 import { queueConcentrationCheck } from "./defensive-responses";
 
 export function resolveTurnStartEffects(encounter: EncounterState, combatantId: string, random = Math.random): EncounterState {
@@ -40,7 +40,7 @@ export function resolveTurnStartEffects(encounter: EncounterState, combatantId: 
 
     if (effect.turnStartSave) {
       const modifier = effectiveSavingThrowModifier(next, combatantId, effect.turnStartSave.ability);
-      const save = rollD20({ mode: "normal", modifier, random });
+      const save = rollD20({ mode: savingThrowRollMode(next, combatantId, undefined, "normal", effect.turnStartSave.ability), modifier, random });
       const succeeded = save.total >= effect.turnStartSave.dc;
       next = {
         ...next,

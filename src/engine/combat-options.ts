@@ -6,7 +6,7 @@ import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpel
 import { attackInventoryAvailable, consumeAttackInventory } from "./inventory";
 import { analyzeTarget, gridDistanceFeet, hasLineOfSightToPoint } from "./targeting";
 import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
-import { canCastSpells, reconcileConcentration } from "./effects";
+import { canCastSpells, effectHasStarted, isIncapacitated, reconcileConcentration } from "./effects";
 
 export type OptionValidation = {
   legal: boolean;
@@ -70,7 +70,7 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
   let next=consumeAttackRollEffects(encounter,active.id,target.target.id);
   next=consumeAttackInventory(next,active.id,attack.id);
-  next=extendRage(next,active.id);
+  if(active.side!==target.target.side)next=extendRage(next,active.id);
   if(hit&&attack.mastery==="sap"){
     next=applyEffect(next,{
       name:"Sap",
@@ -119,7 +119,7 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
   const summary=`Opportunity attack with ${attack.name}${rollMode==="disadvantage"?" with disadvantage":""}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
   let next=consumeAttackRollEffects(encounter,attacker.id,target.id);
-  next=extendRage(next,attacker.id);
+  if(attacker.side!==target.side)next=extendRage(next,attacker.id);
   if(hit&&attack.mastery==="sap"){
     next=applyEffect(next,{
       name:"Sap",
@@ -186,7 +186,7 @@ export function applyDamageToCombatant(encounter:EncounterState,targetId:string,
     ?source.triggeredFeatures.find((feature)=>feature.trigger==="reduces-hostile-to-zero-hit-points"&&feature.resolution.type==="gain-temporary-hit-points")
     :undefined;
   let defeatSummary:string|null=null;
-  if(defeatTrigger?.resolution.type==="gain-temporary-hit-points"){
+  if(source&&defeatTrigger?.resolution.type==="gain-temporary-hit-points"){
     const temporaryHitPoints=defeatTrigger.resolution.amount;
     combatants=combatants.map((combatant)=>combatant.id===source.id&&temporaryHitPoints>combatant.temporaryHitPoints
       ?{...combatant,temporaryHitPoints,temporaryHitPointsSourceEffectId:undefined}
@@ -225,15 +225,16 @@ export function resolveAttackDamage(encounter:EncounterState,attack:CharacterAtt
   if(!target)return{legal:false,reason:"The target is no longer available.",encounter};
   const sourceBefore=sourceCombatantId?encounter.combatants.find((combatant)=>combatant.id===sourceCombatantId):undefined;
   const rageDamageBonus=sourceBefore?activeWeaponDamageBonus(encounter,sourceBefore.id,attack.ability):0;
-  if(rageDamageBonus)roll={...roll,modifier:roll.modifier+rageDamageBonus,total:roll.total+rageDamageBonus};
   const featureId=sourceBefore?.weaponDamageRerollFeatureId;
-  const canReroll=Boolean(featureId&&sourceBefore?.attacks.some((candidate)=>candidate.id===attack.id)&&!encounter.turn.usedFeatureIds.includes(featureId));
+  const canReroll=Boolean(featureId&&attack.id!=="unarmed-strike"&&roll.formula.diceCount>0&&sourceBefore?.attacks.some((candidate)=>candidate.id===attack.id)&&!encounter.turn.usedFeatureIds.includes(featureId));
   let alternateRoll:DamageRoll|undefined;
   if(canReroll&&options.weaponDamageRerollChoice&&options.weaponDamageRerollChoice!=="skip"){
     alternateRoll=rollDamage(attack.damage,{critical,random})??undefined;
     if(alternateRoll&&(options.weaponDamageRerollChoice==="second"||(options.weaponDamageRerollChoice==="higher"&&alternateRoll.total>roll.total)))roll=alternateRoll;
     encounter={...encounter,turn:{...encounter.turn,usedFeatureIds:[...encounter.turn.usedFeatureIds,featureId!]}};
   }
+  // The choice concerns weapon dice. Apply the same static Rage bonus after either choice.
+  if(rageDamageBonus)roll={...roll,modifier:roll.modifier+rageDamageBonus,total:roll.total+rageDamageBonus};
   let damaged=applyDamageToCombatant(encounter,targetId,roll.total,{critical,damageType:roll.formula.damageType,sourceCombatantId});
   const damageApplied=damaged.pendingResponse?.type==="damage-reduction-reaction"
     ?roll.total
@@ -291,7 +292,7 @@ export function validateSpellAvailability(encounter: EncounterState, spell: Char
   const choices = spellCastingResourceOptions(encounter, spell);
   if (!choices.freeCast && !choices.spellSlot) {
     const slot = validateSpellSlot(encounter, active.id, spell.level);
-    return { legal: false, reason: spell.freeCastResourceName ? `${spell.freeCastResourceName} and level ${spell.level} spell slots are both unavailable.` : slot.reason };
+    return { legal: false, reason: spell.freeCastResourceName ? `${spell.freeCastResourceName} and level ${spell.level} spell slots are both unavailable.` : !slot.legal ? slot.reason : "No casting resource is available." };
   }
   return { legal: true, rollMode: "normal", distanceFeet: 0 };
 }
@@ -318,6 +319,9 @@ export function validateSpellChoice(encounter: EncounterState, spell: CharacterS
     }
     const analysis = analyzeTarget(encounter, encounter.selectedTargetId);
     if (!analysis) return { legal: false, reason: "The selected target is no longer available." };
+    const harmful = Boolean(spell.damage || spell.attackBonus !== undefined || spell.save || spell.targetSide === "hostile");
+    if (harmful && !canHarmTarget(encounter, active.id, analysis.target.id)) return { legal: false, reason: "A Charmed creature cannot target its charmer with harmful magic." };
+    if (spell.requiresTargetHearing && analysis.target.conditions.some((condition) => condition.toLowerCase() === "deafened")) return { legal: false, reason: `${analysis.target.name} cannot hear ${spell.name}.` };
     if (analysis.target.hitPoints.current <= 0 && !spell.healing) return { legal: false, reason: `${analysis.target.name} is already defeated.` };
     if (spell.requiresLineOfSight && !analysis.lineOfSight) return { legal: false, reason: `${analysis.target.name} is outside your line of sight.` };
     if (analysis.distanceFeet > spell.rangeFeet) return { legal: false, reason: `${analysis.target.name} is ${analysis.distanceFeet} feet away; ${spell.name} reaches ${spell.rangeFeet} feet.` };
@@ -383,11 +387,12 @@ export function resolveSpellDamage(encounter: EncounterState, spell: CharacterSp
   if (!result.legal || !spell.onHitEffect) return result;
   const source = encounter.combatants[encounter.activeIndex];
   const target = result.encounter.combatants.find((combatant) => combatant.id === targetId);
-  if (!source || !target || target.hitPoints.current <= 0) return result;
+  if (!source || !target) return result;
   let next = result.encounter;
   if (spell.onHitEffect.preventsHealing) {
     next = applyEffect(next, {
       name: `${spell.name}: Healing Prevention`,
+      magical: true,
       description: `The target cannot regain Hit Points until the start of ${source.name}'s next turn.`,
       sourceCombatantId: source.id,
       targetCombatantId: target.id,
@@ -423,6 +428,7 @@ function applySpellEffect(encounter: EncounterState, spell: CharacterSpell, cast
   const effectTargetId = spell.effect.applyTo === "caster" ? casterId : spellTargetId;
   return applyEffect(encounter, {
     ...spell.effect,
+    magical: true,
     sourceCombatantId: casterId,
     targetCombatantId: effectTargetId,
     attackTargetId: spell.effect.attackTarget === "spell-target" ? spellTargetId : undefined,
@@ -527,8 +533,14 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       && Math.max(Math.abs(active.position.x - cell.x), Math.abs(active.position.y - cell.y)) * 5 <= spell.effect!.senseMagic!.rangeFeet
       && (!spell.effect!.senseMagic!.blockedByTotalCover || hasLineOfSightToPoint(next, active.id, cell.x, cell.y)))
     : [];
+  const detectedSpellEffect = spell.effect?.senseMagic && next.effects.some((effect) => {
+    if (!effect.magical || effect.senseMagic || !effectHasStarted(next, effect)) return false;
+    const target = next.combatants.find((candidate) => candidate.id === effect.targetCombatantId);
+    return (effect.points ?? (target ? [target.position] : [])).some((point) => Math.max(Math.abs(active.position.x - point.x), Math.abs(active.position.y - point.y)) * 5 <= spell.effect!.senseMagic!.rangeFeet
+      && (!spell.effect!.senseMagic!.blockedByTotalCover || hasLineOfSightToPoint(next, active.id, point.x, point.y)));
+  });
   const detectionCopy = spell.effect?.senseMagic
-    ? detectedMagic.length ? " Magic is present within range." : " No registered magic is present within range."
+    ? detectedMagic.length || detectedSpellEffect ? " Magic is present within range." : " No registered magic is present within range."
     : "";
   const summary = `${spell.name} cast on ${targetName} using ${slotCopy}.${rollCopy}${detectionCopy}`;
   return { legal: true, roll, summary, encounter: { ...next, log: [`${active.name}: ${summary}`, ...next.log] } };
@@ -538,16 +550,18 @@ export function revealDetectMagicAuras(encounter: EncounterState, combatantId: s
   const actor = encounter.combatants.find((combatant) => combatant.id === combatantId);
   const detectMagic = encounter.effects.find((effect) => effect.sourceCombatantId === combatantId && effect.senseMagic);
   if (!actor || encounter.combatants[encounter.activeIndex]?.id !== combatantId || !detectMagic?.senseMagic) return { legal: false, reason: "Detect Magic is not active for this character.", encounter };
+  if (encounter.pendingResponse || isIncapacitated(encounter, actor.id)) return { legal: false, reason: "Resolve the pending response first; an incapacitated character cannot inspect auras.", encounter };
   if (!encounter.turn.action) return { legal: false, reason: "Revealing magical auras requires an available Action.", encounter };
   const inRange = (position: { x: number; y: number }) => Math.max(Math.abs(actor.position.x - position.x), Math.abs(actor.position.y - position.y)) * 5 <= detectMagic.senseMagic!.rangeFeet;
-  const visible = (position: { x: number; y: number }) => hasLineOfSightToPoint(encounter, combatantId, position.x, position.y);
+  const visible = (position: { x: number; y: number }) => !actor.conditions.some((condition) => condition.toLowerCase() === "blinded") && hasLineOfSightToPoint(encounter, combatantId, position.x, position.y);
   const terrainAuras = encounter.map.terrain.filter((cell) => cell.magicAura && inRange(cell) && visible(cell)).map((cell) => `${cell.magicAura} at ${String.fromCharCode(65 + cell.x)}${cell.y + 1}`);
   const effectAuras = encounter.effects.filter((effect) => {
-    if (effect.id === detectMagic.id) return false;
+    if (effect.id === detectMagic.id || !effect.magical || !effectHasStarted(encounter, effect)) return false;
+    if (effect.points?.length) return effect.points.some((point) => inRange(point) && visible(point));
     const target = encounter.combatants.find((candidate) => candidate.id === effect.targetCombatantId);
-    return Boolean(target && inRange(target.position) && visible(target.position));
+    return Boolean(target && !target.conditions.some((condition) => condition.toLowerCase() === "invisible") && inRange(target.position) && visible(target.position));
   })
-    .map((effect) => `${effect.name} on ${encounter.combatants.find((candidate) => candidate.id === effect.targetCombatantId)?.name ?? "a creature"}`);
+    .map((effect) => effect.points?.length ? `${effect.name} at its visible map points` : `${effect.name} on ${encounter.combatants.find((candidate) => candidate.id === effect.targetCombatantId)?.name ?? "a creature"}`);
   const auras = [...terrainAuras, ...effectAuras];
   const summary = `${actor.name} uses an Action to inspect magical auras and detects ${auras.length ? auras.join(", ") : "no visible registered auras"}.`;
   return { legal: true, roll: null, summary, encounter: { ...encounter, turn: { ...encounter.turn, action: false }, log: [summary, ...encounter.log] } };

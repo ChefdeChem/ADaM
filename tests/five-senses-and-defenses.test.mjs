@@ -50,10 +50,10 @@ test("the five mechanics raise executable coverage from 55 to 60 without changin
   ];
   for (const [characterId, entityId, sourceId] of expected) {
     const entry = reports.find((report) => report.characterId === characterId).entries.find((candidate) => candidate.entityId === entityId && candidate.kind !== "resource");
-    assert.equal(entry.status, "supported", `${characterId}:${entityId}`);
+    assert.equal(entry.status, entityId === "charm-person" ? "partial" : "supported", `${characterId}:${entityId}`);
     assert.equal(entry.executable, true, `${characterId}:${entityId}`);
     assert.equal(entry.sourceId, sourceId, `${characterId}:${entityId}`);
-    assert.deepEqual(entry.missingCapabilities, [], `${characterId}:${entityId}`);
+    assert.equal(entry.missingCapabilities.length > 0, entityId === "charm-person", `${characterId}:${entityId}`);
   }
 });
 

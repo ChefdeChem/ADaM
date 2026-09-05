@@ -49,7 +49,7 @@ test("the five spells add five executable official entries without changing the 
   const entries = reports.flatMap((report) => report.entries).filter((entry) =>
     ["chill-touch", "true-strike", "expeditious-retreat", "heroism", "searing-smite"].includes(entry.entityId));
   assert.equal(entries.length, 5);
-  assert.ok(entries.every((entry) => entry.status === "supported" && entry.executable));
+  assert.ok(entries.every((entry) => entry.status === (entry.entityId === "searing-smite" ? "partial" : "supported") && entry.executable));
   assert.deepEqual(entries.map((entry) => entry.sourceId).sort(), ["srd-5.1", "srd-5.1", "srd-5.1", "srd-5.2.1", "srd-5.2.1"]);
 });
 

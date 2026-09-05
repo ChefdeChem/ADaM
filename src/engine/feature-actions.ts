@@ -86,11 +86,12 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
     if (active.size === "large" || encounter.effects.some((effect) => effect.sourceCombatantId === active.id && effect.modifiers.size === "large")) return { legal: false, reason: `${active.name} is already Large.` };
     if (feature.resolution.requiresLargeSpace && !canOccupyCells(encounter, active.id, active.position, true)) return { legal: false, reason: `${active.name} does not have an open 10-foot-by-10-foot space for Large Form.` };
   }
-  if (feature.resolution.type === "activate-effect" && encounter.effects.some((effect) =>
-    effect.name === feature.resolution.effect.name
+  const resolution = feature.resolution;
+  if (resolution.type === "activate-effect" && encounter.effects.some((effect) =>
+    effect.name === resolution.effect.name
     && effect.sourceCombatantId === active.id
     && effect.targetCombatantId === active.id)) {
-    return { legal: false, reason: `${feature.resolution.effect.name} is already active.` };
+    return { legal: false, reason: `${resolution.effect.name} is already active.` };
   }
   if (feature.id === "rage" && active.armorCategory === "heavy") return { legal: false, reason: "Rage cannot begin while wearing Heavy armor." };
   return { legal: true };
@@ -128,7 +129,7 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
       if (!succeeded && feature.resolution.area.pushFeetOnFailedSave) next = pushTargetAway(next, active.id, target.id, feature.resolution.area.pushFeetOnFailedSave);
       results.push(`${target.name} ${succeeded ? "succeeds" : "fails"} (${saveRoll.total}) and takes ${effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType)} damage`);
     }
-    next = extendRage(next, active.id);
+    if (areaTargets(encounter, active.id, targetId, feature.resolution.area).some((target) => target.side !== active.side)) next = extendRage(next, active.id);
     const summary = `${active.name} uses ${feature.name}; ${damageRoll.total} ${damageRoll.formula.damageType} rolled. ${results.join("; ")}.`;
     return { legal: true, roll: damageRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
@@ -223,15 +224,16 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
   }
 
   if (feature.resolution.type === "sense-creature-types") {
+    const resolution = feature.resolution;
     const detectableTypes = new Set(feature.resolution.creatureTypes.map((creatureType) => creatureType.toLowerCase()));
     const detectedCreatures = next.combatants.filter((combatant) => {
       if (combatant.id === active.id || combatant.hitPoints.current <= 0 || !detectableTypes.has(combatant.creatureType?.toLowerCase() ?? "")) return false;
       const analysis = analyzeTarget(next, combatant.id);
-      return Boolean(analysis && analysis.distanceFeet <= feature.resolution.rangeFeet
-        && (!feature.resolution.blockedByTotalCover || analysis.lineOfSight));
+      return Boolean(analysis && analysis.distanceFeet <= resolution.rangeFeet
+        && (!resolution.blockedByTotalCover || analysis.lineOfSight));
     });
     const detectedAuras = next.map.terrain.filter((cell) => cell.divineAura
-      && Math.max(Math.abs(active.position.x - cell.x), Math.abs(active.position.y - cell.y)) * 5 <= feature.resolution.rangeFeet);
+      && Math.max(Math.abs(active.position.x - cell.x), Math.abs(active.position.y - cell.y)) * 5 <= resolution.rangeFeet);
     next = applyEffect({ ...next, turn }, {
       name: feature.name,
       description: feature.description,
@@ -259,6 +261,7 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
 }
 
 export function extendRageWithBonusAction(encounter: EncounterState, combatantId: string): FeatureActionResolution {
+  if (encounter.pendingResponse || isIncapacitated(encounter, combatantId)) return { legal: false, reason: "Resolve pending responses first; incapacitated characters cannot extend Rage.", encounter };
   const actor = encounter.combatants.find((combatant) => combatant.id === combatantId);
   if (!actor || encounter.combatants[encounter.activeIndex]?.id !== combatantId || actor.side !== "player") return { legal: false, reason: "Rage can be extended only on the raging character's turn.", encounter };
   if (!encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn.", encounter };

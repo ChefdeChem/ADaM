@@ -43,6 +43,7 @@ export type CharacterSpell = {
   target: "self" | "single" | "self-or-single" | "area" | "point";
   targetSide?: "friendly" | "hostile" | "any";
   requiresLineOfSight: boolean;
+  requiresTargetHearing?: boolean;
   attackBonus?: number;
   damage?: string;
   healing?: string;

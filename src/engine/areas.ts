@@ -1,6 +1,7 @@
 import type { CharacterSpell } from "../domain/character";
 import type { Combatant, EncounterState } from "../domain/combat";
 import { analyzeTarget } from "./targeting";
+import { canOccupyCells } from "./effects";
 
 type Area = NonNullable<CharacterSpell["area"]>;
 
@@ -56,9 +57,7 @@ export function pushTargetAway(encounter: EncounterState, sourceId: string, targ
   let position = { ...target.position };
   for (let step = 0; step < Math.floor(distanceFeet / 5); step += 1) {
     const next = { x: position.x + stepX, y: position.y + stepY };
-    if (next.x < 0 || next.y < 0 || next.x >= encounter.map.width || next.y >= encounter.map.height) break;
-    if (encounter.map.terrain.some((cell) => cell.x === next.x && cell.y === next.y && cell.kind === "wall")) break;
-    if (encounter.combatants.some((combatant) => combatant.id !== targetId && combatant.position.x === next.x && combatant.position.y === next.y)) break;
+    if (!canOccupyCells(encounter, targetId, next)) break;
     position = next;
   }
   if (position.x === target.position.x && position.y === target.position.y) return encounter;

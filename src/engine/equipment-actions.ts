@@ -37,7 +37,7 @@ export function elapseLightFuel(encounter: EncounterState, minutes: number): Enc
     ...encounter,
     combatants: encounter.combatants.map((combatant) => ({
       ...combatant,
-      inventory: combatant.inventory.map((item) => item.lightSource?.mode !== "off"
+      inventory: combatant.inventory.map((item) => item.lightSource && item.lightSource.mode !== "off"
         ? { ...item, lightSource: { ...item.lightSource, fuelMinutesRemaining: Math.max(0, item.lightSource.fuelMinutesRemaining - minutes), mode: item.lightSource.fuelMinutesRemaining <= minutes ? "off" : item.lightSource.mode } }
         : item),
     })),

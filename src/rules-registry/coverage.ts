@@ -1,6 +1,6 @@
 import type { Character, CharacterAttack, CharacterSpell, MechanicProvenance } from "../domain/character";
 import type { RulesetId } from "../rulesets/types";
-import type { CharacterMechanicCoverage, MechanicComponent, MechanicSupportStatus, RuleEntityKind, RuleRegistryEntry, RuleSourceId } from "./types";
+import type { CharacterMechanicCoverage, MechanicComponent, MechanicSupportStatus, RuleEntityKind, RuleRegistryEntry } from "./types";
 
 const masteryPattern = /\b(graze|nick|push|sap|slow|topple|vex)\b/i;
 const unresolvedPattern = /not implemented|isn't implemented|is not implemented|requires adjudication/i;
@@ -13,7 +13,7 @@ function rulesetFor(character: Character): RulesetId {
   return character.rulesetId ?? "dnd-2024";
 }
 
-function sourceFor(character: Character): RuleSourceId {
+function sourceFor(character: Character): "adam-original" | "user-imported" {
   return character.source.format === "sample" ? "adam-original" : "user-imported";
 }
 

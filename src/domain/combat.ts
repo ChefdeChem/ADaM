@@ -231,6 +231,7 @@ export type ActiveEffect = {
     | { type: "utility-marker"; kind: "weather-sensor" | "bloom"; sizeFeet: number };
   maximumExpiresAtRound?: number;
   afflictionKind?: "disease" | "poison";
+  magical?: boolean;
 };
 
 export type Combatant = {
