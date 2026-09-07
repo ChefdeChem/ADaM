@@ -5,7 +5,7 @@ import type { AbilityName, Character, CharacterAttack, CharacterEquipmentRule, C
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
 import { executeSpellChoice, revealDetectMagicAuras, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
-import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration, occupiedCells, removeEffect } from "../src/engine/effects";
+import { effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration, occupiedCells, removeEffect } from "../src/engine/effects";
 import { executeFeatureAction, extendRageWithBonusAction } from "../src/engine/feature-actions";
 import { endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
@@ -491,17 +491,7 @@ export default function Home() {
       setFeedback(`Choose which ability applies to this ${toolRule.name} check. ADaM will add tool proficiency automatically when the character has it.`);
       return;
     }
-    let next = consumeAction(action, encounter);
-    if (action.id === "dodge") {
-      next = applyEffect(next, {
-        name: "Dodge",
-        description: "Incoming attacks have disadvantage until the start of your next turn.",
-        sourceCombatantId: activeCombatant.id,
-        targetCombatantId: activeCombatant.id,
-        durationRounds: 1,
-        modifiers: { incomingAttacks: "disadvantage" },
-      });
-    }
+    const next = consumeAction(action, encounter);
     setEncounter(next);
     setChoiceMode(null);
     setFeatureFlow(null);

@@ -145,6 +145,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
         proficiencyBonus: character.proficiencyBonus,
         level: character.level,
         rulesetId: character.rulesetId,
+        hasEquippedShield: equippedEquipmentRules(character).some((rule) => rule.resolution.type === "shield"),
         size: "medium",
         armorCategory: equippedArmorCategory(character),
         baseArmorClass: characterBaseArmorClass(character),

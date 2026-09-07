@@ -185,6 +185,7 @@ export type EffectModifiers = {
   savingThrows?: number;
   speedFeet?: number;
   incomingAttacks?: "disadvantage";
+  dodge?: boolean;
   outgoingAttacks?: "advantage" | "disadvantage";
   damageResistances?: string[];
   healingPrevented?: boolean;
@@ -237,6 +238,7 @@ export type ActiveEffect = {
 export type Combatant = {
   id: string;
   rulesetId?: RulesetId;
+  hasEquippedShield?: boolean;
   name: string;
   side: "player" | "enemy";
   proficiencyBonus: number;

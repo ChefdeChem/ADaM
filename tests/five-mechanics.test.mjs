@@ -6,7 +6,7 @@ import { irvenWeber, pharos, surinaDaardendrian } from "../src/characters/verifi
 import { applyDamageToCombatant, executeSpellChoice, resolveAttackDamage, resolveAttackRoll } from "../src/engine/combat-options.ts";
 import { effectiveSpeed } from "../src/engine/effects.ts";
 import { createEncounter, endTurn } from "../src/engine/encounter.ts";
-import { resolveWeaponMasteryChoice } from "../src/engine/responses.ts";
+import { resolvePostHitSpellChoice, resolveWeaponMasteryChoice } from "../src/engine/responses.ts";
 import { buildCharacterMechanicCoverage } from "../src/rules-registry/index.ts";
 import { generateScriptedScenario } from "../src/scenarios/scripted-generator.ts";
 
@@ -97,8 +97,10 @@ test("Sap imposes and consumes disadvantage on the target's next attack roll", (
   const enemyId = state.selectedTargetId;
   const enemyIndex = hit.encounter.combatants.findIndex((combatant) => combatant.id === enemyId);
   const enemyAttack = { id: "test-club", name: "Test Club", kind: "melee", attackBonus: 20, damage: "1 bludgeoning", normalRangeFeet: 5 };
+  const afterChoice = hit.encounter.pendingResponse?.type === "post-hit-spell-choice"
+    ? resolvePostHitSpellChoice(hit.encounter, false).encounter : hit.encounter;
   const answer = resolveAttackRoll({
-    ...hit.encounter,
+    ...afterChoice,
     activeIndex: enemyIndex,
     selectedTargetId: irvenWeber.id,
     turn: { ...hit.encounter.turn, action: true },

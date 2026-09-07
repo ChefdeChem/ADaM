@@ -2,7 +2,7 @@ import type { Character } from "../domain/character";
 import type { CombatAction, EncounterState, ExperienceMode } from "../domain/combat";
 import type { RulesetId } from "../rulesets";
 import { validateAttackChoice } from "./combat-options";
-import { effectiveSpeed, hasBonusActionDash } from "./effects";
+import { applyEffect, effectiveSpeed, hasBonusActionDash, isIncapacitated } from "./effects";
 import { featureCombatActions } from "./feature-actions";
 import { equipmentCombatActions } from "./tool-actions";
 import { spendNamedResource, validateNamedResource } from "./resources";
@@ -38,6 +38,7 @@ export function validateAction(action: CombatAction, encounter: EncounterState, 
   if (encounter.pendingResponse) return { legal: false, reason: "Resolve the pending player response first." };
   if (active?.side !== "player") return { legal: false, reason: "ADaM controls and advances enemy turns automatically." };
   if (active.hitPoints.current <= 0 && action.id !== "end-turn") return { legal: false, reason: "An unconscious character cannot take actions." };
+  if (["action", "bonus-action", "reaction"].includes(action.cost) && isIncapacitated(encounter, active.id)) return { legal: false, reason: "An incapacitated character cannot take actions, Bonus Actions, or Reactions." };
   if (action.cost === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (action.cost === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
   if (action.cost === "reaction" && !encounter.turn.reaction) return { legal: false, reason: "Your Reaction is unavailable." };
@@ -102,6 +103,7 @@ export function findActionFromText(text: string, ruleset: RulesetId, character?:
 }
 
 export function consumeAction(action: CombatAction, encounter: EncounterState): EncounterState {
+  if (!validateAction(action, encounter).legal) return encounter;
   const turn = { ...encounter.turn };
   if (action.cost === "action") turn.action = false;
   if (action.cost === "bonus-action") turn.bonusAction = false;
@@ -114,5 +116,10 @@ export function consumeAction(action: CombatAction, encounter: EncounterState): 
   const spent = action.resourceCost && active
     ? spendNamedResource(encounter, active.id, action.resourceCost.resourceName, action.resourceCost.amount)
     : encounter;
-  return { ...spent, turn, log: [`${active?.name ?? "Combatant"}: ${action.name}.`, ...spent.log] };
+  const next = { ...spent, turn, log: [`${active?.name ?? "Combatant"}: ${action.name}.`, ...spent.log] };
+  return action.id === "dodge" && active ? applyEffect(next, {
+    name: "Dodge", description: "Attacks from visible attackers have Disadvantage; Dexterity saves have Advantage. Ends at your next turn, on Incapacitated, or at Speed 0.",
+    sourceCombatantId: active.id, targetCombatantId: active.id, durationRounds: 1,
+    modifiers: { dodge: true, endsOnIncapacitated: true }, replaceExisting: true,
+  }) : next;
 }

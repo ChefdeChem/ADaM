@@ -1,6 +1,7 @@
 import type { AbilityName } from "../domain/character";
 import type { ActiveEffect, EffectModifiers, EncounterState } from "../domain/combat";
 import type { RollMode } from "./dice";
+import { hasLineOfSightToPoint } from "./targeting";
 
 export type EffectInput = {
   name: string;
@@ -172,8 +173,13 @@ export function canMaintainConcentration(encounter: EncounterState, combatantId:
 export function reconcileConcentration(encounter: EncounterState): EncounterState {
   let next = encounter;
   for (const actor of encounter.combatants) {
-    // A zero-HP replacement decision precedes actually falling unconscious.
+    // Decide whether zero HP is replaced before ending any defensive stance.
     if (encounter.pendingResponse?.type === "zero-hit-point-replacement" && encounter.pendingResponse.targetCombatantId === actor.id) continue;
+    if (isIncapacitated(next, actor.id) || effectiveSpeed(next, actor.id) === 0) {
+      for (const effect of next.effects.filter((candidate) => candidate.targetCombatantId === actor.id && candidate.modifiers.dodge)) {
+        next = removeEffect(next, effect.id, `${actor.name} can no longer Dodge`);
+      }
+    }
     if (!canMaintainConcentration(next, actor.id)) next = endConcentration(next, actor.id, `${actor.name} can no longer concentrate`);
     if (actor.armorCategory === "heavy") {
       for (const effect of next.effects.filter((candidate) => candidate.targetCombatantId === actor.id && candidate.modifiers.rageExtension)) {
@@ -257,7 +263,10 @@ export function outgoingAttackRollMode(encounter: EncounterState, combatantId: s
     .filter((mode): mode is "advantage" | "disadvantage" => Boolean(mode));
   const hasAdvantage = situationalMode === "advantage" || modifiers.includes("advantage");
   const poisoned = encounter.combatants.find((actor) => actor.id === combatantId)?.conditions?.some((condition) => condition.toLowerCase() === "poisoned");
-  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage") || Boolean(poisoned);
+  const incomingDisadvantage = Boolean(targetId && effectsForCombatant(encounter, targetId).some((effect) =>
+    effectHasStarted(encounter, effect) && (effect.modifiers.incomingAttacks === "disadvantage"
+      || (effect.modifiers.dodge && dodgeBenefitsActive(encounter, targetId) && canSeeCombatant(encounter, targetId, combatantId)))));
+  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage") || Boolean(poisoned) || incomingDisadvantage;
   if (hasAdvantage && hasDisadvantage) return "normal";
   if (hasAdvantage) return "advantage";
   if (hasDisadvantage) return "disadvantage";
@@ -315,7 +324,7 @@ export function endEffectsBrokenByHarm(encounter: EncounterState, sourceCombatan
 
 export function savingThrowRollMode(encounter: EncounterState, combatantId: string, condition?: string, situationalMode: RollMode = "normal", ability?: AbilityName): RollMode {
   const combatant = encounter.combatants.find((candidate) => candidate.id === combatantId);
-  const hasAdvantage = situationalMode === "advantage" || Boolean(condition && combatant?.savingThrowAdvantagesAgainstConditions
+  const hasAdvantage = (ability === "dexterity" && dodgeBenefitsActive(encounter, combatantId)) || situationalMode === "advantage" || Boolean(condition && combatant?.savingThrowAdvantagesAgainstConditions
     .some((candidate) => candidate.toLowerCase() === condition.toLowerCase())) || Boolean(ability && effectsForCombatant(encounter, combatantId)
       .some((effect) => effectHasStarted(encounter, effect) && effect.modifiers.savingThrowAdvantages?.includes(ability)));
   const hasDisadvantage = situationalMode === "disadvantage" || Boolean(ability && combatant?.savingThrowDisadvantages?.includes(ability));
@@ -433,8 +442,23 @@ export function endConcentration(encounter: EncounterState, sourceCombatantId: s
 export function effectiveSpeed(encounter: EncounterState, combatantId: string): number {
   const combatant = encounter.combatants.find((item) => item.id === combatantId);
   if (!combatant) return 0;
+  if (combatant.conditions?.some((condition) => ["grappled", "restrained", "paralyzed", "petrified", "unconscious"].includes(condition.toLowerCase()))) return 0;
   return Math.max(0, combatant.baseSpeedFeet + effectsForCombatant(encounter, combatantId)
     .reduce((total, effect) => total + (effect.modifiers.speedFeet ?? 0), 0));
+}
+
+export function canSeeCombatant(encounter: EncounterState, observerId: string, targetId: string): boolean {
+  const observer = encounter.combatants.find((actor) => actor.id === observerId);
+  const target = encounter.combatants.find((actor) => actor.id === targetId);
+  return Boolean(observer && target
+    && !observer.conditions?.some((condition) => condition.toLowerCase() === "blinded")
+    && !target.conditions?.some((condition) => condition.toLowerCase() === "invisible")
+    && hasLineOfSightToPoint(encounter, observerId, target.position.x, target.position.y));
+}
+
+export function dodgeBenefitsActive(encounter: EncounterState, combatantId: string): boolean {
+  return !isIncapacitated(encounter, combatantId) && effectiveSpeed(encounter, combatantId) > 0
+    && effectsForCombatant(encounter, combatantId).some((effect) => effect.modifiers.dodge && effectHasStarted(encounter, effect));
 }
 
 export function remainingEffectRounds(encounter: EncounterState, effect: ActiveEffect): number | null {

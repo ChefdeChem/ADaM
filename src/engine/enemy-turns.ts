@@ -5,7 +5,7 @@ import { resolveAttackDamage, resolveAttackRoll, validateAttackTarget } from "./
 import { gridDistanceFeet } from "./targeting";
 import { analyzeTarget } from "./targeting";
 import { queueConcentrationCheck } from "./defensive-responses";
-import { canHarmTarget, effectiveArmorClass } from "./effects";
+import { canHarmTarget, canSeeCombatant, effectiveArmorClass, effectiveSpeed, isIncapacitated } from "./effects";
 import { validateSpellSlot } from "./resources";
 import { applyMovementContinuation } from "./movement";
 
@@ -52,6 +52,7 @@ const cellKey = (x: number, y: number) => `${x},${y}`;
 
 function reachableCells(encounter: EncounterState): ReachableCell[] {
   const active = encounter.combatants[encounter.activeIndex];
+  if (effectiveSpeed(encounter, active.id) === 0) return [{ ...active.position, cost: 0 }];
   const best = new Map<string, number>([[cellKey(active.position.x, active.position.y), 0]]);
   const queue: ReachableCell[] = [{ ...active.position, cost: 0 }];
   const result: ReachableCell[] = [];
@@ -153,6 +154,7 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   const active = encounter.combatants[encounter.activeIndex];
   if (!active || active.side !== "enemy") return { encounter, steps: [], attackRoll: null, damageRoll: null };
   if (active.hitPoints.current <= 0) return { encounter, steps: [{ kind: "wait", summary: `${active.name} is defeated and cannot act.` }], attackRoll: null, damageRoll: null };
+  if (isIncapacitated(encounter, active.id)) return { encounter, steps: [{ kind: "wait", summary: `${active.name} is incapacitated and cannot attack or use an ability.` }], attackRoll: null, damageRoll: null };
   const target = encounter.combatants.filter((combatant) => combatant.side === "player" && combatant.hitPoints.current > 0).sort((left, right) => {
     if (mode === "advanced") {
       const healthPriority = left.hitPoints.current / left.hitPoints.maximum - right.hitPoints.current / right.hitPoints.maximum;
@@ -169,7 +171,7 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   const destination = chooseEnemyDestination(encounter, target, attacks, mode);
   let next: EncounterState = { ...encounter, selectedTargetId: target.id };
   if (destination.cost > 0) {
-    const availableOpportunityAttacks = target.reactionAvailable ? target.attacks.filter((attack) => attack.kind === "melee"
+    const availableOpportunityAttacks = target.reactionAvailable && !isIncapacitated(encounter, target.id) && canSeeCombatant(encounter, target.id, active.id) ? target.attacks.filter((attack) => attack.kind === "melee"
       && gridDistanceFeet(active, target) <= attack.normalRangeFeet
       && Math.max(Math.abs(destination.x - target.position.x), Math.abs(destination.y - target.position.y)) * 5 > attack.normalRangeFeet) : [];
     if (availableOpportunityAttacks.length && !next.turn.disengaged) {

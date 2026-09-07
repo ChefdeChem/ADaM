@@ -1,12 +1,12 @@
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
-import { activeWeaponDamageBonus, applyEffect, canHarmTarget, canRegainHitPoints, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, extendRage, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
+import { activeWeaponDamageBonus, applyEffect, canHarmTarget, canRegainHitPoints, canSeeCombatant, isIncapacitated, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, extendRage, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
 import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { attackInventoryAvailable, consumeAttackInventory } from "./inventory";
 import { analyzeTarget, gridDistanceFeet, hasLineOfSightToPoint } from "./targeting";
 import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
-import { canCastSpells, effectHasStarted, isIncapacitated, reconcileConcentration } from "./effects";
+import { canCastSpells, effectHasStarted, reconcileConcentration } from "./effects";
 
 export type OptionValidation = {
   legal: boolean;
@@ -30,6 +30,9 @@ export function spellCastingResourceOptions(encounter: EncounterState, spell: Ch
 }
 
 export function validateAttackChoice(encounter: EncounterState, attack: CharacterAttack): OptionValidation {
+  const actor = encounter.combatants[encounter.activeIndex];
+  if (!actor || isIncapacitated(encounter, actor.id)) return { legal: false, reason: "An incapacitated creature cannot attack." };
+  if (encounter.pendingResponse) return { legal: false, reason: "Resolve the pending response first." };
   if (!encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
   if (!encounter.selectedTargetId) return { legal: false, reason: "Select a target on the tactical map first." };
   const analysis = analyzeTarget(encounter, encounter.selectedTargetId);
@@ -37,6 +40,7 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   if (analysis.target.hitPoints.current <= 0) return { legal: false, reason: `${analysis.target.name} is already defeated.` };
   const active = encounter.combatants[encounter.activeIndex];
   if (!attackInventoryAvailable(encounter, active.id, attack.id)) return { legal: false, reason: `${attack.name} is no longer in your carried inventory.` };
+  if (attack.requiresTwoHands && active.hasEquippedShield) return { legal: false, reason: "This attack requires two hands; an equipped Shield occupies one hand." };
   if (!canHarmTarget(encounter, active.id, analysis.target.id)) return { legal: false, reason: `${active.name} is charmed and cannot attack ${analysis.target.name}.` };
   if (!analysis.lineOfSight) return { legal: false, reason: `${analysis.target.name} is outside your line of sight.` };
   const maximumRange = attack.longRangeFeet ?? attack.normalRangeFeet;
@@ -108,6 +112,10 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   const attacker=encounter.combatants.find((combatant)=>combatant.id===attackerId);
   const target=encounter.combatants.find((combatant)=>combatant.id===targetId);
   if(!attacker||!target)return{legal:false,reason:"The opportunity attack can no longer be resolved.",encounter};
+  if(isIncapacitated(encounter,attackerId))return{legal:false,reason:"An incapacitated creature cannot take a Reaction.",encounter};
+  if(!canSeeCombatant(encounter,attackerId,targetId))return{legal:false,reason:"An opportunity attack requires seeing the departing creature.",encounter};
+  if(!attackInventoryAvailable(encounter,attackerId,attack.id))return{legal:false,reason:"That weapon is no longer available.",encounter};
+  if(attack.requiresTwoHands&&attacker.hasEquippedShield)return{legal:false,reason:"This attack requires two hands; an equipped Shield occupies one hand.",encounter};
   if(!canHarmTarget(encounter,attackerId,targetId))return{legal:false,reason:`${attacker.name} is charmed and cannot attack ${target.name}.`,encounter};
   if(!attacker.reactionAvailable)return{legal:false,reason:`${attacker.name}'s reaction is unavailable.`,encounter};
   if(attack.kind!=="melee")return{legal:false,reason:"Opportunity attacks require a melee attack.",encounter};

@@ -4,7 +4,7 @@ import { resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options
 import { queueConcentrationCheck } from "./defensive-responses";
 import { validateSpellSlot } from "./resources";
 import { resolvePointHazardsForCombatant } from "./point-effects";
-import { canOccupyCells, occupiedCells } from "./effects";
+import { canOccupyCells, occupiedCells, effectiveSpeed, isIncapacitated, canSeeCombatant } from "./effects";
 
 export type MovementStep = { x: number; y: number; cost: number };
 export type ReachableMovementCell = { x: number; y: number; cost: number; path: MovementStep[] };
@@ -25,6 +25,7 @@ const distanceFromCell = (x: number, y: number, other: { position: { x: number; 
 export function legalMovementDestinations(encounter: EncounterState): ReachableMovementCell[] {
   const active = encounter.combatants[encounter.activeIndex];
   if (!active || active.side !== "player" || active.hitPoints.current <= 0 || encounter.pendingResponse || encounter.turn.movementRemaining < 5) return [];
+  if (effectiveSpeed(encounter, active.id) === 0) return [];
   const originKey = cellKey(active.position.x, active.position.y);
   const best = new Map<string, number>([[originKey, 0]]);
   const previous = new Map<string, string>();
@@ -69,6 +70,7 @@ export function legalMovementDestinations(encounter: EncounterState): ReachableM
 export function applyMovementContinuation(encounter: EncounterState, continuation: MovementContinuation, logMovement = true): EncounterState {
   const mover = encounter.combatants.find((combatant) => combatant.id === continuation.combatantId);
   if (!mover || mover.hitPoints.current <= 0) return encounter;
+  if (effectiveSpeed(encounter, mover.id) === 0) return encounter;
   const coordinate = `${String.fromCharCode(65 + continuation.x)}${continuation.y + 1}`;
   return {
     ...encounter,
@@ -107,7 +109,7 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
     const mover = next.combatants[next.activeIndex];
     const continuation: MovementContinuation = { combatantId: mover.id, ...step, destination: { x, y } };
     const threat = next.turn.disengaged ? null : next.combatants
-      .filter((combatant) => combatant.side === "enemy" && combatant.hitPoints.current > 0 && combatant.reactionAvailable)
+      .filter((combatant) => combatant.side === "enemy" && combatant.hitPoints.current > 0 && combatant.reactionAvailable && !isIncapacitated(next, combatant.id) && canSeeCombatant(next, combatant.id, mover.id))
       .flatMap((combatant) => combatant.attacks.filter((attack) => attack.kind === "melee").map((attack) => ({ combatant, attack })))
       .find(({ combatant, attack }) => distanceFromCell(mover.position.x, mover.position.y, combatant) <= attack.normalRangeFeet
         && distanceFromCell(step.x, step.y, combatant) > attack.normalRangeFeet);

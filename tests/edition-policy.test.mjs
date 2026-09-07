@@ -19,7 +19,7 @@ test('detects unlabelled legacy Paladin using feature evidence without changing 
 test('generic sheet and weapon wording do not invent an edition or a mastery',()=>{
  const c={...source,rulesetId:undefined,className:'Fighter',featureActions:[],profile:{features:[]}};
  assert.equal(detectCharacterEdition(c).edition,'uncertain');
- assert.deepEqual(playableCharacter(c).character.attacks,c.attacks);
+ assert.equal(playableCharacter(c).character.attacks.some(a=>a.mastery),false);
 });
 test('conflicting class evidence is reported as mixed',()=>{
  assert.equal(detectCharacterEdition({...source,rulesetId:'dnd-2024'}).edition,'mixed');

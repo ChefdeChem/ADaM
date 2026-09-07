@@ -31,6 +31,7 @@ export type CharacterAttack = {
   description?: string;
   ability?: AbilityName;
   mastery?: "sap" | "slow" | "topple";
+  requiresTwoHands?: boolean;
   masteryProvenance?: MechanicProvenance;
 };
 

@@ -57,7 +57,19 @@ export function playableCharacter(source: Character): { character: Character; as
     }
     return feature;
   });
-  return { assessment, notes, character: { ...source, featureActions } };
+  // Add a mode of an existing verified weapon, never a feature or mastery grant.
+  const longsword = source.attacks?.find((attack) => attack.id === "longsword" && attack.kind === "melee" && /^1d8\b/.test(attack.damage));
+  const swordRule = source.equipmentRules?.find((rule) => rule.id === "longsword" && rule.resolution.type === "weapon" && rule.resolution.attackIds.includes("longsword"));
+  const addVersatile = Boolean(longsword && swordRule && !source.attacks?.some((attack) => attack.id === "longsword-two-handed"));
+  const attacks = addVersatile ? [...(source.attacks ?? []), {
+    ...longsword!, id: "longsword-two-handed", name: "Longsword (two hands)",
+    damage: longsword!.damage.replace(/^1d8\b/, "1d10"), requiresTwoHands: true,
+    description: "Versatile: use 1d10 weapon damage with two hands. This does not grant Weapon Mastery. SRD 5.2.1, pp. 89-91.",
+  }] : source.attacks;
+  const equipmentRules = addVersatile ? source.equipmentRules?.map((rule) => rule === swordRule && rule.resolution.type === "weapon"
+    ? { ...rule, resolution: { ...rule.resolution, attackIds: [...rule.resolution.attackIds, "longsword-two-handed"] } } : rule) : source.equipmentRules;
+  if (source.id === "surina-daardendrian") notes.push("Your Glaive's Graze property is not a granted mastery. The two-handed Longsword option uses Versatile, which does not require mastery. Full rest healing, general skill actions, and remaining condition interactions are still under development.");
+  return { assessment, notes, character: { ...source, featureActions, attacks, equipmentRules } };
 }
 
 export function createPlayableEncounter(source: Character, scenario: Scenario) {
