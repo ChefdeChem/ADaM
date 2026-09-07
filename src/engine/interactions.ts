@@ -1,5 +1,5 @@
 import type { EncounterState } from "../domain/combat";
-import { applyEffect, canHarmTarget, canSeeCombatant, isIncapacitated, removeEffect } from "./effects";
+import { applyEffect, canHarmTarget, canSeeCombatant, isIncapacitated, removeEffect, revealHiddenInPlainSight } from "./effects";
 import { hasLineOfSightToPoint, gridDistanceFeet } from "./targeting";
 import { resolveAbilityCheck } from "./ability-checks";
 import { resolveAttackRoll, resolveAttackDamage, validateAttackChoice } from "./combat-options";
@@ -66,6 +66,7 @@ export function interactWithDoor(e: EncounterState, x: number, y: number) {
   const summary = `${actor.name} ${kind === "wall" ? "closes" : "opens"} ${door.label}, using ${usesAction ? "the Utilize Action" : "the turn's free object interaction"}.`;
   let next: EncounterState = { ...e, turn: { ...e.turn, action: usesAction ? false : e.turn.action, objectInteractionUsed: true }, map: { ...e.map, terrain: e.map.terrain.map(c => c === door ? { ...c, kind } : c) }, log: [summary, ...e.log] };
   if (door.door?.noisy) next = endHiding(next, actor.id, "audible door interaction");
+  next = revealHiddenInPlainSight(next);
   return { legal: true as const, encounter: next, summary };
 }
 export function readyAttack(e: EncounterState, attackId: string, targetId: string) {

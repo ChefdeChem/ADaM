@@ -9,6 +9,8 @@ This release improves four previously blocked core workflows. It does not change
 
 Authority: official SRD 5.2.1, interacting with objects p. 13, stabilizing p. 18, Help and Hide pp. 182-183, Ready pp. 186-187. Verified September 7, 2026: https://media.dndbeyond.com/compendium-images/srd/5.2/SRD_CC_v5.2.1.pdf
 
+Follow-up: the approved plain-view Hide ruling and held-weapon support are documented in `surina-hide-and-hands-2026-09-07.md`. Quiet doors now also end Hide when opening them exposes the creature to ordinary enemy observation. Magical invisibility remains separate.
+
 Twelve focused interaction regressions cover costs, invalid choices, expiry, attack-target matching, armor disadvantage, enemy discovery, resumed movement, separate reaction rolls and enemy continuation. Run the complete test, lint, typecheck and production build gate before release. No browser-operated QA is claimed.
 
 Future 2014 and 2024 encounter-resolution settings remain separate from source edition detection and are not implemented by this release.

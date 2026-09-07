@@ -22,6 +22,7 @@ import { rollD20, type DamageRoll } from "../src/engine/dice";
 import { importCharacterFile, type ImportResult } from "../src/importers";
 import { rulesets } from "../src/rulesets";
 import { createPlayableEncounter, DEFAULT_COMBAT_RULESET, detectCharacterEdition, editionLabel, playableCharacter } from "../src/rulesets/edition-policy";
+import { handleWeapon } from "../src/engine/weapon-hands";
 import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } from "../src/scenarios/scripted-generator";
 import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
 import { CHARACTER_ROSTER_LIMIT, CHARACTER_ROSTER_SEED_VERSION, mergeBuiltInCharacters, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster";
@@ -866,6 +867,12 @@ export default function Home() {
         </section>
         <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div><div><span>Difficulty</span><strong>{scenario.difficulty}</strong></div></div>
 
+        {playerCombatant.heldWeaponIds !== undefined && <section className="roll-coach" aria-label="Held weapons">
+          <div><h3>Held weapons</h3><p>{!initiativeReady ? "Choose what you hold before rolling initiative. Unselected weapons remain carried." : "Draw or stow: first interaction is free, then uses an Action. Two-handed attacks need the other hand free."}</p>
+            {playerCombatant.inventory.filter(item => item.attackIds.length && item.current > 0).map(item => <button type="button" key={item.id} disabled={Boolean(encounter.pendingResponse) || (initiativeReady && activeCombatant.id !== playerCombatant.id)} onClick={() => { const r = handleWeapon(encounter, playerCombatant.id, item.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); }}>{playerCombatant.heldWeaponIds!.includes(item.id) ? "Stow" : "Draw"} {item.name}</button>)}
+            <p>In hand: {playerCombatant.inventory.filter(item => playerCombatant.heldWeaponIds!.includes(item.id)).map(item => item.name).join(", ") || "none (Unarmed Strike available)"}</p>
+          </div>
+        </section>}
         {!initiativeReady && playerNeedsInitiative && <section className="roll-coach initiative-coach" aria-live="polite">
           <div><span>Your initiative · Click to roll</span><h3>{playerNeedsInitiative.name}</h3><p>Roll a <strong>d20</strong> and add your initiative modifier ({playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "−"}{Math.abs(playerNeedsInitiative.initiativeModifier)}). ADaM rolls enemy initiative privately and then reveals turn order.</p></div>
           <button type="button" onClick={rollInitiative}><small>Roll your initiative</small><strong>d20 {playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "−"} {Math.abs(playerNeedsInitiative.initiativeModifier)}</strong></button>

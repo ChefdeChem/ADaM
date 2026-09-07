@@ -69,7 +69,7 @@ export function consumeAttackInventory(encounter: EncounterState, combatantId: s
   return {
     ...encounter,
     combatants: encounter.combatants.map((candidate) => candidate.id === combatantId
-      ? { ...candidate, inventory, attacks }
+      ? { ...candidate, inventory, attacks, heldWeaponIds: candidate.heldWeaponIds?.filter(id => !consumedIds.has(id)) }
       : candidate),
     log: [...log, ...encounter.log],
   };

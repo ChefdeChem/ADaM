@@ -469,6 +469,31 @@ export function canSeeCombatant(encounter: EncounterState, observerId: string, t
     && hasLineOfSightToPoint(encounter, observerId, target.position.x, target.position.y));
 }
 
+/** Player-approved trainer ruling: ordinary clear sight ends Hide, not magical invisibility.
+ * Current maps model solid cover in otherwise visible lighting, without special senses.
+ */
+export function revealHiddenInPlainSight(encounter: EncounterState): EncounterState {
+  let next = encounter;
+  for (const hidden of encounter.effects.filter(effect => effect.hidden)) {
+    const id = hidden.targetCombatantId;
+    const target = next.combatants.find(actor => actor.id === id);
+    if (!target) continue;
+    // Remove only Hide in a hypothetical view so its own Invisible condition
+    // cannot prevent detection. Other sources of invisibility remain effective.
+    const visibleContext = next.effects.filter(effect => effect.targetCombatantId === id && effect.hidden)
+      .reduce((state, effect) => removeEffect(state, effect.id, "visibility evaluation"), next);
+    const observer = visibleContext.combatants.find(actor => actor.side !== target.side
+      && actor.hitPoints.current > 0 && !isIncapacitated(visibleContext, actor.id)
+      && canSeeCombatant(visibleContext, actor.id, id));
+    if (observer) {
+      for (const effect of next.effects.filter(effect => effect.targetCombatantId === id && effect.hidden)) {
+        next = removeEffect(next, effect.id, `${observer.name} sees the creature in plain view (approved trainer Hide ruling)`);
+      }
+    }
+  }
+  return next;
+}
+
 export function dodgeBenefitsActive(encounter: EncounterState, combatantId: string): boolean {
   return !isIncapacitated(encounter, combatantId) && effectiveSpeed(encounter, combatantId) > 0
     && effectsForCombatant(encounter, combatantId).some((effect) => effect.modifiers.dodge && effectHasStarted(encounter, effect));

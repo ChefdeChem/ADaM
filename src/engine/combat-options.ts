@@ -5,6 +5,7 @@ import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } f
 import { activeWeaponDamageBonus, applyEffect, canHarmTarget, canRegainHitPoints, canSeeCombatant, isIncapacitated, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, extendRage, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
 import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { attackInventoryAvailable, consumeAttackInventory } from "./inventory";
+import { validateWeaponHands, drawWeaponForAttack } from "./weapon-hands";
 import { analyzeTarget, gridDistanceFeet, hasLineOfSightToPoint } from "./targeting";
 import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
 import { canCastSpells, effectHasStarted, reconcileConcentration } from "./effects";
@@ -42,6 +43,8 @@ export function validateAttackChoice(encounter: EncounterState, attack: Characte
   const active = encounter.combatants[encounter.activeIndex];
   if (!attackInventoryAvailable(encounter, active.id, attack.id)) return { legal: false, reason: `${attack.name} is no longer in your carried inventory.` };
   if (attack.requiresTwoHands && active.hasEquippedShield) return { legal: false, reason: "This attack requires two hands; an equipped Shield occupies one hand." };
+  const hands = validateWeaponHands(encounter, active.id, attack, true);
+  if (!hands.legal) return hands;
   if (!canHarmTarget(encounter, active.id, analysis.target.id)) return { legal: false, reason: `${active.name} is charmed and cannot attack ${analysis.target.name}.` };
   if (!analysis.lineOfSight) return { legal: false, reason: `${analysis.target.name} is outside your line of sight.` };
   const maximumRange = attack.longRangeFeet ?? attack.normalRangeFeet;
@@ -73,7 +76,9 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   const critical=hit && (roll.natural===20 || criticalOnNearbyHit(encounter,active.id,target.target.id));
   const rangeNote=validation.rollMode==="disadvantage"?" with disadvantage":"";
   const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
-  let next=consumeAttackRollEffects(encounter,active.id,target.target.id);
+  const drawn=drawWeaponForAttack(encounter,active.id,attack);
+  let next=consumeAttackRollEffects(drawn,active.id,target.target.id);
+  if(active.heldWeaponIds!==undefined)next={...next,turn:{...next.turn,attackEquipmentChangeAvailable:drawn===encounter}};
   next=consumeAttackInventory(next,active.id,attack.id);
   if(active.side!==target.target.side)next=extendRage(next,active.id);
   if(hit&&attack.mastery==="sap"){
@@ -116,6 +121,8 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   if(isIncapacitated(encounter,attackerId))return{legal:false,reason:"An incapacitated creature cannot take a Reaction.",encounter};
   if(!canSeeCombatant(encounter,attackerId,targetId))return{legal:false,reason:"An opportunity attack requires seeing the departing creature.",encounter};
   if(!attackInventoryAvailable(encounter,attackerId,attack.id))return{legal:false,reason:"That weapon is no longer available.",encounter};
+  const hands=validateWeaponHands(encounter,attackerId,attack,false);
+  if(!hands.legal)return{legal:false,reason:hands.reason!,encounter};
   if(attack.requiresTwoHands&&attacker.hasEquippedShield)return{legal:false,reason:"This attack requires two hands; an equipped Shield occupies one hand.",encounter};
   if(!canHarmTarget(encounter,attackerId,targetId))return{legal:false,reason:`${attacker.name} is charmed and cannot attack ${target.name}.`,encounter};
   if(!attacker.reactionAvailable)return{legal:false,reason:`${attacker.name}'s reaction is unavailable.`,encounter};

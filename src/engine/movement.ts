@@ -4,7 +4,7 @@ import { resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options
 import { queueConcentrationCheck } from "./defensive-responses";
 import { validateSpellSlot } from "./resources";
 import { resolvePointHazardsForCombatant } from "./point-effects";
-import { canOccupyCells, occupiedCells, effectiveSpeed, isIncapacitated, canSeeCombatant } from "./effects";
+import { canOccupyCells, occupiedCells, effectiveSpeed, isIncapacitated, canSeeCombatant, revealHiddenInPlainSight } from "./effects";
 
 export type MovementStep = { x: number; y: number; cost: number };
 export type ReachableMovementCell = { x: number; y: number; cost: number; path: MovementStep[] };
@@ -73,7 +73,7 @@ export function applyMovementContinuation(encounter: EncounterState, continuatio
   if (!mover || mover.hitPoints.current <= 0) return encounter;
   if (effectiveSpeed(encounter, mover.id) === 0) return encounter;
   const coordinate = `${String.fromCharCode(65 + continuation.x)}${continuation.y + 1}`;
-  return {
+  return revealHiddenInPlainSight({
     ...encounter,
     completedEnemyMovementId: mover.side === "enemy" ? mover.id : encounter.completedEnemyMovementId,
     combatants: encounter.combatants.map((combatant) => combatant.id === mover.id
@@ -81,7 +81,7 @@ export function applyMovementContinuation(encounter: EncounterState, continuatio
       : combatant),
     turn: { ...encounter.turn, movementRemaining: Math.max(0, encounter.turn.movementRemaining - continuation.cost) },
     log: logMovement ? [`${mover.name} moved ${continuation.cost} feet to ${coordinate}.`, ...encounter.log] : encounter.log,
-  };
+  });
 }
 
 export function resumeMovementContinuation(encounter: EncounterState, continuation: MovementContinuation, random = Math.random): MovementResult {

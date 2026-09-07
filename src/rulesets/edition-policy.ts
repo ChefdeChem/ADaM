@@ -66,19 +66,25 @@ export function playableCharacter(source: Character): { character: Character; as
   const longsword = source.attacks?.find((attack) => attack.id === "longsword" && attack.kind === "melee" && /^1d8\b/.test(attack.damage));
   const swordRule = source.equipmentRules?.find((rule) => rule.id === "longsword" && rule.resolution.type === "weapon" && rule.resolution.attackIds.includes("longsword"));
   const addVersatile = Boolean(longsword && swordRule && !source.attacks?.some((attack) => attack.id === "longsword-two-handed"));
-  const attacks = addVersatile ? [...(source.attacks ?? []), {
+  const sourceAttacks = source.attacks?.map(attack => source.id === "surina-daardendrian" && attack.id === "glaive" ? { ...attack, requiresTwoHands: true } : attack);
+  const attacks = addVersatile ? [...(sourceAttacks ?? []), {
     ...longsword!, id: "longsword-two-handed", name: "Longsword (two hands)",
     damage: longsword!.damage.replace(/^1d8\b/, "1d10"), requiresTwoHands: true,
     description: "Versatile: use 1d10 weapon damage with two hands. This does not grant Weapon Mastery. SRD 5.2.1, pp. 89-91.",
-  }] : source.attacks;
+  }] : sourceAttacks;
   const equipmentRules = addVersatile ? source.equipmentRules?.map((rule) => rule === swordRule && rule.resolution.type === "weapon"
     ? { ...rule, resolution: { ...rule.resolution, attackIds: [...rule.resolution.attackIds, "longsword-two-handed"] } } : rule) : source.equipmentRules;
   if (source.id === "surina-daardendrian") notes.push("Your Glaive's Graze property is not a granted mastery. The two-handed Longsword option uses Versatile, which does not require mastery. Safe rest healing and skill-check rolls are available. Hide behind Total Cover, readied weapon attacks after an enemy moves, Help attacks or stabilization with an ally, and modeled door interactions are available. Narrative outcomes, other Ready triggers, and undefined objects still require adjudication.");
+  notes.push("Approved trainer Hide ruling: entering an enemy's unobstructed view ends hiding automatically. Concealed detection uses Perception. Magical invisibility is separate. Current maps assume visible lighting and do not simulate special senses.");
+  if (source.id === "surina-daardendrian") notes.push("Choose held weapons before initiative. Drawing or stowing on your turn shares the free object interaction with doors; further interactions use an Action. An Attack can draw one weapon if your hands allow it. Opportunity attacks require an already-held weapon. Glaive and two-handed Longsword attacks require both hands.");
   return { assessment, notes, character: { ...source, actions: source.id === "surina-daardendrian" ? ["Attack", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Study", "Influence", "Utilize"] : source.actions, featureActions, attacks, equipmentRules } };
 }
 
 export function createPlayableEncounter(source: Character, scenario: Scenario): EncounterState {
   const { character } = playableCharacter(source);
   const encounter = createEncounter(character, scenario);
+  for (const actor of encounter.combatants) {
+    if (actor.id === "surina-daardendrian") actor.heldWeaponIds = [];
+  }
   return { ...encounter, recoveryState: source.recoveryState ? { ...source.recoveryState } : undefined, combatants: encounter.combatants.map((actor) => actor.side === "player" ? { ...actor, rulesetId: DEFAULT_COMBAT_RULESET, skillProficiencies: source.id === "surina-daardendrian" ? [...new Set([...actor.skillProficiencies, ...["athletics", "history", "persuasion", "religion"].filter(skill => actor.skillModifiers[skill] === actor.abilityModifiers[skill === "athletics" ? "strength" : skill === "persuasion" ? "charisma" : "intelligence"] + actor.proficiencyBonus)])] : actor.skillProficiencies } : actor) };
 }

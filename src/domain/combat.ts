@@ -34,6 +34,7 @@ export type CombatAction = {
 
 export type TurnResources = {
   objectInteractionUsed?: boolean;
+  attackEquipmentChangeAvailable?: boolean;
   action: boolean;
   bonusAction: boolean;
   reaction: boolean;
@@ -274,6 +275,8 @@ export type Combatant = {
   spellcastingBlockedByArmor: boolean;
   resources: CombatResource[];
   inventory: CombatInventoryItem[];
+  /** Explicit held weapons for profiles with validated hand management; undefined is legacy compatibility. */
+  heldWeaponIds?: string[];
   triggeredFeatures: CharacterTriggeredFeature[];
   weaponDamageRerollFeatureId?: string;
   abilityCheckRerolls: Array<{ featureId: string; skills: string[]; resourceName: string; spendOnlyWhenFailureBecomesSuccess: true }>;

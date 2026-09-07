@@ -7,9 +7,10 @@ import { resolveAttackDamage, resolveAttackRoll, validateAttackTarget } from "./
 import { gridDistanceFeet } from "./targeting";
 import { analyzeTarget } from "./targeting";
 import { queueConcentrationCheck } from "./defensive-responses";
-import { canHarmTarget, canSeeCombatant, effectiveArmorClass, effectiveSpeed, isIncapacitated } from "./effects";
+import { canHarmTarget, canSeeCombatant, effectiveArmorClass, effectiveSpeed, isIncapacitated, revealHiddenInPlainSight } from "./effects";
 import { validateSpellSlot } from "./resources";
 import { applyMovementContinuation } from "./movement";
+import { validateWeaponHands } from "./weapon-hands";
 
 export type EnemyTurnStep = {
   kind: "move" | "ability" | "attack" | "damage" | "miss" | "reaction" | "wait";
@@ -174,6 +175,7 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   })[0];
   if (!target) return { encounter, steps: [{ kind: "wait", summary: `${active.name} has no conscious target.` }], attackRoll: null, damageRoll: null };
 
+  encounter = revealHiddenInPlainSight(encounter);
   const hidden = encounter.effects.find(effect => effect.targetCombatantId === target.id && effect.hidden);
   if (hidden && encounter.turn.action) {
     const check = resolveAbilityCheck({ ...encounter, turn: { ...encounter.turn, action: false } }, active.id, "perception", { dc: hidden.hidden!.dc, random: rollRandom })!;
@@ -187,6 +189,7 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   let next: EncounterState = { ...encounter, selectedTargetId: target.id };
   if (destination.cost > 0) {
     const availableOpportunityAttacks = target.reactionAvailable && !isIncapacitated(encounter, target.id) && canSeeCombatant(encounter, target.id, active.id) ? target.attacks.filter((attack) => attack.kind === "melee"
+      && validateWeaponHands(encounter, target.id, attack, false).legal
       && gridDistanceFeet(active, target) <= attack.normalRangeFeet
       && Math.max(Math.abs(destination.x - target.position.x), Math.abs(destination.y - target.position.y)) * 5 > attack.normalRangeFeet) : [];
     if (availableOpportunityAttacks.length && !next.turn.disengaged) {

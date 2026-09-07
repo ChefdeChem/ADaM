@@ -87,10 +87,10 @@ test('The enemy resumes its own Action after a readied attack triggered by actua
  e=resolveReadiedAttack(r.encounter,'accept').encounter;e=resolveReadiedAttack(e,'roll',()=>0.8).encounter;e=resolveReadiedAttack(e,'roll',()=>0).encounter;
  r=resolveEnemyTurn(e,'beginner',()=>0.01);assert.equal(r.encounter.turn.action,false);assert.ok(r.attackRoll);assert.equal(r.encounter.pendingResponse,null);
 });
-test('Only a door explicitly modeled as noisy ends Hide on interaction',()=>{
+test('Opening even a quiet door ends Hide when it exposes the creature to an enemy',()=>{
  const e=state();e.map.terrain=[{x:2,y:1,kind:'wall',label:'quiet door',door:{locked:false}}];
  let h=hide(e,()=>0.9).encounter;
- assert.equal(interactWithDoor(h,2,1).encounter.effects.some(x=>x.hidden),true);
+ assert.equal(interactWithDoor(h,2,1).encounter.effects.some(x=>x.hidden),false);
  h={...h,map:{...h.map,terrain:h.map.terrain.map(c=>({...c,door:{...c.door,noisy:true}}))}};
  assert.equal(interactWithDoor(h,2,1).encounter.effects.some(x=>x.hidden),false);
 });
