@@ -4,6 +4,10 @@ import type { RollMode } from "./dice";
 import { hasLineOfSightToPoint } from "./targeting";
 
 export type EffectInput = {
+  hidden?: ActiveEffect["hidden"];
+  helpAttack?: boolean;
+  helpCheck?: string;
+  readiedAttack?: ActiveEffect["readiedAttack"];
   name: string;
   description: string;
   sourceCombatantId: string;
@@ -84,6 +88,7 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     expiresAt: input.expiresAt ?? (input.durationRounds
       ? { round: encounter.round + input.durationRounds, combatantId: input.sourceCombatantId, phase: "start" }
       : undefined),
+    hidden: input.hidden, helpAttack: input.helpAttack, helpCheck: input.helpCheck, readiedAttack: input.readiedAttack,
     temporaryHitPointsGranted: input.temporaryHitPoints,
     consumeOnAttackRoll: input.consumeOnAttackRoll,
     attackTargetId: input.attackTargetId,
@@ -266,7 +271,7 @@ export function outgoingAttackRollMode(encounter: EncounterState, combatantId: s
   const attackConditions = attacker?.conditions?.map((c) => c.toLowerCase()) ?? [];
   const targetConditions = target?.conditions?.map((c) => c.toLowerCase()) ?? [];
   const nearby = Boolean(attacker && target && Math.max(Math.abs(attacker.position.x - target.position.x), Math.abs(attacker.position.y - target.position.y)) * 5 <= 5);
-  const hasAdvantage = situationalMode === "advantage" || modifiers.includes("advantage")
+  const hasAdvantage = situationalMode === "advantage" || modifiers.includes("advantage") || encounter.effects.some(e => e.helpAttack && e.targetCombatantId === targetId && e.sourceCombatantId !== combatantId && encounter.combatants.find(c => c.id === e.sourceCombatantId)?.side === attacker?.side)
     || targetConditions.some((c) => ["blinded", "restrained", "stunned", "paralyzed", "unconscious", "petrified"].includes(c))
     || (targetConditions.includes("prone") && nearby) || attackConditions.includes("invisible");
   const poisoned = encounter.combatants.find((actor) => actor.id === combatantId)?.conditions?.some((condition) => condition.toLowerCase() === "poisoned");
@@ -282,7 +287,7 @@ export function outgoingAttackRollMode(encounter: EncounterState, combatantId: s
 }
 
 export function consumeAttackRollEffects(encounter: EncounterState, combatantId: string, targetId?: string): EncounterState {
-  const consumed = encounter.effects.filter((effect) => effect.targetCombatantId === combatantId
+  const consumed = encounter.effects.filter((effect) => (effect.helpAttack && effect.targetCombatantId === targetId && effect.sourceCombatantId !== combatantId && encounter.combatants.find(c => c.id === effect.sourceCombatantId)?.side === encounter.combatants.find(c => c.id === combatantId)?.side) || effect.targetCombatantId === combatantId
     && effect.consumeOnAttackRoll
     && effectHasStarted(encounter, effect)
     && (!effect.attackTargetId || effect.attackTargetId === targetId));

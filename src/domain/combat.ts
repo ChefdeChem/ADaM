@@ -33,6 +33,7 @@ export type CombatAction = {
 };
 
 export type TurnResources = {
+  objectInteractionUsed?: boolean;
   action: boolean;
   bonusAction: boolean;
   reaction: boolean;
@@ -108,6 +109,8 @@ export type EnemySaveAbility = {
 };
 
 export type PendingPlayerResponse =
+  | { type: "readied-attack"; effectId: string; sourceCombatantId: string; targetCombatantId: string; attackId: string; phase: "choice" | "attack-roll" | "damage-roll"; critical?: boolean }
+
   | {
       type: "saving-throw";
       sourceCombatantId: string;
@@ -202,6 +205,10 @@ export type EffectModifiers = {
 };
 
 export type ActiveEffect = {
+  hidden?: { dc: number; lastKnownPosition: { x: number; y: number } };
+  helpAttack?: boolean;
+  helpCheck?: string;
+  readiedAttack?: { attackId: string; targetId: string; eventKey?: string };
   id: string;
   name: string;
   description: string;
@@ -288,6 +295,7 @@ export type Combatant = {
 };
 
 export type EncounterState = {
+  completedEnemyMovementId?: string;
   pendingAreaDamage?: { sourceId: string; targetId: string; amount: number; damageType: string; pushFeet: number }[];
   recoveryState?: { hitDiceRemaining: number; elapsedMinutes: number; lastLongRestEnd?: number };
   round: number;

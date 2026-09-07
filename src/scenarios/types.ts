@@ -9,9 +9,10 @@ export type ScenarioSetup = {
   difficulty: ScenarioDifficulty;
 };
 
-export type GridTerrainKind = "wall" | "difficult" | "cover" | "objective" | "flame";
+export type GridTerrainKind = "wall" | "open-door" | "difficult" | "cover" | "objective" | "flame";
 
 export type GridTerrainCell = {
+  door?: { locked: boolean; noisy?: boolean };
   x: number;
   y: number;
   kind: GridTerrainKind;

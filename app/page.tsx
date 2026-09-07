@@ -12,6 +12,7 @@ import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolvePostHitSpellChoice, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { executeSkillAction, skillActionChoices } from "../src/engine/skill-actions";
+import { hide, help, helpAbility, readyAttack, resolveReadiedAttack, nearbyDoors, interactWithDoor, endHiding } from "../src/engine/interactions";
 import { completeSurinaRest } from "../src/engine/rests";
 import { recoverRestResources, type RestType } from "../src/engine/resources";
 import { executePointSpell } from "../src/engine/point-effects";
@@ -164,6 +165,9 @@ export default function Home() {
   const [spellFlow, setSpellFlow] = useState<SpellFlow>(null);
   const [featureFlow, setFeatureFlow] = useState<FeatureFlow>(null);
   const [breathFlow, setBreathFlow] = useState<CharacterFeatureAction | null>(null);
+  const [interactionFlow, setInteractionFlow] = useState<"help" | "ready" | "utilize" | null>(null);
+  const [assistanceConfirmed, setAssistanceConfirmed] = useState(false);
+  const [doorPractice, setDoorPractice] = useState(false);
   const [skillFlow, setSkillFlow] = useState<string | null>(null);
   const [breathShape, setBreathShape] = useState<"cone" | "line">("cone");
   const [toolFlow, setToolFlow] = useState<ToolFlow>(null);
@@ -355,6 +359,7 @@ export default function Home() {
   function activateCharacter(nextCharacter: Character, announcement: string) {
     setCharacter(nextCharacter);
     setBreathFlow(null);
+    setInteractionFlow(null);
     setEncounter(createPlayableEncounter(nextCharacter, scenario));
     setChoiceMode(null);
     setAttackFlow(null);
@@ -450,7 +455,7 @@ export default function Home() {
     if (activeCombatant.side !== "player") { setFeedback("ADaM is resolving the enemy turn."); return; }
     if (deathSaveRequired && encounter.turn.action) { setFeedback("Roll the required death saving throw before ending this turn."); return; }
     if (activeCombatant.hitPoints.current <= 0 && action.id !== "end-turn") { setFeedback("An unconscious character cannot take actions."); return; }
-    if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setBreathFlow(null); setToolFlow(null); setFeedback("Turn ended. Initiative advanced."); return; }
+    if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setBreathFlow(null); setToolFlow(null); setInteractionFlow(null); setFeedback("Turn ended. Initiative advanced."); return; }
     if (action.id === "attack") {
       setChoiceMode("attack");
       setAttackFlow(null);
@@ -466,6 +471,13 @@ export default function Home() {
     }
     if (action.id === "move") { setFeedback("Choose a highlighted adjacent square. You can split your movement before and after actions; leaving an enemy's reach may trigger an opportunity attack."); return; }
     if (action.id === "magic" || action.id === "cast-spell") { setChoiceMode("spell"); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setFeedback("Choose a spell first. ADaM will then highlight every legal target for its range and line of sight."); return; }
+    if (action.id === "hide") {
+      const result = hide(encounter); if (!result.legal) { setFeedback(result.reason); return; }
+      setEncounter(result.encounter); setLastRoll(result.roll); setFeedback(result.summary); return;
+    }
+    if (["help", "ready", "utilize", "use-object"].includes(action.id)) {
+      setInteractionFlow(action.id === "use-object" ? "utilize" : action.id as "help" | "ready" | "utilize"); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setBreathFlow(null); return;
+    }
     const feature = character.featureActions?.find((candidate) => candidate.id === action.id);
     if (feature) {
       if (character.id === "surina-daardendrian" && feature.id === "breath-weapon-gold") { setBreathFlow(feature); setFeedback("Select a creature to aim through, choose your shape, then roll damage."); return; }
@@ -703,7 +715,8 @@ export default function Home() {
     event.preventDefault();
     const setup: ScenarioSetup = { prompt: setupMode === "guided" ? "" : scenarioPrompt, environment, objective, difficulty };
     const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
-    setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(createPlayableEncounter(sourceCharacter, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
+    if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
+    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(createPlayableEncounter(sourceCharacter, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
   }
 
   function loadTemplate(template: ScenarioTemplate) {
@@ -712,7 +725,8 @@ export default function Home() {
     setObjective(template.setup.objective);
     setDifficulty(template.setup.difficulty);
     const next = generateScriptedScenario(template.setup);
-    setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(createPlayableEncounter(sourceCharacter, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
+    if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
+    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(createPlayableEncounter(sourceCharacter, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
   }
 
   function saveTemplate() {
@@ -839,6 +853,7 @@ export default function Home() {
         <div className="combat-heading"><div><span className="eyebrow">Scripted scenario engine</span><h2>{scenario.title}</h2></div><div className="rules-badge">{activeRuleset.label}</div></div>
         <section className="scenario-studio">
           <div className="setup-tabs" aria-label="Scenario setup method">{(Object.keys(setupModeCopy) as ScenarioSetupMode[]).map((mode) => <button key={mode} type="button" className={setupMode === mode ? "active" : ""} onClick={() => setSetupMode(mode)}><strong>{setupModeCopy[mode].label}</strong><small>{setupModeCopy[mode].detail}</small></button>)}</div>
+          <label><input type="checkbox" checked={doorPractice} onChange={event => setDoorPractice(event.target.checked)} /> Include an unlocked practice door beside the starting position</label>
           {setupMode === "templates" ? <div className="template-grid">{[...scenarioTemplates, ...savedTemplates].map((template) => <button type="button" key={template.id} onClick={() => loadTemplate(template)}><span>{template.setup.difficulty}</span><strong>{template.name}</strong><small>{template.description}</small></button>)}</div> : <form className="scenario-builder" onSubmit={buildScenario}>
             {(setupMode === "describe" || setupMode === "combined") && <label className="prompt-field">Describe the encounter you want<input value={scenarioPrompt} onChange={(event) => setScenarioPrompt(event.target.value)} placeholder="A ruined crypt where I must rescue a trapped scholar" /></label>}
             {(setupMode === "guided" || setupMode === "combined") && <div className="guided-controls">
@@ -859,6 +874,11 @@ export default function Home() {
           <div><span>DM-controlled turn · {modeCopy[experienceMode].label} tactics · {enemyTurnPhase}</span><h3>{activeCombatant.name}</h3><p>ADaM controls this creature&apos;s movement, targeting, action selection, attack roll, and damage roll. Tactical decision quality scales with the selected experience mode.</p></div>
           <div className="dm-turn-badge"><strong>ADaM</strong><small>resolving enemy</small></div>
         </section>}
+        {encounter.pendingResponse?.type === "readied-attack" && <div className="response-panel"><h3>Readied attack</h3><p>The enemy finished moving. Release your prepared weapon attack or ignore this trigger.</p>{[...(encounter.pendingResponse.phase === "choice" ? ["accept", "decline"] : ["roll"])].map(choice => <button type="button" key={choice} onClick={() => {
+          const result = resolveReadiedAttack(encounter, choice as "accept" | "decline" | "roll");
+          setEncounter(result.encounter); if ("roll" in result && result.roll) setLastRoll(result.roll); setFeedback(result.summary);
+          setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
+        }}>{choice === "accept" ? "Use Reaction" : choice === "decline" ? "Ignore trigger" : encounter.pendingResponse?.type === "readied-attack" && encounter.pendingResponse.phase === "damage-roll" ? "Roll damage" : "Roll attack"}</button>)}</div>}
         {encounter.pendingResponse?.type === "saving-throw" && (() => {
           const pending = encounter.pendingResponse;
           const modifier = effectiveSavingThrowModifier(encounter, pending.targetCombatantId, pending.ability.saveAbility);
@@ -1031,6 +1051,14 @@ export default function Home() {
           }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
           {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose weapon</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{playerCombatant.attacks.map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : spell.freeCastResourceName ? `Level ${spell.level} · free use or slot` : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : spell.target === "area" && spell.area ? `${spell.area.sizeFeet} ft. ${spell.area.shape}` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
+          {encounter.effects.some(e => e.hidden && e.targetCombatantId === playerCombatant.id) && <button type="button" onClick={() => { setEncounter(endHiding(encounter, playerCombatant.id, "player speaks loudly")); setFeedback("You speak above a whisper and stop hiding."); }}>Speak loudly / end Hide</button>}
+          {interactionFlow && <div className="choice-panel"><h3>{interactionFlow === "ready" ? "Ready a weapon attack" : interactionFlow === "help" ? "Help" : "Object interaction"}</h3>
+            {interactionFlow === "ready" && <><p>Select an enemy on the map, then a weapon. Trigger: after that enemy finishes moving. Range and visibility are checked when the trigger occurs; this does not consume the Reaction until released.</p>{playerCombatant.attacks.map(attack => <button key={attack.id} type="button" onClick={() => { const r = readyAttack(encounter, attack.id, encounter.selectedTargetId ?? ""); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); }}>{attack.name}</button>)}</>}
+            {interactionFlow === "help" && <><p>Distract an adjacent enemy for an ally’s next attack, or roll Medicine to stabilize an adjacent ally at 0 HP. Helping yourself is not allowed.</p>{encounter.combatants.filter(c => c.id !== playerCombatant.id).map(target => <button key={target.id} type="button" onClick={() => { const r = help(encounter, target.side === playerCombatant.side ? "stabilize" : "attack", target.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); if ("roll" in r && r.roll) setLastRoll(r.roll); setFeedback(r.summary); setInteractionFlow(null); }}>{target.side === playerCombatant.side ? "Stabilize" : "Distract"} {target.name}</button>)}</>}
+            {interactionFlow === "help" && <><label><input type="checkbox" checked={assistanceConfirmed} onChange={e => setAssistanceConfirmed(e.target.checked)} /> The adjacent ally can understand and use my assistance</label>{encounter.combatants.filter(c => c.side === playerCombatant.side && c.id !== playerCombatant.id && c.hitPoints.current > 0).flatMap(ally => playerCombatant.skillProficiencies.map(skill => <button type="button" key={`${ally.id}:${skill}`} onClick={() => { const r = helpAbility(encounter, ally.id, skill, assistanceConfirmed); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); setAssistanceConfirmed(false); }}>Help {ally.name}: {skill}</button>))}</>}
+            {interactionFlow === "utilize" && <><p>The first simple door interaction on your turn is free. Another uses the Utilize Action. The squeaky practice door ends Hide. Locked doors need a supported unlocking method.</p>{nearbyDoors(encounter).map(door => <button type="button" key={`${door.x}:${door.y}`} onClick={() => { const r = interactWithDoor(encounter, door.x, door.y); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); }}>{door.kind === "wall" ? "Open" : "Close"} {door.label}</button>)}</>}
+            <button type="button" onClick={() => setInteractionFlow(null)}>Cancel</button>
+          </div>}
           {skillFlow && <div className="choice-panel"><h3>{skillFlow} check</h3><p>Roll using the character’s sheet modifiers and applicable conditions. The result does not automatically reveal information or change an enemy’s behavior.</p>{skillActionChoices[skillFlow].map(skill => <button key={skill} type="button" onClick={() => {
             const result = executeSkillAction(encounter, skillFlow, skill);
             if (!result.legal) { setFeedback(result.reason); return; }

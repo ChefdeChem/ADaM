@@ -73,12 +73,12 @@ export function playableCharacter(source: Character): { character: Character; as
   }] : source.attacks;
   const equipmentRules = addVersatile ? source.equipmentRules?.map((rule) => rule === swordRule && rule.resolution.type === "weapon"
     ? { ...rule, resolution: { ...rule.resolution, attackIds: [...rule.resolution.attackIds, "longsword-two-handed"] } } : rule) : source.equipmentRules;
-  if (source.id === "surina-daardendrian") notes.push("Your Glaive's Graze property is not a granted mastery. The two-handed Longsword option uses Versatile, which does not require mastery. Safe rest healing and skill-check rolls are available. Narrative skill outcomes, arbitrary Ready triggers, and unsupported environmental interactions still require adjudication.");
+  if (source.id === "surina-daardendrian") notes.push("Your Glaive's Graze property is not a granted mastery. The two-handed Longsword option uses Versatile, which does not require mastery. Safe rest healing and skill-check rolls are available. Hide behind Total Cover, readied weapon attacks after an enemy moves, Help attacks or stabilization with an ally, and modeled door interactions are available. Narrative outcomes, other Ready triggers, and undefined objects still require adjudication.");
   return { assessment, notes, character: { ...source, actions: source.id === "surina-daardendrian" ? ["Attack", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Study", "Influence", "Utilize"] : source.actions, featureActions, attacks, equipmentRules } };
 }
 
 export function createPlayableEncounter(source: Character, scenario: Scenario): EncounterState {
   const { character } = playableCharacter(source);
   const encounter = createEncounter(character, scenario);
-  return { ...encounter, recoveryState: source.recoveryState ? { ...source.recoveryState } : undefined, combatants: encounter.combatants.map((actor) => actor.side === "player" ? { ...actor, rulesetId: DEFAULT_COMBAT_RULESET } : actor) };
+  return { ...encounter, recoveryState: source.recoveryState ? { ...source.recoveryState } : undefined, combatants: encounter.combatants.map((actor) => actor.side === "player" ? { ...actor, rulesetId: DEFAULT_COMBAT_RULESET, skillProficiencies: source.id === "surina-daardendrian" ? [...new Set([...actor.skillProficiencies, ...["athletics", "history", "persuasion", "religion"].filter(skill => actor.skillModifiers[skill] === actor.abilityModifiers[skill === "athletics" ? "strength" : skill === "persuasion" ? "charisma" : "intelligence"] + actor.proficiencyBonus)])] : actor.skillProficiencies } : actor) };
 }

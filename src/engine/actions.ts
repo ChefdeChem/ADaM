@@ -1,3 +1,4 @@
+import { validateInteraction } from "./interactions";
 import type { Character } from "../domain/character";
 import type { CombatAction, EncounterState, ExperienceMode } from "../domain/combat";
 import type { RulesetId } from "../rulesets";
@@ -18,7 +19,7 @@ export const actionCatalog: CombatAction[] = [
   { id: "dash", name: "Dash", cost: "action", description: "Gain extra movement equal to your Speed for this turn.", rulesets: both },
   { id: "disengage", name: "Disengage", cost: "action", description: "Your movement does not provoke opportunity attacks this turn.", rulesets: both },
   { id: "dodge", name: "Dodge", cost: "action", description: "Focus on defense until the start of your next turn.", rulesets: both },
-  { id: "help", name: "Help", cost: "action", description: "Assist the selected creature with a task or attack while within 5 feet.", rulesets: both, targeting: { mode: "single", rangeFeet: 5, requiresLineOfSight: true } },
+  { id: "help", name: "Help", cost: "action", description: "Assist the selected creature with a task or attack while within 5 feet.", rulesets: both },
   { id: "hide", name: "Hide", cost: "action", description: "Attempt to become hidden when the environment permits it.", rulesets: both },
   { id: "ready", name: "Ready", cost: "action", description: "Prepare a response to a perceivable trigger; a readied spell may require concentration.", rulesets: both },
   { id: "search", name: "Search", cost: "action", description: "Devote attention to finding something concealed.", rulesets: both },
@@ -40,11 +41,11 @@ export function validateAction(action: CombatAction, encounter: EncounterState, 
   if (active?.side !== "player") return { legal: false, reason: "ADaM controls and advances enemy turns automatically." };
   if (active.hitPoints.current <= 0 && action.id !== "end-turn") return { legal: false, reason: "An unconscious character cannot take actions." };
   if (["action", "bonus-action", "reaction"].includes(action.cost) && isIncapacitated(encounter, active.id)) return { legal: false, reason: "An incapacitated character cannot take actions, Bonus Actions, or Reactions." };
-  if (action.cost === "action" && !encounter.turn.action) return { legal: false, reason: "Your Action has already been used this turn." };
+  if (action.cost === "action" && !encounter.turn.action && !(["utilize", "use-object"].includes(action.id) && !encounter.turn.objectInteractionUsed)) return { legal: false, reason: "Your Action has already been used this turn." };
   if (action.cost === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
   if (action.cost === "reaction" && !encounter.turn.reaction) return { legal: false, reason: "Your Reaction is unavailable." };
   if (action.cost === "movement" && encounter.turn.movementRemaining < 5) return { legal: false, reason: "You do not have enough movement remaining." };
-  if (active.id === "surina-daardendrian" && ["ready", "hide", "help", "utilize", "use-object"].includes(action.id)) return { legal: false, reason: `${action.name} needs a supported trigger, object, ally, or concealment adjudication. It is not automatically resolved in this trainer encounter.` };
+  if (["ready", "hide", "help", "utilize", "use-object"].includes(action.id)) return validateInteraction(encounter, action.id);
   if (action.id === "stand-up" && (!active.conditions?.some((c) => c.toLowerCase() === "prone") || effectiveSpeed(encounter, active.id) === 0 || encounter.turn.movementRemaining < effectiveSpeed(encounter, active.id) / 2)) return { legal: false, reason: "Standing requires Prone, nonzero Speed, and movement equal to half your Speed." };
   if (action.id === "expeditious-retreat-dash" && !hasBonusActionDash(encounter, active.id)) return { legal: false, reason: "Expeditious Retreat is not active." };
   if (action.resourceCost && active) {

@@ -75,6 +75,7 @@ export function applyMovementContinuation(encounter: EncounterState, continuatio
   const coordinate = `${String.fromCharCode(65 + continuation.x)}${continuation.y + 1}`;
   return {
     ...encounter,
+    completedEnemyMovementId: mover.side === "enemy" ? mover.id : encounter.completedEnemyMovementId,
     combatants: encounter.combatants.map((combatant) => combatant.id === mover.id
       ? { ...combatant, position: { x: continuation.x, y: continuation.y } }
       : combatant),

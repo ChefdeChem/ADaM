@@ -1,3 +1,5 @@
+import { queueReadiedAttack, endHiding } from "./interactions";
+import { resolveAbilityCheck } from "./ability-checks";
 import type { CharacterAttack } from "../domain/character";
 import type { Combatant, EncounterState, EnemySaveAbility, ExperienceMode } from "../domain/combat";
 import { parseDamageFormula, type D20Result, type DamageRoll } from "./dice";
@@ -153,6 +155,12 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   const rollRandom = typeof modeOrRandom === "function" ? modeOrRandom : random;
   const active = encounter.combatants[encounter.activeIndex];
   if (!active || active.side !== "enemy") return { encounter, steps: [], attackRoll: null, damageRoll: null };
+  if (encounter.pendingResponse) return { encounter, steps: [], attackRoll: null, damageRoll: null };
+  if (encounter.completedEnemyMovementId === active.id) {
+    encounter = queueReadiedAttack({ ...encounter, completedEnemyMovementId: undefined }, active.id);
+    if (encounter.pendingResponse) return { encounter, steps: [{ kind: "reaction", summary: "The interrupted movement finished; a readied attack is available." }], attackRoll: null, damageRoll: null };
+  }
+
   if (active.hitPoints.current <= 0) return { encounter, steps: [{ kind: "wait", summary: `${active.name} is defeated and cannot act.` }], attackRoll: null, damageRoll: null };
   if (isIncapacitated(encounter, active.id)) return { encounter, steps: [{ kind: "wait", summary: `${active.name} is incapacitated and cannot attack or use an ability.` }], attackRoll: null, damageRoll: null };
   const target = encounter.combatants.filter((combatant) => combatant.side === "player" && combatant.hitPoints.current > 0).sort((left, right) => {
@@ -166,6 +174,13 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   })[0];
   if (!target) return { encounter, steps: [{ kind: "wait", summary: `${active.name} has no conscious target.` }], attackRoll: null, damageRoll: null };
 
+  const hidden = encounter.effects.find(effect => effect.targetCombatantId === target.id && effect.hidden);
+  if (hidden && encounter.turn.action) {
+    const check = resolveAbilityCheck({ ...encounter, turn: { ...encounter.turn, action: false } }, active.id, "perception", { dc: hidden.hidden!.dc, random: rollRandom })!;
+    const searched = check.succeeded ? endHiding(check.encounter, target.id, "enemy Search found the hidden creature") : check.encounter;
+    const summary = `${active.name} uses Search. ${check.summary} ${check.succeeded ? "The hidden creature is found." : "The creature remains hidden."}`;
+    return { encounter: { ...searched, log: [summary, ...searched.log] }, steps: [{ kind: "wait", summary }], attackRoll: check.roll, damageRoll: null };
+  }
   const attacks = active.attacks ?? [];
   const steps: EnemyTurnStep[] = [];
   const destination = chooseEnemyDestination(encounter, target, attacks, mode);
@@ -192,6 +207,10 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
     }
     next = applyMovementContinuation(next, { combatantId: active.id, x: destination.x, y: destination.y, cost: destination.cost });
     steps.push({ kind: "move", summary: `${active.name} moves ${destination.cost} feet toward a better tactical position.` });
+  }
+  if (destination.cost > 0) {
+    next = queueReadiedAttack(next, active.id);
+    if (next.pendingResponse) return { encounter: next, steps: [...steps, { kind: "reaction", summary: "Movement finished. A readied attack can now be released." }], attackRoll: null, damageRoll: null };
   }
   const movedActive = next.combatants[next.activeIndex];
   const availableWeaponAttack = legalAttack(next, target.id, attacks, mode);

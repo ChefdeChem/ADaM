@@ -293,6 +293,7 @@ export function validateSpellAvailability(encounter: EncounterState, spell: Char
   const active = encounter.combatants[encounter.activeIndex];
   if (active?.spellcastingBlockedByArmor) return { legal: false, reason: `${active.name} cannot cast spells while wearing armor without training.` };
   if (!active || !canCastSpells(encounter, active.id)) return { legal: false, reason: "Spells cannot be cast while incapacitated or while Rage is active." };
+  if (encounter.effects.some(e => e.hidden && e.targetCombatantId === active.id)) return { legal: false, reason: "Casting while hidden needs verified Verbal-component metadata. End Hide explicitly before casting in this surface." };
   if (spell.unsupportedReason) return { legal: false, reason: spell.unsupportedReason };
   if (spell.trigger === "after-melee-hit") return { legal: false, reason: `${spell.name} becomes available immediately after you hit with a melee weapon or Unarmed Strike.` };
   if (spell.castingTime === "reaction") return { legal: false, reason: `${spell.name} becomes available automatically when its reaction trigger occurs.` };

@@ -1,7 +1,7 @@
 import type { EncounterState } from "../domain/combat";
 import { rollD20, type D20Result, type RollMode } from "./dice";
 import type { DamageRoll } from "./dice";
-import { abilityCheckRollMode } from "./effects";
+import { abilityCheckRollMode, removeEffect } from "./effects";
 import { spendNamedResource, validateNamedResource } from "./resources";
 import { consumeRollBonus } from "./roll-bonuses";
 
@@ -31,6 +31,7 @@ export function resolveAbilityCheck(
   const base = rollAbilityCheck(encounter, combatantId, skill, random, options.situationalMode ?? "normal");
   if (!base) return null;
   let next = encounter;
+  for (const effect of encounter.effects.filter(e => e.targetCombatantId === combatantId && e.helpCheck === skill.toLowerCase())) next = removeEffect(next, effect.id, "Help consumed by the matching skill check");
   let total = base.roll.total;
   let bonusRoll: DamageRoll | undefined;
   if (options.rollBonusEffectId) {
