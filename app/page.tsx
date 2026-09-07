@@ -7,7 +7,7 @@ import { actionCatalog, consumeAction, findActionFromText, validateAction, visib
 import { executeSpellChoice, revealDetectMagicAuras, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
 import { applyEffect, effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration, occupiedCells, removeEffect } from "../src/engine/effects";
 import { executeFeatureAction, extendRageWithBonusAction } from "../src/engine/feature-actions";
-import { createEncounter, endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
+import { endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolvePostHitSpellChoice, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
@@ -17,7 +17,8 @@ import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions"
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
 import { importCharacterFile, type ImportResult } from "../src/importers";
-import { rulesets, type RulesetId } from "../src/rulesets";
+import { rulesets } from "../src/rulesets";
+import { createPlayableEncounter, DEFAULT_COMBAT_RULESET, detectCharacterEdition, editionLabel, playableCharacter } from "../src/rulesets/edition-policy";
 import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } from "../src/scenarios/scripted-generator";
 import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
 import { CHARACTER_ROSTER_LIMIT, CHARACTER_ROSTER_SEED_VERSION, mergeBuiltInCharacters, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster";
@@ -134,9 +135,11 @@ function withCombatDefaults(character: Character): Character {
 }
 
 export default function Home() {
-  const [character, setCharacter] = useState(sample);
+  const [sourceCharacter, setCharacter] = useState(sample);
+  const playable = useMemo(() => playableCharacter(sourceCharacter), [sourceCharacter]);
+  const character = playable.character;
   const [storedCharacters, setStoredCharacters] = useState<Character[]>([]);
-  const [rulesetId, setRulesetId] = useState<RulesetId>("dnd-2024");
+  const rulesetId = DEFAULT_COMBAT_RULESET;
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>("beginner");
   const [message, setMessage] = useState("Using the built-in sample character. Import a PDF or ADaM JSON anytime.");
   const [pendingImport, setPendingImport] = useState<ImportResult | null>(null);
@@ -149,7 +152,7 @@ export default function Home() {
   const [scenario, setScenario] = useState(() => generateScriptedScenario(defaultScenarioSetup));
   const initialScenario = useRef(scenario);
   const [savedTemplates, setSavedTemplates] = useState<ScenarioTemplate[]>([]);
-  const [encounter, setEncounter] = useState(() => createEncounter(sample, scenario));
+  const [encounter, setEncounter] = useState(() => createPlayableEncounter(sample, scenario));
   const [command, setCommand] = useState("");
   const [feedback, setFeedback] = useState("Roll your initiative to begin. ADaM will roll privately for the enemies.");
   const [lastRoll, setLastRoll] = useState<ReturnType<typeof rollD20> | DamageRoll | null>(null);
@@ -188,7 +191,7 @@ export default function Home() {
   ), [encounter, spellFlow]);
   const legalMovementCells = useMemo(() => legalMovementDestinations(encounter), [encounter]);
   const legalMovementByCell = useMemo(() => new Map(legalMovementCells.map((cell) => [`${cell.x},${cell.y}`, cell])), [legalMovementCells]);
-  const mechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(character), [character]);
+  const mechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(sourceCharacter), [sourceCharacter]);
   const importMechanicCoverage = useMemo(() => reviewCharacter ? buildCharacterMechanicCoverage(reviewCharacter) : null, [reviewCharacter]);
 
   useEffect(() => {
@@ -207,9 +210,8 @@ export default function Home() {
         const activeId = localStorage.getItem("adam-active-character-id");
         const activeCharacter = nextRoster.find((candidate) => candidate.id === activeId) ?? nextRoster[0] ?? sample;
         setCharacter(activeCharacter);
-        if (activeCharacter.rulesetId) setRulesetId(activeCharacter.rulesetId);
         setMessage(`${activeCharacter.name}'s stored character sheet is loaded and ready for a fresh encounter.`);
-        setEncounter(createEncounter(activeCharacter, initialScenario.current));
+        setEncounter(createPlayableEncounter(activeCharacter, initialScenario.current));
       } catch {
         setSavedTemplates([]);
         setStoredCharacters([]);
@@ -345,8 +347,7 @@ export default function Home() {
 
   function activateCharacter(nextCharacter: Character, announcement: string) {
     setCharacter(nextCharacter);
-    if (nextCharacter.rulesetId) setRulesetId(nextCharacter.rulesetId);
-    setEncounter(createEncounter(nextCharacter, scenario));
+    setEncounter(createPlayableEncounter(nextCharacter, scenario));
     setChoiceMode(null);
     setAttackFlow(null);
     setSpellFlow(null);
@@ -397,7 +398,7 @@ export default function Home() {
     }
     const recoveredPlayer = result.encounter.combatants.find((combatant) => combatant.id === playerCombatant.id)!;
     const nextCharacter: Character = {
-      ...character,
+      ...sourceCharacter,
       resources: recoveredPlayer.resources.map((resource) => ({ ...resource })),
     };
     setEncounter(result.encounter);
@@ -696,7 +697,7 @@ export default function Home() {
     event.preventDefault();
     const setup: ScenarioSetup = { prompt: setupMode === "guided" ? "" : scenarioPrompt, environment, objective, difficulty };
     const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
-    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
+    setScenario(next); setEncounter(createPlayableEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
   }
 
   function loadTemplate(template: ScenarioTemplate) {
@@ -705,7 +706,7 @@ export default function Home() {
     setObjective(template.setup.objective);
     setDifficulty(template.setup.difficulty);
     const next = generateScriptedScenario(template.setup);
-    setScenario(next); setEncounter(createEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
+    setScenario(next); setEncounter(createPlayableEncounter(character, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
   }
 
   function saveTemplate() {
@@ -804,7 +805,7 @@ export default function Home() {
         </div>
         <div className="import-ability-grid">{abilityLabels.map((ability) => <label key={ability.id}>{ability.label}<input required min="1" max="30" type="number" value={reviewCharacter.abilities[ability.id]} onChange={(event) => updateReviewAbility(ability.id, event.target.value)} /></label>)}</div>
         {(reviewCharacter.attacks?.length ?? 0) > 0 && <div className="import-attacks"><span>Imported attacks</span><p>{reviewCharacter.attacks?.map((attack) => `${attack.name} (${attack.attackBonus >= 0 ? "+" : ""}${attack.attackBonus}, ${attack.damage}, ${attack.normalRangeFeet}${attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.)`).join(" · ")}</p></div>}
-        {importMechanicCoverage && <div className="mechanic-coverage import-coverage"><div><span>Mechanic coverage</span><strong>{importMechanicCoverage.supportSummary.fullySupported}/{importMechanicCoverage.total} fully supported</strong></div><p><b>{importMechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{importMechanicCoverage.supportSummary.partial}</b> partial · <b>{importMechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>Source: {reviewCharacter.source.fileName ?? "ADaM sample"} · {importMechanicCoverage.rulesetId === "dnd-2014" ? "2014 rules" : "2024 rules"}</small></div>}
+        {importMechanicCoverage && <div className="mechanic-coverage import-coverage"><div><span>Mechanic coverage</span><strong>{importMechanicCoverage.supportSummary.fullySupported}/{importMechanicCoverage.total} fully supported</strong></div><p><b>{importMechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{importMechanicCoverage.supportSummary.partial}</b> partial · <b>{importMechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>Detected edition: {editionLabel(detectCharacterEdition(reviewCharacter).edition)} · Source: {reviewCharacter.source.fileName ?? "ADaM sample"} · {editionLabel(detectCharacterEdition(reviewCharacter).edition)} source assessment</small></div>}
         <div className="import-review-actions"><button type="button" onClick={() => { setPendingImport(null); setReviewCharacter(null); setMessage("Import canceled; the previous character remains active."); }}>Cancel</button><button type="submit">Use this character</button></div>
       </form>
     </div>}
@@ -823,9 +824,9 @@ export default function Home() {
         <div className="character-card"><div className="portrait">{character.name[0]?.toUpperCase()}</div><div><p className="character-name">{character.name}</p><p>{character.className} · Level {character.level}</p></div></div>
         <div className="stats"><div><span>AC</span><strong>{playerArmorClass}</strong>{playerArmorClass !== character.armorClass && <small>base {character.armorClass}</small>}</div><div><span>HP</span><strong>{playerCombatant.hitPoints.current}/{playerCombatant.hitPoints.maximum}</strong>{playerCombatant.temporaryHitPoints > 0 && <small>+{playerCombatant.temporaryHitPoints} temp</small>}</div><div><span>PROF</span><strong>+{character.proficiencyBonus}</strong></div></div>
         <div className="weapon-summary"><span>Weapon attacks</span><strong>{character.attacks?.length ?? 0} ready</strong><p>{character.attacks?.map((attack) => attack.name).join(" · ") || "No weapon attacks imported."}</p></div>
-        <div className="mechanic-coverage"><div><span>Mechanic coverage</span><strong>{mechanicCoverage.supportSummary.fullySupported}/{mechanicCoverage.total} fully supported</strong></div><p><b>{mechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{mechanicCoverage.supportSummary.partial}</b> partial · <b>{mechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>{mechanicCoverage.sourceId === "user-imported" ? character.source.fileName ?? "Imported sheet" : "ADaM original"} · {mechanicCoverage.rulesetId === "dnd-2014" ? "2014" : "2024"}</small></div>
+        <div className="mechanic-coverage"><div><span>Mechanic coverage</span><strong>{mechanicCoverage.supportSummary.fullySupported}/{mechanicCoverage.total} fully supported</strong></div><p><b>{mechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{mechanicCoverage.supportSummary.partial}</b> partial · <b>{mechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>{mechanicCoverage.sourceId === "user-imported" ? character.source.fileName ?? "Imported sheet" : "ADaM original"} · {editionLabel(playable.assessment.edition)}</small></div>
         <div className="panel"><div className="panel-heading"><span>02</span><h2>Experience</h2></div><div className="mode-list">{(Object.keys(modeCopy) as ExperienceMode[]).map((mode) => <button key={mode} className={experienceMode === mode ? "selected" : ""} onClick={() => { setExperienceMode(mode); setFeedback(modeCopy[mode].detail); }}><strong>{modeCopy[mode].label}</strong><small>{modeCopy[mode].detail}</small></button>)}</div></div>
-        <div className="panel"><div className="panel-heading"><span>03</span><h2>Ruleset</h2></div><div className="ruleset-list">{rulesets.map((ruleset) => <button key={ruleset.id} className={ruleset.id === rulesetId ? "selected" : ""} onClick={() => setRulesetId(ruleset.id)}><strong>{ruleset.name}</strong><small>{ruleset.description}</small></button>)}</div></div>
+        <div className="panel"><div className="panel-heading"><span>03</span><h2>Character &amp; combat rules</h2></div><p><strong>Character source: {editionLabel(playable.assessment.edition)}</strong> · {playable.assessment.confidence} confidence</p><p><strong>Combat resolution: 2024</strong></p>{playable.assessment.evidence.length > 0 && <details><summary>Edition evidence</summary><ul>{playable.assessment.evidence.map((item) => <li key={item}>{item}</li>)}</ul></details>}{playable.notes.map((note) => <p key={note}>{note}</p>)}<small>Separate 2014 and 2024 combat settings are planned. Compatibility coverage is still being audited; this is not a complete conversion of every legacy mechanic.</small></div>
       </aside>
 
       <section className="combat-area">

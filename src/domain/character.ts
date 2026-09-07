@@ -208,7 +208,7 @@ export type CharacterFeatureAction = {
         type: "sense-creature-types";
         creatureTypes: string[];
         rangeFeet: number;
-        duration: "end-of-next-turn";
+        duration: "end-of-next-turn" | "ten-minutes";
         blockedByTotalCover: boolean;
       }
     | {

@@ -244,7 +244,10 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
         rangeFeet: feature.resolution.rangeFeet,
         blockedByTotalCover: feature.resolution.blockedByTotalCover,
       },
-      expiresAt: { round: encounter.round + 1, combatantId: active.id, phase: "end" },
+      expiresAt: resolution.duration === "ten-minutes"
+        ? { round: encounter.round + 100, combatantId: active.id, phase: "start" }
+        : { round: encounter.round + 1, combatantId: active.id, phase: "end" },
+      modifiers: resolution.duration === "ten-minutes" ? { endsOnIncapacitated: true } : {},
       replaceExisting: true,
     });
     const creatureCopy = detectedCreatures.length
