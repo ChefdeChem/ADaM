@@ -22,10 +22,10 @@ test('Dodge consumes Action, keeps Bonus Action, and changes attacks and Dexteri
  assert.equal(savingThrowRollMode(e,source.id,undefined,'normal','dexterity'),'advantage');
  assert.equal(savingThrowRollMode(e,source.id,undefined,'normal','constitution'),'normal');
 });
-test('Dodge visibility restriction affects attacks but not Dexterity saves',()=>{
+test('Dodge loses its attack protection against unseen attackers; condition advantage remains',()=>{
  const e=consumeAction(dodge,ready());
  for(const state of [condition(e,'Blinded'),{...e,combatants:e.combatants.map((c,i)=>i===1?{...c,conditions:['Invisible']}:c)}]) {
-  assert.equal(outgoingAttackRollMode(state,state.combatants[1].id,source.id),'normal');
+  assert.equal(outgoingAttackRollMode(state,state.combatants[1].id,source.id),'advantage');
   assert.equal(savingThrowRollMode(state,source.id,undefined,'normal','dexterity'),'advantage');
  }
 });

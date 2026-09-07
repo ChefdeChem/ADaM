@@ -261,12 +261,20 @@ export function outgoingAttackRollMode(encounter: EncounterState, combatantId: s
     .filter((effect) => effectHasStarted(encounter, effect) && (!effect.attackTargetId || effect.attackTargetId === targetId))
     .map((effect) => effect.modifiers.outgoingAttacks)
     .filter((mode): mode is "advantage" | "disadvantage" => Boolean(mode));
-  const hasAdvantage = situationalMode === "advantage" || modifiers.includes("advantage");
+  const attacker = encounter.combatants.find((actor) => actor.id === combatantId);
+  const target = encounter.combatants.find((actor) => actor.id === targetId);
+  const attackConditions = attacker?.conditions?.map((c) => c.toLowerCase()) ?? [];
+  const targetConditions = target?.conditions?.map((c) => c.toLowerCase()) ?? [];
+  const nearby = Boolean(attacker && target && Math.max(Math.abs(attacker.position.x - target.position.x), Math.abs(attacker.position.y - target.position.y)) * 5 <= 5);
+  const hasAdvantage = situationalMode === "advantage" || modifiers.includes("advantage")
+    || targetConditions.some((c) => ["blinded", "restrained", "stunned", "paralyzed", "unconscious", "petrified"].includes(c))
+    || (targetConditions.includes("prone") && nearby) || attackConditions.includes("invisible");
   const poisoned = encounter.combatants.find((actor) => actor.id === combatantId)?.conditions?.some((condition) => condition.toLowerCase() === "poisoned");
   const incomingDisadvantage = Boolean(targetId && effectsForCombatant(encounter, targetId).some((effect) =>
     effectHasStarted(encounter, effect) && (effect.modifiers.incomingAttacks === "disadvantage"
       || (effect.modifiers.dodge && dodgeBenefitsActive(encounter, targetId) && canSeeCombatant(encounter, targetId, combatantId)))));
-  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage") || Boolean(poisoned) || incomingDisadvantage;
+  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage") || Boolean(poisoned) || incomingDisadvantage
+    || attackConditions.some((c) => ["prone", "blinded", "restrained"].includes(c)) || targetConditions.includes("invisible") || (targetConditions.includes("prone") && !nearby);
   if (hasAdvantage && hasDisadvantage) return "normal";
   if (hasAdvantage) return "advantage";
   if (hasDisadvantage) return "disadvantage";
@@ -466,3 +474,11 @@ export function remainingEffectRounds(encounter: EncounterState, effect: ActiveE
 }
 
 export const minutesToRounds = (minutes: number) => Math.ceil(minutes * 10);
+
+export function automaticallyFailsSave(encounter: EncounterState, targetId: string, ability: string): boolean {
+  return ["strength", "dexterity"].includes(ability) && Boolean(encounter.combatants.find(c => c.id === targetId)?.conditions?.some(c => ["paralyzed", "petrified", "stunned", "unconscious"].includes(c.toLowerCase())));
+}
+export function criticalOnNearbyHit(encounter: EncounterState, attackerId: string, targetId: string): boolean {
+  const attacker = encounter.combatants.find(c => c.id === attackerId), target = encounter.combatants.find(c => c.id === targetId);
+  return Boolean(attacker && target && Math.max(Math.abs(attacker.position.x - target.position.x), Math.abs(attacker.position.y - target.position.y)) <= 1 && target.conditions?.some(c => ["paralyzed", "unconscious"].includes(c.toLowerCase())));
+}

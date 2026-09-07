@@ -1,3 +1,4 @@
+import { criticalOnNearbyHit, automaticallyFailsSave } from "./effects";
 import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
@@ -68,8 +69,8 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   const target=analyzeTarget(encounter,encounter.selectedTargetId!)!;
   const roll=rollD20({mode:validation.rollMode??"normal",modifier:attack.attackBonus+effectiveAttackModifier(encounter,active.id),random});
   const targetArmorClass=effectiveArmorClass(encounter,target.target.id)+(target.cover==="half"?2:0);
-  const critical=roll.natural===20;
-  const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
+  const hit=roll.natural===20||(roll.natural!==1&&roll.total>=targetArmorClass);
+  const critical=hit && (roll.natural===20 || criticalOnNearbyHit(encounter,active.id,target.target.id));
   const rangeNote=validation.rollMode==="disadvantage"?" with disadvantage":"";
   const summary=`${attack.name}${rangeNote}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
   let next=consumeAttackRollEffects(encounter,active.id,target.target.id);
@@ -123,8 +124,8 @@ export function resolveReactionAttackRoll(encounter:EncounterState,attackerId:st
   const rollMode=outgoingAttackRollMode(encounter,attacker.id,target.id,attacker.weaponAttackDisadvantage?"disadvantage":"normal");
   const roll=rollD20({mode:rollMode,modifier:attack.attackBonus+effectiveAttackModifier(encounter,attacker.id),random});
   const targetArmorClass=effectiveArmorClass(encounter,target.id);
-  const critical=roll.natural===20;
-  const hit=critical||(roll.natural!==1&&roll.total>=targetArmorClass);
+  const hit=roll.natural===20||(roll.natural!==1&&roll.total>=targetArmorClass);
+  const critical=hit && (roll.natural===20 || criticalOnNearbyHit(encounter,attacker.id,target.id));
   const summary=`Opportunity attack with ${attack.name}${rollMode==="disadvantage"?" with disadvantage":""}: ${roll.rolls.join(" / ")} ${roll.modifier>=0?"+":"−"} ${Math.abs(roll.modifier)} = ${roll.total} vs AC ${targetArmorClass} — ${critical?"critical hit":hit?"hit":"miss"}.`;
   let next=consumeAttackRollEffects(encounter,attacker.id,target.id);
   if(attacker.side!==target.side)next=extendRage(next,attacker.id);
@@ -364,8 +365,8 @@ export function resolveSpellAttackRoll(encounter: EncounterState, spell: Charact
   const rollMode = validation.rollMode ?? outgoingAttackRollMode(encounter, active.id, target.target.id);
   const roll = rollD20({ mode: rollMode, modifier: spell.attackBonus + effectiveAttackModifier(encounter, active.id), random });
   const targetArmorClass = effectiveArmorClass(encounter, target.target.id) + (target.cover === "half" ? 2 : 0);
-  const critical = roll.natural === 20;
-  const hit = critical || (roll.natural !== 1 && roll.total >= targetArmorClass);
+  const hit = roll.natural === 20 || (roll.natural !== 1 && roll.total >= targetArmorClass);
+  const critical = hit && (roll.natural === 20 || criticalOnNearbyHit(encounter, active.id, target.target.id));
   let next = consumeAttackRollEffects(encounter, active.id, target.target.id);
   next = spendSpellSlot(next, active.id, spell.level);
   next = {
@@ -482,7 +483,7 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
     for (const target of targets) {
       const saveMode = savingThrowRollMode(next, target.id, undefined, "normal", spell.save.ability);
       const saveRoll = rollD20({ mode: saveMode, modifier: effectiveSavingThrowModifier(next, target.id, spell.save.ability), random });
-      const succeeded = saveRoll.total >= spell.save.dc;
+      const succeeded = !automaticallyFailsSave(next, target.id, spell.save.ability) && saveRoll.total >= spell.save.dc;
       const damage = succeeded
         ? spell.save.damageOnSuccess === "half" ? Math.floor(damageRoll.total / 2) : 0
         : damageRoll.total;
@@ -501,7 +502,7 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
     const situationalMode = spell.hostileSaveAdvantage && target.side !== active.side ? "advantage" : "normal";
     const saveMode = savingThrowRollMode(next, targetId, spell.effect?.conditionGranted, situationalMode, spell.save.ability);
     const saveRoll = rollD20({ mode: saveMode, modifier: effectiveSavingThrowModifier(next, targetId, spell.save.ability), random });
-    const succeeded = saveRoll.total >= spell.save.dc;
+    const succeeded = !automaticallyFailsSave(next, targetId, spell.save.ability) && saveRoll.total >= spell.save.dc;
     let damageCopy = "";
     if (spell.damage && (!succeeded || spell.save.damageOnSuccess === "half")) {
       const damageRoll = rollDamage(spell.damage, { random });

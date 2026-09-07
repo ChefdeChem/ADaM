@@ -1,10 +1,11 @@
 import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
-import { applyEffect, canOccupyCells, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, extendRage, isIncapacitated, removeCondition, removeEffect, savingThrowRollMode } from "./effects";
+import { canHarmTarget, automaticallyFailsSave, applyEffect, canOccupyCells, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, extendRage, isIncapacitated, removeCondition, removeEffect, savingThrowRollMode } from "./effects";
 import { analyzeTarget, hasLineOfSightToPoint } from "./targeting";
 import { spendNamedResource, validateNamedResource } from "./resources";
 import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
 import { rollD20, rollDamage } from "./dice";
+import { queueConcentrationCheck } from "./defensive-responses";
 import { applyDamageToCombatant } from "./combat-options";
 
 export type FeatureActionResolution =
@@ -70,6 +71,7 @@ export function validateFeatureAction(encounter: EncounterState, feature: Charac
   if (feature.resolution.type === "area-saving-throw") {
     const targetId = options.targetCombatantId ?? encounter.selectedTargetId;
     if (!targetId) return { legal: false, reason: "Select a creature to set the area's direction." };
+    if (areaTargets(encounter, active.id, targetId, feature.resolution.area).some(target => !canHarmTarget(encounter, active.id, target.id))) return { legal: false, reason: "This area would harm a creature protected by your Charmed condition. Choose another direction." };
     return validateAreaAim(encounter, active.id, targetId, feature.resolution.area);
   }
   if (feature.resolution.type === "grant-roll-bonus") {
@@ -118,17 +120,18 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
     if (!damageRoll) return { legal: false, reason: `ADaM could not read the damage formula “${feature.resolution.damage}”.`, encounter };
     next = { ...next, turn };
     const results: string[] = [];
+    const queue: NonNullable<EncounterState["pendingAreaDamage"]> = [];
     for (const target of areaTargets(next, active.id, targetId, feature.resolution.area)) {
       const saveMode = savingThrowRollMode(next, target.id, undefined, "normal", feature.resolution.save.ability);
       const saveRoll = rollD20({ mode: saveMode, modifier: effectiveSavingThrowModifier(next, target.id, feature.resolution.save.ability), random });
-      const succeeded = saveRoll.total >= feature.resolution.save.dc;
+      const succeeded = !automaticallyFailsSave(next, target.id, feature.resolution.save.ability) && saveRoll.total >= feature.resolution.save.dc;
       const damage = succeeded
         ? feature.resolution.save.damageOnSuccess === "half" ? Math.floor(damageRoll.total / 2) : 0
         : damageRoll.total;
-      if (damage > 0) next = applyDamageToCombatant(next, target.id, damage, { damageType: damageRoll.formula.damageType, sourceCombatantId: active.id });
-      if (!succeeded && feature.resolution.area.pushFeetOnFailedSave) next = pushTargetAway(next, active.id, target.id, feature.resolution.area.pushFeetOnFailedSave);
-      results.push(`${target.name} ${succeeded ? "succeeds" : "fails"} (${saveRoll.total}) and takes ${effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType)} damage`);
+      queue.push({ sourceId: active.id, targetId: target.id, amount: damage, damageType: damageRoll.formula.damageType, pushFeet: !succeeded ? feature.resolution.area.pushFeetOnFailedSave ?? 0 : 0 });
+      results.push(`${target.name} ${succeeded ? "succeeds" : "fails"} (${saveRoll.total}) and faces ${effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType)} damage before defensive choices`);
     }
+    next = resumeAreaDamage({ ...next, pendingAreaDamage: queue });
     if (areaTargets(encounter, active.id, targetId, feature.resolution.area).some((target) => target.side !== active.side)) next = extendRage(next, active.id);
     const summary = `${active.name} uses ${feature.name}; ${damageRoll.total} ${damageRoll.formula.damageType} rolled. ${results.join("; ")}.`;
     return { legal: true, roll: damageRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
@@ -272,4 +275,18 @@ export function extendRageWithBonusAction(encounter: EncounterState, combatantId
   if (next === encounter) return { legal: false, reason: "No active Rage can be extended right now.", encounter };
   const summary = `${actor.name} uses a Bonus Action to extend Rage.`;
   return { legal: true, summary, encounter: { ...next, turn: { ...next.turn, bonusAction: false }, log: [summary, ...next.log] } };
+}
+
+/** Serialize targets so one defensive response cannot overwrite another. */
+export function resumeAreaDamage(encounter: EncounterState): EncounterState {
+  let next = encounter;
+  while (!next.pendingResponse && next.pendingAreaDamage?.length) {
+    const [entry, ...remaining] = next.pendingAreaDamage;
+    next = { ...next, pendingAreaDamage: remaining };
+    const damage = effectiveDamageAmount(next, entry.targetId, entry.amount, entry.damageType);
+    next = applyDamageToCombatant(next, entry.targetId, entry.amount, { damageType: entry.damageType, sourceCombatantId: entry.sourceId });
+    if (entry.pushFeet) next = pushTargetAway(next, entry.sourceId, entry.targetId, entry.pushFeet);
+    if (!next.pendingResponse) next = queueConcentrationCheck(next, entry.targetId, damage);
+  }
+  return next;
 }

@@ -2,6 +2,7 @@ import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { RulesetId } from "./types";
 import { createEncounter } from "../engine/encounter";
 import type { Scenario } from "../scenarios/types";
+import type { EncounterState } from "../domain/combat";
 
 export const DEFAULT_COMBAT_RULESET: RulesetId = "dnd-2024";
 export type EditionAssessment = {
@@ -46,6 +47,10 @@ export function playableCharacter(source: Character): { character: Character; as
   if (assessment.edition !== "dnd-2024") notes.push("Character features and resources follow the imported build. Combat defaults to 2024; edition differences can affect play. No character conversion is performed.");
   if (assessment.edition === "uncertain" || assessment.edition === "mixed") notes.push("The source edition cannot be established confidently. Existing features are retained; missing features and player choices are not invented.");
   const featureActions = source.featureActions?.map((feature): CharacterFeatureAction => {
+    if (source.id === "surina-daardendrian" && source.level === 1 && feature.id === "breath-weapon-gold" && feature.resolution.type === "area-saving-throw") {
+      notes.push("Breath Weapon: the source build retains its one-use Short Rest pool. Current resolution uses 1d10 fire damage and a choice of 15-foot Cone or 30-foot Line. At level one it replaces your sole attack, using your Action. No Extra Attack or additional resource uses are granted.");
+      return { ...feature, description: "Choose a 15-foot Cone or 30-foot Line, then roll 1d10 fire damage. Dexterity DC 11, half on success. Replaces your one attack this turn.", resolution: { ...feature.resolution, damage: "1d10 fire" }, provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Dragonborn, p. 84" } };
+    }
     if (feature.provenance.rulesetId !== "dnd-2014") return feature;
     if (/^lay on hands$/i.test(feature.name) && feature.resolution.type === "healing-pool") {
       notes.push("Lay on Hands: 2014 uses an Action, excludes Undead and Constructs, and removes individual diseases or poisons. Applied 2024 resolution uses a Bonus Action, permits those creature types, and spends 5 pool points to remove Poisoned instead. Your healing pool is unchanged.");
@@ -68,12 +73,12 @@ export function playableCharacter(source: Character): { character: Character; as
   }] : source.attacks;
   const equipmentRules = addVersatile ? source.equipmentRules?.map((rule) => rule === swordRule && rule.resolution.type === "weapon"
     ? { ...rule, resolution: { ...rule.resolution, attackIds: [...rule.resolution.attackIds, "longsword-two-handed"] } } : rule) : source.equipmentRules;
-  if (source.id === "surina-daardendrian") notes.push("Your Glaive's Graze property is not a granted mastery. The two-handed Longsword option uses Versatile, which does not require mastery. Full rest healing, general skill actions, and remaining condition interactions are still under development.");
-  return { assessment, notes, character: { ...source, featureActions, attacks, equipmentRules } };
+  if (source.id === "surina-daardendrian") notes.push("Your Glaive's Graze property is not a granted mastery. The two-handed Longsword option uses Versatile, which does not require mastery. Safe rest healing and skill-check rolls are available. Narrative skill outcomes, arbitrary Ready triggers, and unsupported environmental interactions still require adjudication.");
+  return { assessment, notes, character: { ...source, actions: source.id === "surina-daardendrian" ? ["Attack", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Study", "Influence", "Utilize"] : source.actions, featureActions, attacks, equipmentRules } };
 }
 
-export function createPlayableEncounter(source: Character, scenario: Scenario) {
+export function createPlayableEncounter(source: Character, scenario: Scenario): EncounterState {
   const { character } = playableCharacter(source);
   const encounter = createEncounter(character, scenario);
-  return { ...encounter, combatants: encounter.combatants.map((actor) => actor.side === "player" ? { ...actor, rulesetId: DEFAULT_COMBAT_RULESET } : actor) };
+  return { ...encounter, recoveryState: source.recoveryState ? { ...source.recoveryState } : undefined, combatants: encounter.combatants.map((actor) => actor.side === "player" ? { ...actor, rulesetId: DEFAULT_COMBAT_RULESET } : actor) };
 }

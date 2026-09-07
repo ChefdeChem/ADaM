@@ -1,3 +1,4 @@
+import { automaticallyFailsSave } from "./effects";
 import type { EncounterState } from "../domain/combat";
 import { applyDamageToCombatant, resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options";
 import { rollD20, rollDamage, type D20Result, type DamageRoll } from "./dice";
@@ -145,8 +146,8 @@ export function resolveSavingThrowResponse(encounter: EncounterState, random = M
   const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId);
   if (!target || !source) return { encounter: { ...encounter, pendingResponse: null }, playerRoll: null, damageRoll: null, summary: "The saving throw can no longer be resolved." };
   const modifier = effectiveSavingThrowModifier(encounter, target.id, pending.ability.saveAbility);
-  const playerRoll = rollD20({ mode: "normal", modifier, random });
-  const succeeded = playerRoll.total >= pending.ability.saveDc;
+  const playerRoll = rollD20({ mode: savingThrowRollMode(encounter, target.id, undefined, "normal", pending.ability.saveAbility), modifier, random });
+  const succeeded = !automaticallyFailsSave(encounter, target.id, pending.ability.saveAbility) && playerRoll.total >= pending.ability.saveDc;
   const damageRoll = rollDamage(pending.ability.damage, { random });
   if (!damageRoll) return { encounter: { ...encounter, pendingResponse: null }, playerRoll, damageRoll: null, summary: `ADaM could not read ${pending.ability.name}'s damage formula.` };
   const damage = succeeded

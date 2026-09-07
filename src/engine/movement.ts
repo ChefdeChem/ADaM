@@ -43,7 +43,8 @@ export function legalMovementDestinations(encounter: EncounterState): ReachableM
       if (x < 0 || y < 0 || x >= encounter.map.width || y >= encounter.map.height) continue;
       if (!canOccupyCells(encounter, active.id, { x, y })) continue;
       const difficult = occupiedCells(encounter, active.id, { x, y }).some((point) => encounter.map.terrain.some((cell) => cell.x === point.x && cell.y === point.y && cell.kind === "difficult"));
-      const stepCost = difficult ? 10 : 5;
+      const crawling = active.conditions?.some((condition) => condition.toLowerCase() === "prone");
+      const stepCost = 5 + (difficult ? 5 : 0) + (crawling ? 5 : 0);
       const nextCost = current.cost + stepCost;
       if (nextCost > encounter.turn.movementRemaining) continue;
       const key = cellKey(x, y);

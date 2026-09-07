@@ -288,6 +288,8 @@ export type Combatant = {
 };
 
 export type EncounterState = {
+  pendingAreaDamage?: { sourceId: string; targetId: string; amount: number; damageType: string; pushFeet: number }[];
+  recoveryState?: { hitDiceRemaining: number; elapsedMinutes: number; lastLongRestEnd?: number };
   round: number;
   activeIndex: number;
   selectedTargetId: string | null;

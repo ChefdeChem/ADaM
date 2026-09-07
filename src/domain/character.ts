@@ -61,7 +61,7 @@ export type CharacterSpell = {
   freeCastResourceName?: string;
   area?: {
     origin: "self";
-    shape: "cone" | "cube";
+    shape: "cone" | "cube" | "line";
     sizeFeet: number;
     affects: "all-creatures" | "hostile-creatures";
     pushFeetOnFailedSave?: number;
@@ -279,6 +279,8 @@ export type CharacterProfile = {
 };
 
 export type Character = {
+  inventoryRemaining?: Record<string, number>;
+  recoveryState?: { hitDiceRemaining: number; elapsedMinutes: number; lastLongRestEnd?: number };
   id: string;
   name: string;
   className: string;

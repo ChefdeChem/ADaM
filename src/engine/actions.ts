@@ -2,7 +2,7 @@ import type { Character } from "../domain/character";
 import type { CombatAction, EncounterState, ExperienceMode } from "../domain/combat";
 import type { RulesetId } from "../rulesets";
 import { validateAttackChoice } from "./combat-options";
-import { applyEffect, effectiveSpeed, hasBonusActionDash, isIncapacitated } from "./effects";
+import { applyEffect, effectiveSpeed, hasBonusActionDash, isIncapacitated, removeCondition } from "./effects";
 import { featureCombatActions } from "./feature-actions";
 import { equipmentCombatActions } from "./tool-actions";
 import { spendNamedResource, validateNamedResource } from "./resources";
@@ -11,6 +11,7 @@ import { analyzeTarget } from "./targeting";
 const both: RulesetId[] = ["dnd-2014", "dnd-2024"];
 
 export const actionCatalog: CombatAction[] = [
+  { id: "stand-up", name: "Stand Up", cost: "movement", description: "End Prone by spending half your Speed in movement.", rulesets: both },
   { id: "attack", name: "Attack", cost: "action", description: "Choose a weapon or attack from the character sheet, then resolve its specific range and modifiers.", rulesets: both },
   { id: "magic", name: "Magic", cost: "action", description: "Cast a spell, use a magic item, or activate a magical feature that uses the Magic action.", rulesets: ["dnd-2024"] },
   { id: "cast-spell", name: "Cast a Spell", cost: "action", description: "Cast a spell with a casting time of one action.", rulesets: ["dnd-2014"] },
@@ -43,6 +44,8 @@ export function validateAction(action: CombatAction, encounter: EncounterState, 
   if (action.cost === "bonus-action" && !encounter.turn.bonusAction) return { legal: false, reason: "Your Bonus Action has already been used this turn." };
   if (action.cost === "reaction" && !encounter.turn.reaction) return { legal: false, reason: "Your Reaction is unavailable." };
   if (action.cost === "movement" && encounter.turn.movementRemaining < 5) return { legal: false, reason: "You do not have enough movement remaining." };
+  if (active.id === "surina-daardendrian" && ["ready", "hide", "help", "utilize", "use-object"].includes(action.id)) return { legal: false, reason: `${action.name} needs a supported trigger, object, ally, or concealment adjudication. It is not automatically resolved in this trainer encounter.` };
+  if (action.id === "stand-up" && (!active.conditions?.some((c) => c.toLowerCase() === "prone") || effectiveSpeed(encounter, active.id) === 0 || encounter.turn.movementRemaining < effectiveSpeed(encounter, active.id) / 2)) return { legal: false, reason: "Standing requires Prone, nonzero Speed, and movement equal to half your Speed." };
   if (action.id === "expeditious-retreat-dash" && !hasBonusActionDash(encounter, active.id)) return { legal: false, reason: "Expeditious Retreat is not active." };
   if (action.resourceCost && active) {
     const resource = validateNamedResource(encounter, active.id, action.resourceCost.resourceName, action.resourceCost.amount);
@@ -110,6 +113,7 @@ export function consumeAction(action: CombatAction, encounter: EncounterState): 
   if (action.cost === "reaction") turn.reaction = false;
   if (action.cost === "movement") turn.movementRemaining = Math.max(0, turn.movementRemaining - 5);
   const active = encounter.combatants[encounter.activeIndex];
+  if (action.id === "stand-up") return { ...removeCondition(encounter, active.id, "prone"), turn: { ...encounter.turn, movementRemaining: encounter.turn.movementRemaining - effectiveSpeed(encounter, active.id) / 2 }, log: [`${active.name} stands up.`, ...encounter.log] };
   if (action.id === "dash" && active) turn.movementRemaining += effectiveSpeed(encounter, active.id);
   if (action.id === "expeditious-retreat-dash" && active) turn.movementRemaining += effectiveSpeed(encounter, active.id);
   if (action.id === "disengage") turn.disengaged = true;

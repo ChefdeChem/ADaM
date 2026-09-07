@@ -13,7 +13,7 @@ export function combatInventoryForCharacter(character: Character): CombatInvento
     return [{
       id: rule.id,
       name: rule.name,
-      current: rule.equipped ? maximum : 0,
+      current: rule.equipped ? Math.min(maximum, Math.max(0, character.inventoryRemaining?.[rule.id] ?? maximum)) : 0,
       maximum,
       attackIds: rule.resolution.type === "weapon" || rule.resolution.type === "ammunition" ? [...rule.resolution.attackIds] : [],
       expendOnAttackIds: rule.resolution.type === "weapon" || rule.resolution.type === "ammunition" ? [...(rule.resolution.expendOnAttackIds ?? [])] : [],

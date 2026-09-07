@@ -20,7 +20,7 @@ function pointInsideArea(source: Combatant, aim: Combatant, target: Combatant, a
   if (forward <= 0 || forward > area.sizeFeet + halfCell) return false;
   return area.shape === "cone"
     ? lateral <= forward / 2 + halfCell
-    : lateral <= area.sizeFeet / 2 + halfCell;
+    : area.shape === "line" ? lateral < 5 : lateral <= area.sizeFeet / 2 + halfCell;
 }
 
 export function areaTargets(encounter: EncounterState, sourceId: string, aimTargetId: string, area: Area): Combatant[] {
@@ -28,7 +28,7 @@ export function areaTargets(encounter: EncounterState, sourceId: string, aimTarg
   const aim = encounter.combatants.find((combatant) => combatant.id === aimTargetId);
   if (!source || !aim || source.id === aim.id) return [];
   return encounter.combatants.filter((target) => {
-    if (target.id === source.id || target.hitPoints.current <= 0) return false;
+    if (target.id === source.id || target.deathSaves.failures >= 3) return false;
     if (area.affects === "hostile-creatures" && target.side === source.side) return false;
     if (!pointInsideArea(source, aim, target, area)) return false;
     return Boolean(analyzeTarget(encounter, target.id)?.lineOfSight);
