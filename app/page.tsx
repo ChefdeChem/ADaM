@@ -3,7 +3,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { AbilityName, Character, CharacterAttack, CharacterEquipmentRule, CharacterFeatureAction, CharacterSpell } from "../src/domain/character";
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
-import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
+import { actionCatalog, availableActions, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
 import { executeRitualSpell, executeSpellChoice, revealDetectMagicAuras, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
 import { effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration, occupiedCells, removeEffect } from "../src/engine/effects";
 import { creatureSenseSnapshot, executeFeatureAction, healingPoolTargetOption, resumeAreaDamage, extendRageWithBonusAction, validateFeatureAction } from "../src/engine/feature-actions";
@@ -32,6 +32,7 @@ import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, Scenar
 import { CHARACTER_ROSTER_LIMIT, CHARACTER_ROSTER_SEED_VERSION, mergeBuiltInCharacters, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster";
 import { buildCharacterMechanicCoverage } from "../src/rules-registry";
 import { buildTurnGuidance } from "../src/ui/turn-guidance";
+import { actionCostLabel, quickActionPresentation } from "../src/ui/action-presentation";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
 type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
@@ -65,6 +66,14 @@ const actionCategoryCopy: Array<{ id: ActionCategory; label: string; detail: str
   { id: "bonus-action", label: "Bonus Action", detail: "Features with a bonus-action cost" },
   { id: "movement", label: "Movement", detail: "Positioning on the tactical grid" },
 ];
+
+const surinaQuickActionCopy: Record<string, { label: string; detail: string }> = {
+  attack: { label: "Attack", detail: "Choose a held weapon or an Unarmed Strike option." },
+  move: { label: "Move", detail: "Choose a highlighted square and spend movement by the legal path." },
+  "breath-weapon-gold": { label: "Breath Weapon", detail: "Choose Cone or Line, aim the area, and preview everyone affected." },
+  "lay-on-hands": { label: "Lay on Hands", detail: "Choose a creature in touch range and decide how many points to spend." },
+  dodge: { label: "Dodge", detail: "Spend the Action to defend until the start of Surina's next turn." },
+};
 
 const setupModeCopy: Record<ScenarioSetupMode, { label: string; detail: string }> = {
   describe: { label: "Describe", detail: "Write the encounter in your own words." },
@@ -185,6 +194,10 @@ export default function Home() {
     () => visibleActionsForMode(character, rulesetId, experienceMode, encounter),
     [character, encounter, experienceMode, rulesetId],
   );
+  const characterActions = useMemo(() => availableActions(character, rulesetId), [character, rulesetId]);
+  const surinaQuickActions = useMemo(() => ["attack", "move", "breath-weapon-gold", "lay-on-hands", "dodge"]
+    .map((id) => characterActions.find((action) => action.id === id))
+    .filter((action): action is CombatAction => Boolean(action)), [characterActions]);
   const categorizedActions = useMemo(() => visibleActions.filter((action) => action.cost === actionCategory), [actionCategory, visibleActions]);
   const activeCombatant = encounter.combatants[encounter.activeIndex];
   const playerCombatant = encounter.combatants.find((combatant) => combatant.id === character.id) ?? encounter.combatants[0];
@@ -559,7 +572,7 @@ export default function Home() {
     if (!validation.legal) {
       setFeedback(experienceMode === "training" ? validation.reason ?? "That action is not currently legal." : "Action disallowed."); return;
     }
-    if (action.id === "move") { setFeedback("Choose a highlighted adjacent square. You can split your movement before and after actions; leaving an enemy's reach may trigger an opportunity attack."); return; }
+    if (action.id === "move") { setFeedback("Choose a highlighted adjacent square. You can split your movement before and after actions; leaving an enemy's reach may trigger an opportunity attack."); focusSurface("map"); return; }
     if (action.id === "magic" || action.id === "cast-spell") { setChoiceMode("spell"); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setFeedback("Choose a spell first. ADaM will then highlight every legal target for its range and line of sight."); return; }
     if (action.id === "hide") {
       const result = hide(encounter); if (!result.legal) { setFeedback(result.reason); return; }
@@ -1177,6 +1190,20 @@ export default function Home() {
 
         <section id="action-console" className="action-console">
           <div className="console-heading"><div><span className="eyebrow">{modeCopy[experienceMode].label} mode</span><h3>{targetAnalysis ? `Actions against ${targetAnalysis.target.name}` : "Choose your action"}</h3></div>{lastRoll && <div className="mini-roll"><span>Last roll</span><strong>{lastRoll.total}</strong></div>}</div>
+          {character.id === "surina-daardendrian" && <section className="surina-quick-actions" aria-label="Surina's primary actions">
+            <div className="quick-actions-heading"><div><span>Most useful choices</span><h4>What can Surina do right now?</h4></div><small>Every card shows its cost, current availability, and any resource it spends.</small></div>
+            <div className="quick-action-grid">{surinaQuickActions.map((action) => {
+              const validation = validateAction(action, encounter, character);
+              const workflowCanStart = action.id === "attack" && initiativeReady && outcome === "active" && activeCombatant.side === "player" && playerCombatant.hitPoints.current > 0 && encounter.turn.action && !encounter.pendingResponse;
+              const presentation = quickActionPresentation({ legal: validation.legal, reason: validation.reason, workflowCanStart, workflowExplanation: "Choose a weapon first. ADaM will then show every legal target." });
+              const resource = action.resourceCost ? playerCombatant.resources.find((candidate) => candidate.name.toLowerCase() === action.resourceCost!.resourceName.toLowerCase()) : null;
+              const copy = surinaQuickActionCopy[action.id] ?? { label: action.name, detail: action.description };
+              return <button type="button" key={`quick-${action.id}`} className={`quick-action ${presentation.tone}`} disabled={presentation.tone === "blocked"} onClick={() => runAction(action)}>
+                <span className="quick-status">{presentation.status}</span><strong>{copy.label}</strong><small>{actionCostLabel(action.cost)}{resource ? ` · ${resource.current}/${resource.maximum} ${resource.name}` : ""}</small><p>{presentation.tone === "blocked" ? presentation.explanation : copy.detail}</p>
+              </button>;
+            })}</div>
+          </section>}
+          <div className="all-actions-heading"><span>Full action list</span><p>Use these categories for tactical, skill, object, and less common choices.</p></div>
           <div className="action-category-tabs" aria-label="Action economy categories">{actionCategoryCopy.map((category) => {
             const actions = visibleActions.filter((action) => action.cost === category.id);
             const legalCount = actions.filter((action) => validateAction(action, encounter, character).legal).length;
