@@ -14,6 +14,7 @@ import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/mo
 import { executeSkillAction, skillActionChoices } from "../src/engine/skill-actions";
 import { hide, help, helpAbility, readyAttack, resolveReadiedAttack, nearbyDoors, interactWithDoor, endHiding } from "../src/engine/interactions";
 import { completeSurinaRest } from "../src/engine/rests";
+import { resolveShove, validateShove, type ShoveMode } from "../src/engine/shove";
 import { recoverRestResources, type RestType } from "../src/engine/resources";
 import { executePointSpell, resumePointHazards, resolvePointHazardResponse } from "../src/engine/point-effects";
 import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions";
@@ -446,6 +447,16 @@ export default function Home() {
     if (!applyImportedCharacter(reviewCharacter, pendingImport?.warnings ?? [])) return;
     setPendingImport(null);
     setReviewCharacter(null);
+  }
+
+  function performShove(targetId: string, mode: ShoveMode) {
+    if (!initiativeReady || outcome !== "active" || attackFlow?.phase === "damage-roll") { setFeedback("Finish the pending attack and use Shove during an active encounter."); return; }
+    const result = resolveShove(encounter, targetId, mode);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setLastRoll(result.roll);
+    setFeedback(result.summary);
+    setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
   }
 
   function runAction(action: CombatAction) {
@@ -1051,6 +1062,17 @@ export default function Home() {
             const legalCount = actions.filter((action) => validateAction(action, encounter, character).legal).length;
             return <button type="button" key={category.id} className={actionCategory === category.id ? "active" : ""} onClick={() => setActionCategory(category.id)}><span>{category.label}</span><strong>{legalCount}</strong><small>{category.detail}</small></button>;
           })}</div>
+          {choiceMode === "attack" && character.id === "surina-daardendrian" && <section className="choice-panel" aria-label="Shove options">
+            <h4>Unarmed Strike: Shove · Action</h4>
+            <p>Choose an enemy and an outcome. ADaM chooses its Strength or Dexterity save before rolling. No weapon damage, free hand, or mastery is required.</p>
+            <p>Edition note: 2014 uses contested Athletics against Athletics or Acrobatics. Applied 2024 resolution uses a target saving throw against DC {8 + playerCombatant.abilityModifiers.strength + playerCombatant.proficiencyBonus}; Surina&apos;s Athletics proficiency does not add to this DC. Her character build is unchanged.</p>
+            {encounter.combatants.filter(c => c.side === "enemy" && c.hitPoints.current > 0).map(target => {
+              const validation = validateShove(encounter, target.id);
+              const disabled = !validation.legal || attackFlow?.phase === "damage-roll";
+              return <div key={target.id}><strong>{target.name}</strong><button type="button" disabled={disabled} onClick={() => performShove(target.id, "prone")}>Knock Prone · Roll enemy save</button><button type="button" disabled={disabled} onClick={() => performShove(target.id, "push")}>Push 5 ft. · Roll enemy save</button>{!validation.legal && <small>{validation.reason}</small>}</div>;
+            })}
+            <small>Current surface: your-turn Shoves against enemies. Grapple, escape, and Reaction Shoves remain unsupported.</small>
+          </section>}
           <div className="action-grid">{categorizedActions.length ? categorizedActions.map((action) => {
             const validation = validateAction(action, encounter, character);
             const targetingLabel = action.targeting?.mode === "single" ? `${action.targeting.rangeFeet} ft.` : action.targeting?.mode === "area" ? `${action.targeting.shape} · ${action.targeting.sizeFeet} ft.` : action.cost.replace("-", " ");

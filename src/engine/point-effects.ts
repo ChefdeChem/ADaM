@@ -1,7 +1,7 @@
 import type { CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll } from "./dice";
-import { applyEffect, effectiveDamageAmount, effectiveSavingThrowModifier, savingThrowRollMode } from "./effects";
+import { applyEffect, effectiveDamageAmount, effectiveSavingThrowModifier, occupiedCells, savingThrowRollMode } from "./effects";
 import { applyDamageToCombatant, validateSpellAvailability } from "./combat-options";
 import { spendSpellSlot } from "./resources";
 import { hasLineOfSightToPoint } from "./targeting";
@@ -13,6 +13,10 @@ export type PointSpellResolution =
   | { legal: true; summary: string; encounter: EncounterState; damageRoll?: DamageRoll; saveRoll?: D20Result };
 
 const distanceFeet = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) * 5;
+
+function touchesHazardPoints(e: EncounterState, id: string, points?: { x: number; y: number }[]): boolean {
+  return Boolean(points?.some(point => occupiedCells(e, id).some(cell => cell.x === point.x && cell.y === point.y)));
+}
 
 type UtilityChoice = NonNullable<CharacterSpell["utilityChoices"]>[number];
 
@@ -104,7 +108,7 @@ function resolveUtilityChoice(
 function resolveHazardAtPoint(encounter: EncounterState, effectId: string, combatantId: string, random: () => number): PointSpellResolution {
   const effect = encounter.effects.find((candidate) => candidate.id === effectId);
   const target = encounter.combatants.find((candidate) => candidate.id === combatantId);
-  if (!effect || effect.pointEffect?.type !== "damaging-hazard" || !target || !effect.points?.some((point) => point.x === target.position.x && point.y === target.position.y)) {
+  if (!effect || effect.pointEffect?.type !== "damaging-hazard" || !target || !touchesHazardPoints(encounter, target.id, effect.points)) {
     return { legal: false, reason: "No registered damaging point effect applies.", encounter };
   }
   const damageRoll = rollDamage(effect.pointEffect.damage, { random });
@@ -163,7 +167,7 @@ export function executePointSpell(encounter: EncounterState, spell: CharacterSpe
   const notes: string[] = [];
   if (spell.pointEffect.type === "damaging-hazard") {
     const effectId = next.effects.find(effect => effect.name === spell.name && effect.sourceCombatantId === caster.id)!.id;
-    const entries = next.combatants.filter(target => points.some(point => point.x === target.position.x && point.y === target.position.y)).map(target => ({ effectId, combatantId: target.id }));
+    const entries = next.combatants.filter(target => touchesHazardPoints(next, target.id, points)).map(target => ({ effectId, combatantId: target.id }));
     next = resumePointHazards({ ...next, pendingPointHazards: [...(next.pendingPointHazards ?? []), ...entries] }, random);
     if (next.pendingResponse) notes.push("Resolve the pending response before the remaining hazards.");
   }
@@ -192,7 +196,7 @@ export function resolvePointHazardsForCombatant(encounter: EncounterState, comba
   const target = encounter.combatants.find(c => c.id === combatantId);
   if (!target) return encounter;
   const entries = encounter.effects.filter(effect => effect.pointEffect?.type === "damaging-hazard"
-    && effect.points?.some(point => point.x === target.position.x && point.y === target.position.y))
+    && touchesHazardPoints(encounter, target.id, effect.points))
     .map(effect => ({ effectId: effect.id, combatantId }));
   return resumePointHazards({ ...encounter, pendingPointHazards: [...(encounter.pendingPointHazards ?? []), ...entries] }, random);
 }
@@ -205,7 +209,7 @@ export function resumePointHazards(encounter: EncounterState, random = Math.rand
     const effect = next.effects.find(effect => effect.id === entry.effectId);
     const target = next.combatants.find(c => c.id === entry.combatantId);
     if (!effect || effect.pointEffect?.type !== "damaging-hazard" || !target || target.deathSaves.failures >= 3
-      || !effect.points?.some(point => point.x === target.position.x && point.y === target.position.y)) continue;
+      || !touchesHazardPoints(next, target.id, effect.points)) continue;
     if (target.side === "player") {
       next = { ...next, pendingResponse: { type: "point-hazard-save", effectId: entry.effectId, targetCombatantId: target.id, name: effect.name } };
       break;
