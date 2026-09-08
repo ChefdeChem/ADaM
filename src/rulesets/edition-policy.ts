@@ -66,7 +66,11 @@ export function playableCharacter(source: Character): { character: Character; as
   const longsword = source.attacks?.find((attack) => attack.id === "longsword" && attack.kind === "melee" && /^1d8\b/.test(attack.damage));
   const swordRule = source.equipmentRules?.find((rule) => rule.id === "longsword" && rule.resolution.type === "weapon" && rule.resolution.attackIds.includes("longsword"));
   const addVersatile = Boolean(longsword && swordRule && !source.attacks?.some((attack) => attack.id === "longsword-two-handed"));
-  const sourceAttacks = source.attacks?.map(attack => source.id === "surina-daardendrian" && attack.id === "glaive" ? { ...attack, requiresTwoHands: true } : attack);
+  const sourceAttacks = source.attacks?.map(attack => source.id === "surina-daardendrian" && attack.id === "glaive" ? {
+    ...attack,
+    requiresTwoHands: true,
+    description: "Martial Heavy Reach Two-Handed weapon. The imported mastery label is not an owned character feature, so no mastery rider applies.",
+  } : attack);
   const attacks = addVersatile ? [...(sourceAttacks ?? []), {
     ...longsword!, id: "longsword-two-handed", name: "Longsword (two hands)",
     damage: longsword!.damage.replace(/^1d8\b/, "1d10"), requiresTwoHands: true,
@@ -74,7 +78,7 @@ export function playableCharacter(source: Character): { character: Character; as
   }] : sourceAttacks;
   const equipmentRules = addVersatile ? source.equipmentRules?.map((rule) => rule === swordRule && rule.resolution.type === "weapon"
     ? { ...rule, resolution: { ...rule.resolution, attackIds: [...rule.resolution.attackIds, "longsword-two-handed"] } } : rule) : source.equipmentRules;
-  if (source.id === "surina-daardendrian") notes.push("Your Glaive's Graze property is not a granted mastery. The two-handed Longsword option uses Versatile, which does not require mastery. Safe rest healing and skill-check rolls are available. Hide behind Total Cover, readied weapon attacks after an enemy moves, Help attacks or stabilization with an ally, and modeled door interactions are available. Narrative outcomes, other Ready triggers, and undefined objects still require adjudication.");
+  if (source.id === "surina-daardendrian") notes.push("Your Glaive's Graze property is not a granted mastery. The two-handed Longsword option uses Versatile, which does not require mastery. Safe rest healing, skill checks, Shove, Grapple, escape, dragging, voluntary release, Help, Total-Cover Hide, modeled doors, and readied weapon attacks after movement or when a target first becomes attackable are available. Narrative outcomes, custom Ready triggers, and undefined objects still require adjudication.");
   notes.push("Approved trainer Hide ruling: entering an enemy's unobstructed view ends hiding automatically. Concealed detection uses Perception. Magical invisibility is separate. Current maps assume visible lighting and do not simulate special senses.");
   if (source.id === "surina-daardendrian") notes.push("Choose held weapons before initiative. Drawing or stowing on your turn shares the free object interaction with doors; further interactions use an Action. An Attack can draw one weapon if your hands allow it. Opportunity attacks require an already-held weapon. Glaive and two-handed Longsword attacks require both hands.");
   return { assessment, notes, character: { ...source, actions: source.id === "surina-daardendrian" ? ["Attack", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Study", "Influence", "Utilize"] : source.actions, featureActions, attacks, equipmentRules } };

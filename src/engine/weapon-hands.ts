@@ -2,6 +2,10 @@ import type { CharacterAttack } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { isIncapacitated } from "./effects";
 
+export function grappledHandCount(e: EncounterState, sourceId: string): number {
+  return e.effects.filter(effect => effect.sourceCombatantId === sourceId && effect.grapple).length;
+}
+
 export function validateWeaponHands(e: EncounterState, id: string, attack: CharacterAttack, mayDraw: boolean) {
   const actor = e.combatants.find(c => c.id === id);
   if (!actor || actor.heldWeaponIds === undefined) return { legal: true };
@@ -10,7 +14,7 @@ export function validateWeaponHands(e: EncounterState, id: string, attack: Chara
   if (!item) return { legal: true };
   const held = actor.heldWeaponIds.includes(item.id);
   if (!held && !mayDraw) return { legal: false, reason: "Opportunity attacks require a weapon already in hand. Draw it on your turn first." };
-  const needed = actor.heldWeaponIds.length + (held ? 0 : 1) + (attack.requiresTwoHands ? 1 : 0) + (actor.hasEquippedShield ? 1 : 0);
+  const needed = actor.heldWeaponIds.length + grappledHandCount(e, id) + (held ? 0 : 1) + (attack.requiresTwoHands ? 1 : 0) + (actor.hasEquippedShield ? 1 : 0);
   if (needed > 2) return { legal: false, reason: "Not enough free hands. Stow a held weapon first; this attack cannot silently switch equipment." };
   return { legal: true };
 }
@@ -32,7 +36,7 @@ export function handleWeapon(e: EncounterState, id: string, itemId: string) {
   const setup = !e.combatants.some(c => c.initiativeRolled);
   if (!setup && e.combatants[e.activeIndex].id !== id) return deny("Change held weapons on your turn.");
   const held = actor.heldWeaponIds.includes(itemId);
-  if (!held && actor.heldWeaponIds.length + (actor.hasEquippedShield ? 1 : 0) >= 2) return deny("Both hands are occupied. Stow a weapon first.");
+  if (!held && actor.heldWeaponIds.length + grappledHandCount(e, id) + (actor.hasEquippedShield ? 1 : 0) >= 2) return deny("Both hands are occupied. Release a grapple or stow a weapon first.");
   const usesAttackChange = !setup && Boolean(e.turn.attackEquipmentChangeAvailable);
   const usesAction = !setup && !usesAttackChange && Boolean(e.turn.objectInteractionUsed);
   if (usesAction && !e.turn.action) return deny("Your free interaction and Action have already been used.");

@@ -8,7 +8,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Device-local roster for five uploaded characters, with one-tap encounter loading of each character's complete combat statistics
 - Cleira Oestwilde included as the first verified roster character, with legacy ruleset selection, spell slots, Bardic Inspiration, attacks, saves, skills, senses, proficiencies, equipment, and spellbook data extracted from her D&D Beyond PDF
 - Normal, advantage, and disadvantage d20 engine
-- Selectable D&D 2024 and D&D 2014/legacy rulesets
+- Versioned D&D 2024 and D&D 2014/legacy character-source support, with 2024 encounter resolution as the current default
 - Responsive training console
 - Framework-independent domain, importer, engine, and ruleset modules
 - Beginner, training, and advanced action-selection modes
@@ -29,6 +29,8 @@ Initial local-first scaffold for a D&D combat training application.
 - Mode-scaled enemy tactics: predictable direct play for Beginner, signature abilities and repositioning for Intermediate, and vulnerable-target, strongest-attack, range, and cover priorities for Advanced
 - Player-controlled saving throws, Shield and opportunity-attack reaction windows, concentration checks, and death saves
 - Automated enemy opportunity attacks when the player leaves reach, with movement resolved in the correct sequence
+- Current-rules Shove and Grapple flows with target saves, escape checks, hand occupancy, dragging, voluntary release, and linked condition cleanup
+- Readied weapon attacks after selected-enemy movement or when that enemy first becomes a legal weapon target
 - Optional zero-HP replacement prompts, including Relentless Endurance, with instant-death and resource checks
 - Mode-based enemy health visibility with exact, descriptive, and concealed states
 
@@ -72,4 +74,4 @@ src/data/            Sample import data
 - Keep the complete initiative order and values visible throughout combat, including enemy initiative.
 - Give every non-initiative roll a prominent teaching display so new players can see which dice and modifiers are being used.
 
-Next: schema validation, expanded import mapping, cover refinements, broader conditions, and additional class-specific reaction triggers.
+Next: reliable character import normalization, cover refinements, broader conditions, additional class-specific reaction triggers, and separate tested 2014/2024 encounter-resolution settings.

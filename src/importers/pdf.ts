@@ -3,6 +3,7 @@ import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import type { Character } from "../domain/character";
 import { parseDndBeyondTokens } from "./dnd-beyond";
 import type { CharacterImporter, ImportResult } from "./types";
+import { createId } from "../shared/id";
 
 const aliases: Record<string, string[]> = {
   name: ["CharacterName", "Character Name"],
@@ -69,7 +70,7 @@ async function extractOperatorTokens(bytes: ArrayBuffer): Promise<string[]> {
 
 function manualReviewCharacter(file: File): Character {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     name: file.name.replace(/\.pdf$/i, ""),
     className: "Adventurer",
     level: 1,
@@ -91,7 +92,7 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
     const parsed = parseDndBeyondTokens(tokens);
     if (parsed) {
       const character: Character = {
-        id: crypto.randomUUID(),
+        id: createId(),
         ...parsed,
         resources: [],
         spells: [],
@@ -129,7 +130,7 @@ export const pdfImporter: CharacterImporter = {
     const match = classLevel.match(/^(.*?)[\s,]+(\d+)$/);
     const hp = numberValue(value(fields, aliases.hp), 1);
     const character: Character = {
-      id: crypto.randomUUID(),
+      id: createId(),
       name: value(fields, aliases.name) ?? file.name.replace(/\.pdf$/i, ""),
       className: match?.[1]?.trim() || classLevel,
       level: numberValue(match?.[2], 1),

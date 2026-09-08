@@ -17,9 +17,9 @@ function state() {
 const hidden = e => e.effects.some(effect=>effect.hidden);
 test('approved ruling reveals after movement and does not restore Hide on returning to cover',()=>{
  let e=state(); assert.equal(hidden(revealHiddenInPlainSight(e)),true);
- e=applyMovementContinuation(e,{combatantId:source.id,x:1,y:3,cost:10});
+ e=applyMovementContinuation(e,{combatantId:source.id,x:1,y:2,cost:5});
  assert.equal(hidden(e),false); assert.equal(e.turn.action,false);
- e=applyMovementContinuation(e,{combatantId:source.id,x:1,y:1,cost:10});
+ e=applyMovementContinuation(e,{combatantId:source.id,x:1,y:1,cost:5});
  assert.equal(hidden(e),false);
 });
 test('normal movement applies visibility without consuming an extra action',()=>{
@@ -29,7 +29,8 @@ test('normal movement applies visibility without consuming an extra action',()=>
 });
 test('a moving observer reveals a stationary hidden character during resumed movement',()=>{
  let e=state(); e={...e,activeIndex:1};
- e=applyMovementContinuation(e,{combatantId:e.combatants[1].id,x:3,y:3,cost:10});
+ e=applyMovementContinuation(e,{combatantId:e.combatants[1].id,x:3,y:2,cost:5});
+ e=applyMovementContinuation(e,{combatantId:e.combatants[1].id,x:3,y:3,cost:5});
  assert.equal(hidden(e),false); assert.equal(e.completedEnemyMovementId,e.combatants[1].id);
 });
 test('blind, unconscious, and allied observers cannot reveal through ordinary sight',()=>{

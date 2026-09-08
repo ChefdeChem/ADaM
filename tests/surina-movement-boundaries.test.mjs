@@ -57,6 +57,7 @@ test('resumed movement rejects newly blocked or occupied destinations without sp
 test('stale continuation costs and pending responses cannot teleport or overspend movement',()=>{
  const e=state();const c={combatantId:source.id,x:2,y:1,cost:5};
  for(const cost of [-5,0,35])assert.equal(applyMovementContinuation(e,{...c,cost}),e);
+ assert.equal(applyMovementContinuation(e,{...c,x:4,cost:5}),e);
  e.combatants[0].conditions=['Prone'];assert.equal(applyMovementContinuation(e,c),e);
  e.combatants[0].conditions=[];e.pendingResponse={type:'concentration-check',targetCombatantId:source.id,dc:10,damageTaken:1};
  assert.equal(applyMovementContinuation(e,c),e);

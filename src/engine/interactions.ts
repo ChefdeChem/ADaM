@@ -69,27 +69,34 @@ export function interactWithDoor(e: EncounterState, x: number, y: number) {
   next = revealHiddenInPlainSight(next);
   return { legal: true as const, encounter: next, summary };
 }
-export function readyAttack(e: EncounterState, attackId: string, targetId: string) {
+export type ReadyAttackTrigger = "finishes-moving" | "becomes-attackable";
+export function readyAttack(e: EncounterState, attackId: string, targetId: string, trigger: ReadyAttackTrigger = "finishes-moving") {
   const actor = actorOf(e), target = e.combatants.find(c => c.id === targetId);
   const valid = validateInteraction(e, "ready");
   if (!valid.legal || !e.turn.action || !actor.attacks.some(a => a.id === attackId) || !target || target.side === actor.side || target.hitPoints.current <= 0) return { legal: false as const, encounter: e, reason: valid.reason ?? "Choose a carried weapon and living enemy while your Action is available." };
-  const summary = `Ready: after ${target.name} finishes moving, you may use a Reaction to attack with the selected weapon if the target is visible and in range. Expires at your next turn.`;
-  const next = applyEffect(spendAction(e), { name: "Readied attack", description: summary, sourceCombatantId: actor.id, targetCombatantId: actor.id, expiresAt: expires(e), modifiers: { endsOnIncapacitated: true }, readiedAttack: { attackId, targetId }, replaceExisting: true });
+  if (trigger !== "finishes-moving" && trigger !== "becomes-attackable") return { legal: false as const, encounter: e, reason: "Choose a supported perceivable trigger." };
+  const triggerText = trigger === "finishes-moving" ? `after ${target.name} finishes moving` : `when ${target.name} first becomes a legal target for the selected weapon during movement`;
+  const summary = `Ready: ${triggerText}, you may use a Reaction to attack if the target is visible and in range. Expires at your next turn.`;
+  const next = applyEffect(spendAction(e), { name: "Readied attack", description: summary, sourceCombatantId: actor.id, targetCombatantId: actor.id, expiresAt: expires(e), modifiers: { endsOnIncapacitated: true }, readiedAttack: { attackId, targetId, trigger }, replaceExisting: true });
   return { legal: true as const, encounter: next, summary };
 }
-export function queueReadiedAttack(e: EncounterState, movingId: string): EncounterState {
+export function queueReadiedAttack(e: EncounterState, movingId: string, trigger: ReadyAttackTrigger = "finishes-moving", previous?: EncounterState): EncounterState {
   if (e.pendingResponse) return e;
   const mover = e.combatants.find(c => c.id === movingId);
-  const key = `${e.round}:${movingId}:${mover?.position.x},${mover?.position.y}:${e.turn.movementRemaining}`;
-  const effect = e.effects.find(x => x.readiedAttack?.targetId === movingId && x.readiedAttack.eventKey !== key);
+  const key = `${trigger}:${e.round}:${movingId}:${mover?.position.x},${mover?.position.y}:${e.turn.movementRemaining}`;
+  const effect = e.effects.find(x => x.readiedAttack?.targetId === movingId && (x.readiedAttack.trigger ?? "finishes-moving") === trigger && x.readiedAttack.eventKey !== key);
   if (!effect?.readiedAttack) return e;
   const owner = e.combatants.find(c => c.id === effect.sourceCombatantId);
-  let next = { ...e, effects: e.effects.map(x => x.id === effect.id ? { ...x, readiedAttack: { ...effect.readiedAttack!, eventKey: key } } : x) };
-  if (!owner?.reactionAvailable || isIncapacitated(e, owner.id) || !canSeeCombatant(e, owner.id, movingId)) return next;
+  if (!owner?.reactionAvailable || isIncapacitated(e, owner.id) || !canSeeCombatant(e, owner.id, movingId)) return e;
   const attack = owner.attacks.find(a => a.id === effect.readiedAttack!.attackId);
-  const context = { ...next, activeIndex: next.combatants.findIndex(c => c.id === owner.id), selectedTargetId: movingId, turn: { ...next.turn, action: true } };
-  if (!attack || !validateAttackChoice(context, attack).legal) return next;
-  next = { ...next, pendingResponse: { type: "readied-attack", phase: "choice", effectId: effect.id, sourceCombatantId: owner.id, targetCombatantId: movingId, attackId: attack.id } };
+  const context = { ...e, activeIndex: e.combatants.findIndex(c => c.id === owner.id), selectedTargetId: movingId, turn: { ...e.turn, action: true } };
+  if (!attack || !validateAttackChoice(context, attack).legal) return e;
+  if (trigger === "becomes-attackable" && previous) {
+    const previousContext = { ...previous, activeIndex: previous.combatants.findIndex(c => c.id === owner.id), selectedTargetId: movingId, turn: { ...previous.turn, action: true }, pendingResponse: null };
+    if (validateAttackChoice(previousContext, attack).legal) return e;
+  }
+  let next = { ...e, effects: e.effects.map(x => x.id === effect.id ? { ...x, readiedAttack: { ...effect.readiedAttack!, eventKey: key } } : x) };
+  next = { ...next, pendingResponse: { type: "readied-attack", phase: "choice", effectId: effect.id, sourceCombatantId: owner.id, targetCombatantId: movingId, attackId: attack.id, trigger } };
   return next;
 }
 export function resolveReadiedAttack(e: EncounterState, choice: "accept" | "decline" | "roll", random = Math.random) {

@@ -1,7 +1,7 @@
 import type { CharacterSpell } from "../domain/character";
 import type { Combatant, EncounterState } from "../domain/combat";
 import { analyzeTarget } from "./targeting";
-import { canOccupyCells, revealHiddenInPlainSight } from "./effects";
+import { canOccupyCells, reconcileConcentration, revealHiddenInPlainSight } from "./effects";
 import { crossesSolidCorner } from "./grid-movement";
 
 type Area = NonNullable<CharacterSpell["area"]>;
@@ -63,9 +63,9 @@ export function pushTargetAway(encounter: EncounterState, sourceId: string, targ
     position = next;
   }
   if (position.x === target.position.x && position.y === target.position.y) return encounter;
-  return revealHiddenInPlainSight({
+  return reconcileConcentration(revealHiddenInPlainSight({
     ...encounter,
     combatants: encounter.combatants.map((combatant) => combatant.id === targetId ? { ...combatant, position } : combatant),
     log: [`${target.name} is pushed ${Math.max(Math.abs(position.x - target.position.x), Math.abs(position.y - target.position.y)) * 5} feet.`, ...encounter.log],
-  });
+  }));
 }

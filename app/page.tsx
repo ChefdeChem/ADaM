@@ -12,9 +12,10 @@ import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolvePostHitSpellChoice, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { executeSkillAction, skillActionChoices } from "../src/engine/skill-actions";
-import { hide, help, helpAbility, readyAttack, resolveReadiedAttack, nearbyDoors, interactWithDoor, endHiding } from "../src/engine/interactions";
+import { hide, help, helpAbility, readyAttack, resolveReadiedAttack, nearbyDoors, interactWithDoor, endHiding, type ReadyAttackTrigger } from "../src/engine/interactions";
 import { completeSurinaRest } from "../src/engine/rests";
 import { resolveShove, validateShove, type ShoveMode } from "../src/engine/shove";
+import { grappleEffectsFrom, grappleEffectsOn, releaseGrapple, resolveGrapple, resolveGrappleEscape, validateGrapple, type EscapeAbility } from "../src/engine/grappling";
 import { recoverRestResources, type RestType } from "../src/engine/resources";
 import { executePointSpell, resumePointHazards, resolvePointHazardResponse } from "../src/engine/point-effects";
 import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions";
@@ -203,6 +204,7 @@ export default function Home() {
   const legalMovementCells = useMemo(() => legalMovementDestinations(encounter), [encounter]);
   const legalMovementByCell = useMemo(() => new Map(legalMovementCells.map((cell) => [`${cell.x},${cell.y}`, cell])), [legalMovementCells]);
   const mechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(sourceCharacter), [sourceCharacter]);
+  const playableMechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(character), [character]);
   const importMechanicCoverage = useMemo(() => reviewCharacter ? buildCharacterMechanicCoverage(reviewCharacter) : null, [reviewCharacter]);
 
   useEffect(() => {
@@ -457,6 +459,31 @@ export default function Home() {
     setLastRoll(result.roll);
     setFeedback(result.summary);
     setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
+  }
+
+  function performGrapple(targetId: string) {
+    if (!initiativeReady || outcome !== "active" || attackFlow?.phase === "damage-roll") { setFeedback("Finish the pending attack and use Grapple during an active encounter."); return; }
+    const result = resolveGrapple(encounter, targetId);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setLastRoll(result.roll);
+    setFeedback(result.summary);
+    setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
+  }
+
+  function escapeGrapple(effectId: string, ability: EscapeAbility) {
+    const result = resolveGrappleEscape(encounter, effectId, ability);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setLastRoll(result.roll);
+    setFeedback(result.summary);
+  }
+
+  function voluntarilyReleaseGrapple(effectId: string) {
+    const result = releaseGrapple(encounter, effectId, playerCombatant.id);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
   }
 
   function runAction(action: CombatAction) {
@@ -855,7 +882,7 @@ export default function Home() {
         <div className="character-card"><div className="portrait">{character.name[0]?.toUpperCase()}</div><div><p className="character-name">{character.name}</p><p>{character.className} · Level {character.level}</p></div></div>
         <div className="stats"><div><span>AC</span><strong>{playerArmorClass}</strong>{playerArmorClass !== character.armorClass && <small>base {character.armorClass}</small>}</div><div><span>HP</span><strong>{playerCombatant.hitPoints.current}/{playerCombatant.hitPoints.maximum}</strong>{playerCombatant.temporaryHitPoints > 0 && <small>+{playerCombatant.temporaryHitPoints} temp</small>}</div><div><span>PROF</span><strong>+{character.proficiencyBonus}</strong></div></div>
         <div className="weapon-summary"><span>Weapon attacks</span><strong>{character.attacks?.length ?? 0} ready</strong><p>{character.attacks?.map((attack) => attack.name).join(" · ") || "No weapon attacks imported."}</p></div>
-        <div className="mechanic-coverage"><div><span>Mechanic coverage</span><strong>{mechanicCoverage.supportSummary.fullySupported}/{mechanicCoverage.total} fully supported</strong></div><p><b>{mechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{mechanicCoverage.supportSummary.partial}</b> partial · <b>{mechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>{mechanicCoverage.sourceId === "user-imported" ? character.source.fileName ?? "Imported sheet" : "ADaM original"} · {editionLabel(playable.assessment.edition)}</small></div>
+        <div className="mechanic-coverage"><div><span>Source mechanic coverage</span><strong>{mechanicCoverage.supportSummary.fullySupported}/{mechanicCoverage.total} fully supported</strong></div><p><b>{mechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{mechanicCoverage.supportSummary.partial}</b> partial · <b>{mechanicCoverage.supportSummary.descriptive}</b> descriptive</p>{playableMechanicCoverage.total !== mechanicCoverage.total || playableMechanicCoverage.supportSummary.fullySupported !== mechanicCoverage.supportSummary.fullySupported ? <p><b>Trainer profile: {playableMechanicCoverage.supportSummary.fullySupported}/{playableMechanicCoverage.total} fully supported.</b> Derived resolution can add a verified weapon mode or exclude a label that was not actually granted, without rewriting the source.</p> : null}<small>{mechanicCoverage.sourceId === "user-imported" ? character.source.fileName ?? "Imported sheet" : "ADaM original"} · {editionLabel(playable.assessment.edition)}</small></div>
         <div className="panel"><div className="panel-heading"><span>02</span><h2>Experience</h2></div><div className="mode-list">{(Object.keys(modeCopy) as ExperienceMode[]).map((mode) => <button key={mode} className={experienceMode === mode ? "selected" : ""} onClick={() => { setExperienceMode(mode); setFeedback(modeCopy[mode].detail); }}><strong>{modeCopy[mode].label}</strong><small>{modeCopy[mode].detail}</small></button>)}</div></div>
         <div className="panel"><div className="panel-heading"><span>03</span><h2>Character &amp; combat rules</h2></div><p><strong>Character source: {editionLabel(playable.assessment.edition)}</strong> · {playable.assessment.confidence} confidence</p><p><strong>Combat resolution: 2024</strong></p>{playable.assessment.evidence.length > 0 && <details><summary>Edition evidence</summary><ul>{playable.assessment.evidence.map((item) => <li key={item}>{item}</li>)}</ul></details>}{playable.notes.map((note) => <p key={note}>{note}</p>)}<small>Separate 2014 and 2024 combat settings are planned. Compatibility coverage is still being audited; this is not a complete conversion of every legacy mechanic.</small></div>
       </aside>
@@ -878,10 +905,19 @@ export default function Home() {
         <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div><div><span>Difficulty</span><strong>{scenario.difficulty}</strong></div></div>
 
         {encounter.pendingResponse?.type === "point-hazard-save" && <section className="roll-coach" aria-live="polite"><div><h3>{encounter.pendingResponse.name}</h3><p>Roll your saving throw. Overlapping hazards resolve one at a time, including defensive choices and concentration.</p></div><button type="button" onClick={() => { const r = resolvePointHazardResponse(encounter); finishPlayerResponse(r.encounter, r.summary, r.playerRoll); }}>Roll hazard save</button></section>}
+        {grappleEffectsOn(encounter, playerCombatant.id).map(effect => {
+          const source = encounter.combatants.find(c => c.id === effect.sourceCombatantId);
+          const canEscape = initiativeReady && activeCombatant.id === playerCombatant.id && encounter.turn.action && !encounter.pendingResponse;
+          return <section className="roll-coach response-coach" aria-label="Escape grapple" key={`escape-${effect.id}`}>
+            <div><span>Grappled</span><h3>Escape {source?.name ?? "grappler"}</h3><p>Your Speed is 0. Use your Action to roll Athletics or Acrobatics against DC {effect.grapple?.escapeDc}. You may attack the grappler normally; attacks against other targets have Disadvantage.</p></div>
+            <div className="response-actions"><button type="button" disabled={!canEscape} onClick={() => escapeGrapple(effect.id, "athletics")}>Escape with Athletics</button><button type="button" disabled={!canEscape} onClick={() => escapeGrapple(effect.id, "acrobatics")}>Escape with Acrobatics</button></div>
+          </section>;
+        })}
         {playerCombatant.heldWeaponIds !== undefined && <section className="roll-coach" aria-label="Held weapons">
           <div><h3>Held weapons</h3><p>{!initiativeReady ? "Choose what you hold before rolling initiative. Unselected weapons remain carried." : "Draw or stow: first interaction is free, then uses an Action. Two-handed attacks need the other hand free."}</p>
             {playerCombatant.inventory.filter(item => item.attackIds.length && item.current > 0).map(item => <button type="button" key={item.id} disabled={Boolean(encounter.pendingResponse) || (initiativeReady && activeCombatant.id !== playerCombatant.id)} onClick={() => { const r = handleWeapon(encounter, playerCombatant.id, item.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); }}>{playerCombatant.heldWeaponIds!.includes(item.id) ? "Stow" : "Draw"} {item.name}</button>)}
-            <p>In hand: {playerCombatant.inventory.filter(item => playerCombatant.heldWeaponIds!.includes(item.id)).map(item => item.name).join(", ") || "none (Unarmed Strike available)"}</p>
+            <p>In hand: {[...playerCombatant.inventory.filter(item => playerCombatant.heldWeaponIds!.includes(item.id)).map(item => item.name), ...grappleEffectsFrom(encounter, playerCombatant.id).map(effect => `grappling ${encounter.combatants.find(c => c.id === effect.targetCombatantId)?.name ?? "creature"}`)].join(", ") || "none (Unarmed Strike available)"}</p>
+            {grappleEffectsFrom(encounter, playerCombatant.id).map(effect => <button type="button" key={`release-${effect.id}`} disabled={Boolean(encounter.pendingResponse)} onClick={() => voluntarilyReleaseGrapple(effect.id)}>Release {encounter.combatants.find(c => c.id === effect.targetCombatantId)?.name ?? "grapple"} · No Action</button>)}
           </div>
         </section>}
         {!initiativeReady && playerNeedsInitiative && <section className="roll-coach initiative-coach" aria-live="polite">
@@ -892,7 +928,7 @@ export default function Home() {
           <div><span>DM-controlled turn · {modeCopy[experienceMode].label} tactics · {enemyTurnPhase}</span><h3>{activeCombatant.name}</h3><p>ADaM controls this creature&apos;s movement, targeting, action selection, attack roll, and damage roll. Tactical decision quality scales with the selected experience mode.</p></div>
           <div className="dm-turn-badge"><strong>ADaM</strong><small>resolving enemy</small></div>
         </section>}
-        {encounter.pendingResponse?.type === "readied-attack" && <div className="response-panel"><h3>Readied attack</h3><p>The enemy finished moving. Release your prepared weapon attack or ignore this trigger.</p>{[...(encounter.pendingResponse.phase === "choice" ? ["accept", "decline"] : ["roll"])].map(choice => <button type="button" key={choice} onClick={() => {
+        {encounter.pendingResponse?.type === "readied-attack" && <div className="response-panel"><h3>Readied attack</h3><p>{encounter.pendingResponse.trigger === "finishes-moving" ? "The selected enemy finished moving." : "The selected enemy became a legal target for your prepared weapon."} Release your prepared attack or ignore this trigger.</p>{[...(encounter.pendingResponse.phase === "choice" ? ["accept", "decline"] : ["roll"])].map(choice => <button type="button" key={choice} onClick={() => {
           const result = resolveReadiedAttack(encounter, choice as "accept" | "decline" | "roll");
           setEncounter(result.encounter); if ("roll" in result && result.roll) setLastRoll(result.roll); setFeedback(result.summary);
           setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
@@ -1071,7 +1107,17 @@ export default function Home() {
               const disabled = !validation.legal || attackFlow?.phase === "damage-roll";
               return <div key={target.id}><strong>{target.name}</strong><button type="button" disabled={disabled} onClick={() => performShove(target.id, "prone")}>Knock Prone · Roll enemy save</button><button type="button" disabled={disabled} onClick={() => performShove(target.id, "push")}>Push 5 ft. · Roll enemy save</button>{!validation.legal && <small>{validation.reason}</small>}</div>;
             })}
-            <small>Current surface: your-turn Shoves against enemies. Grapple, escape, and Reaction Shoves remain unsupported.</small>
+            <small>Current surface: your-turn Shoves against enemies. Reaction Shoves are not modeled.</small>
+          </section>}
+          {choiceMode === "attack" && character.id === "surina-daardendrian" && <section className="choice-panel" aria-label="Grapple options">
+            <h4>Unarmed Strike: Grapple · Action</h4>
+            <p>Choose an enemy within 5 feet. Grapple requires a free hand and holds the target at Speed 0. Dragging normally costs one additional foot per foot moved. You can release the target at any time without an Action.</p>
+            <p>Edition note: 2014 uses a contested Athletics check. Applied 2024 resolution lets the target choose a Strength or Dexterity save against DC {8 + playerCombatant.abilityModifiers.strength + playerCombatant.proficiencyBonus}; later escape attempts use Athletics or Acrobatics against that DC. Surina&apos;s character build is unchanged.</p>
+            {encounter.combatants.filter(c => c.side === "enemy" && c.hitPoints.current > 0).map(target => {
+              const validation = validateGrapple(encounter, target.id);
+              const disabled = !validation.legal || attackFlow?.phase === "damage-roll";
+              return <div key={target.id}><strong>{target.name}</strong><button type="button" disabled={disabled} onClick={() => performGrapple(target.id)}>Grapple · Roll enemy save</button>{!validation.legal && <small>{validation.reason}</small>}</div>;
+            })}
           </section>}
           <div className="action-grid">{categorizedActions.length ? categorizedActions.map((action) => {
             const validation = validateAction(action, encounter, character);
@@ -1082,7 +1128,7 @@ export default function Home() {
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : spell.freeCastResourceName ? `Level ${spell.level} · free use or slot` : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : spell.target === "area" && spell.area ? `${spell.area.sizeFeet} ft. ${spell.area.shape}` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           {encounter.effects.some(e => e.hidden && e.targetCombatantId === playerCombatant.id) && <button type="button" onClick={() => { setEncounter(endHiding(encounter, playerCombatant.id, "player speaks loudly")); setFeedback("You speak above a whisper and stop hiding."); }}>Speak loudly / end Hide</button>}
           {interactionFlow && <div className="choice-panel"><h3>{interactionFlow === "ready" ? "Ready a weapon attack" : interactionFlow === "help" ? "Help" : "Object interaction"}</h3>
-            {interactionFlow === "ready" && <><p>Select an enemy on the map, then a weapon. Trigger: after that enemy finishes moving. Range and visibility are checked when the trigger occurs; this does not consume the Reaction until released.</p>{playerCombatant.attacks.map(attack => <button key={attack.id} type="button" onClick={() => { const r = readyAttack(encounter, attack.id, encounter.selectedTargetId ?? ""); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); }}>{attack.name}</button>)}</>}
+            {interactionFlow === "ready" && <><p>Select an enemy on the map, then a weapon and a supported perceivable trigger. Range, visibility, held equipment, and the Reaction are checked when the trigger occurs.</p>{playerCombatant.attacks.flatMap(attack => ([{ id: "finishes-moving", label: "after movement" }, { id: "becomes-attackable", label: "when first attackable" }] as Array<{ id: ReadyAttackTrigger; label: string }>).map(trigger => <button key={`${attack.id}:${trigger.id}`} type="button" onClick={() => { const r = readyAttack(encounter, attack.id, encounter.selectedTargetId ?? "", trigger.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); }}>{attack.name} · {trigger.label}</button>))}</>}
             {interactionFlow === "help" && <><p>Distract an adjacent enemy for an ally’s next attack, or roll Medicine to stabilize an adjacent ally at 0 HP. Helping yourself is not allowed.</p>{encounter.combatants.filter(c => c.id !== playerCombatant.id).map(target => <button key={target.id} type="button" onClick={() => { const r = help(encounter, target.side === playerCombatant.side ? "stabilize" : "attack", target.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); if ("roll" in r && r.roll) setLastRoll(r.roll); setFeedback(r.summary); setInteractionFlow(null); }}>{target.side === playerCombatant.side ? "Stabilize" : "Distract"} {target.name}</button>)}</>}
             {interactionFlow === "help" && <><label><input type="checkbox" checked={assistanceConfirmed} onChange={e => setAssistanceConfirmed(e.target.checked)} /> The adjacent ally can understand and use my assistance</label>{encounter.combatants.filter(c => c.side === playerCombatant.side && c.id !== playerCombatant.id && c.hitPoints.current > 0).flatMap(ally => playerCombatant.skillProficiencies.map(skill => <button type="button" key={`${ally.id}:${skill}`} onClick={() => { const r = helpAbility(encounter, ally.id, skill, assistanceConfirmed); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); setAssistanceConfirmed(false); }}>Help {ally.name}: {skill}</button>))}</>}
             {interactionFlow === "utilize" && <><p>The first simple door interaction on your turn is free. Another uses the Utilize Action. The squeaky practice door ends Hide. Locked doors need a supported unlocking method.</p>{nearbyDoors(encounter).map(door => <button type="button" key={`${door.x}:${door.y}`} onClick={() => { const r = interactWithDoor(encounter, door.x, door.y); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); }}>{door.kind === "wall" ? "Open" : "Close"} {door.label}</button>)}</>}

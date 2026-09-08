@@ -87,6 +87,21 @@ test('The enemy resumes its own Action after a readied attack triggered by actua
  e=resolveReadiedAttack(r.encounter,'accept').encounter;e=resolveReadiedAttack(e,'roll',()=>0.8).encounter;e=resolveReadiedAttack(e,'roll',()=>0).encounter;
  r=resolveEnemyTurn(e,'beginner',()=>0.01);assert.equal(r.encounter.turn.action,false);assert.ok(r.attackRoll);assert.equal(r.encounter.pendingResponse,null);
 });
+test('Ready can trigger on the movement step where the selected enemy first becomes attackable',()=>{
+ let e=state();e.combatants[1].position.x=5;e.combatants[1].attacks=e.combatants[1].attacks.filter(a=>a.kind==='melee');
+ e=readyAttack(e,'glaive',e.combatants[1].id,'becomes-attackable').encounter;
+ e={...e,activeIndex:1,turn:{...e.turn,action:true,movementRemaining:30}};
+ const r=resolveEnemyTurn(e,()=>0.01);
+ assert.equal(r.encounter.pendingResponse.type,'readied-attack');assert.equal(r.encounter.pendingResponse.trigger,'becomes-attackable');
+ assert.equal(Math.max(Math.abs(r.encounter.combatants[1].position.x-1),Math.abs(r.encounter.combatants[1].position.y-1))*5,10);assert.ok(r.encounter.pendingEnemyPath.length>0);
+});
+test('becomes-attackable does not trigger when the enemy was already a legal weapon target',()=>{
+ let e=state();e.combatants[1].position.x=3;e.combatants[1].attacks=e.combatants[1].attacks.filter(a=>a.kind==='melee');
+ e=readyAttack(e,'glaive',e.combatants[1].id,'becomes-attackable').encounter;
+ e={...e,activeIndex:1,turn:{...e.turn,action:true,movementRemaining:30}};
+ const r=resolveEnemyTurn(e,()=>0.01);
+ assert.notEqual(r.encounter.pendingResponse?.type,'readied-attack');assert.equal(r.encounter.effects.some(effect=>effect.readiedAttack),true);
+});
 test('Opening even a quiet door ends Hide when it exposes the creature to an enemy',()=>{
  const e=state();e.map.terrain=[{x:2,y:1,kind:'wall',label:'quiet door',door:{locked:false}}];
  let h=hide(e,()=>0.9).encounter;

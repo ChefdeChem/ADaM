@@ -111,7 +111,7 @@ export type EnemySaveAbility = {
 
 export type PendingPlayerResponse =
   | { type: "point-hazard-save"; effectId: string; targetCombatantId: string; name: string }
-  | { type: "readied-attack"; effectId: string; sourceCombatantId: string; targetCombatantId: string; attackId: string; phase: "choice" | "attack-roll" | "damage-roll"; critical?: boolean }
+  | { type: "readied-attack"; effectId: string; sourceCombatantId: string; targetCombatantId: string; attackId: string; trigger: "finishes-moving" | "becomes-attackable"; phase: "choice" | "attack-roll" | "damage-roll"; critical?: boolean }
 
   | {
       type: "saving-throw";
@@ -210,7 +210,8 @@ export type ActiveEffect = {
   hidden?: { dc: number; lastKnownPosition: { x: number; y: number } };
   helpAttack?: boolean;
   helpCheck?: string;
-  readiedAttack?: { attackId: string; targetId: string; eventKey?: string };
+  readiedAttack?: { attackId: string; targetId: string; trigger: "finishes-moving" | "becomes-attackable"; eventKey?: string };
+  grapple?: { escapeDc: number; rangeFeet: number };
   id: string;
   name: string;
   description: string;

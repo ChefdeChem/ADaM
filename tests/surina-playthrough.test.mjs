@@ -14,6 +14,8 @@ import { executeSkillAction } from '../src/engine/skill-actions.ts';
 import { endTurn, rollPlayerAndEnemyInitiative } from '../src/engine/encounter.ts';
 import { combatOutcome, resolveEnemyTurn } from '../src/engine/enemy-turns.ts';
 import { resolveDamageReductionReaction, resolveSavingThrowResponse, resolveAttackReaction, chooseOpportunityAttack } from '../src/engine/responses.ts';
+import { resolveGrapple } from '../src/engine/grappling.ts';
+import { readyAttack, resolveReadiedAttack } from '../src/engine/interactions.ts';
 const scenario=generateScriptedScenario({prompt:'',environment:'market',objective:'defeat',difficulty:'easy'});
 const profile=playableCharacter(source).character;
 const feature=name=>profile.featureActions.find(f=>f.id.includes(name));
@@ -118,6 +120,24 @@ test('Complete Surina encounter: initiative, enemy attacks, healing, breath, wea
  const next=createPlayableEncounter(carried,scenario);assert.equal(current(next).hitPoints.current,11);assert.equal(next.recoveryState.hitDiceRemaining,1);
  assert.equal(current(next).resources.find(r=>/Breath/.test(r.name)).maximum,1);assert.equal(current(next).spells.length,0);
  assert.equal(JSON.stringify(source),snapshot);
+});
+
+test('Complete Surina control loop: grapple, drag, enemy escape, reposition, and release a readied attack',()=>{
+ let e=ready();const targetId=e.combatants[1].id;
+ e.combatants[1].attacks=e.combatants[1].attacks.filter(a=>a.kind==='melee');
+ const held=resolveGrapple(e,targetId,()=>0);assert.equal(held.legal,true);e=held.encounter;
+ const dragged=moveActiveCombatant(e,0,1,()=>0.01);assert.equal(dragged.legal,true);e=dragged.encounter;
+ assert.deepEqual(e.combatants[1].position,{x:1,y:1});assert.equal(e.combatants[1].reactionAvailable,true);
+ e=endTurn(e);const escaped=resolveEnemyTurn(e,()=>0.99);assert.match(escaped.steps[0].summary,/escape/);e=escaped.encounter;
+ assert.equal(e.effects.some(effect=>effect.grapple),false);e=endTurn(e);
+ const repositioned=moveActiveCombatant(e,0,5,()=>0.01);assert.equal(repositioned.legal,true);e=repositioned.encounter;
+ const prepared=readyAttack(e,'glaive',targetId,'becomes-attackable');assert.equal(prepared.legal,true);e=endTurn(prepared.encounter);
+ let enemy=resolveEnemyTurn(e,()=>0.01);assert.equal(enemy.encounter.pendingResponse.type,'readied-attack');e=enemy.encounter;
+ e=resolveReadiedAttack(e,'accept').encounter;e=resolveReadiedAttack(e,'roll',()=>0.9).encounter;
+ assert.equal(e.pendingResponse.type,'readied-attack');assert.equal(e.pendingResponse.phase,'damage-roll');
+ e=resolveReadiedAttack(e,'roll',()=>0).encounter;
+ assert.equal(e.combatants[0].reactionAvailable,false);assert.equal(e.combatants[0].heldWeaponIds.includes('glaive'),true);
+ enemy=resolveEnemyTurn(e,'beginner',()=>0.01);assert.equal(enemy.encounter.activeIndex,1);assert.notEqual(enemy.encounter.pendingResponse?.type,'readied-attack');
 });
 
 test('Dodge applies to the actual player saving-throw prompt, not only the modifier helper',()=>{

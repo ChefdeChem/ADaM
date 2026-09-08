@@ -5,6 +5,7 @@ import { detectCharacterEdition, playableCharacter, createPlayableEncounter } fr
 import { generateScriptedScenario } from '../src/scenarios/scripted-generator.ts';
 import { executeFeatureAction } from '../src/engine/feature-actions.ts';
 import { applyEffect, expireEffectsAtTurnStart } from '../src/engine/effects.ts';
+import { buildCharacterMechanicCoverage } from '../src/rules-registry/index.ts';
 const source = BUILT_IN_CHARACTERS.find(c => c.id === 'surina-daardendrian');
 const scenario = () => generateScriptedScenario({ prompt: '', environment: 'market', objective: 'defeat', difficulty: 'easy' });
 function ready() {
@@ -33,6 +34,14 @@ test('resolution profiles preserve imported data, feature grants, spells and res
  assert.deepEqual(p.character.featureActions.map(f=>f.id),source.featureActions.map(f=>f.id));
  assert.ok(p.notes.some(n=>n.includes('Channel Divinity')));
  assert.equal(createPlayableEncounter(source,scenario()).combatants[0].rulesetId,'dnd-2024');
+});
+test('Surina playable profile distinguishes an imported mastery label from a granted feature',()=>{
+ const before=JSON.stringify(source), playable=playableCharacter(source).character;
+ assert.match(source.attacks.find(a=>a.id==='glaive').description,/Graze/);
+ assert.doesNotMatch(playable.attacks.find(a=>a.id==='glaive').description,/Graze/);
+ assert.equal(playable.attacks.find(a=>a.id==='glaive').mastery,undefined);
+ assert.deepEqual(buildCharacterMechanicCoverage(playable).supportSummary,{fullySupported:17,partial:0,descriptive:0,needsReview:0});
+ assert.equal(JSON.stringify(source),before);
 });
 test('Lay on Hands uses a Bonus Action, heals Constructs, and spends the original pool',()=>{
  const f=playableCharacter(source).character.featureActions.find(f=>f.name==='Lay on Hands');

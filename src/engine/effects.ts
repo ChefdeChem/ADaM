@@ -8,6 +8,7 @@ export type EffectInput = {
   helpAttack?: boolean;
   helpCheck?: string;
   readiedAttack?: ActiveEffect["readiedAttack"];
+  grapple?: ActiveEffect["grapple"];
   name: string;
   description: string;
   sourceCombatantId: string;
@@ -88,7 +89,7 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     expiresAt: input.expiresAt ?? (input.durationRounds
       ? { round: encounter.round + input.durationRounds, combatantId: input.sourceCombatantId, phase: "start" }
       : undefined),
-    hidden: input.hidden, helpAttack: input.helpAttack, helpCheck: input.helpCheck, readiedAttack: input.readiedAttack,
+    hidden: input.hidden, helpAttack: input.helpAttack, helpCheck: input.helpCheck, readiedAttack: input.readiedAttack, grapple: input.grapple,
     temporaryHitPointsGranted: input.temporaryHitPoints,
     consumeOnAttackRoll: input.consumeOnAttackRoll,
     attackTargetId: input.attackTargetId,
@@ -177,6 +178,14 @@ export function canMaintainConcentration(encounter: EncounterState, combatantId:
 // Applies at state transitions, including conditions applied to a caster on another turn.
 export function reconcileConcentration(encounter: EncounterState): EncounterState {
   let next = encounter;
+  for (const effect of encounter.effects.filter(candidate => candidate.grapple)) {
+    const source = next.combatants.find(actor => actor.id === effect.sourceCombatantId);
+    const target = next.combatants.find(actor => actor.id === effect.targetCombatantId);
+    const distance = source && target ? Math.min(...occupiedCells(next, source.id).flatMap(from => occupiedCells(next, target.id).map(to => Math.max(Math.abs(from.x - to.x), Math.abs(from.y - to.y)) * 5))) : Number.POSITIVE_INFINITY;
+    if (!source || !target || isIncapacitated(next, source.id) || distance > effect.grapple!.rangeFeet) {
+      next = removeEffect(next, effect.id, !source || isIncapacitated(next, effect.sourceCombatantId) ? "the grappler is incapacitated" : "the creatures are separated beyond the grapple's range");
+    }
+  }
   for (const actor of encounter.combatants) {
     // Decide whether zero HP is replaced before ending any defensive stance.
     if (encounter.pendingResponse?.type === "zero-hit-point-replacement" && encounter.pendingResponse.targetCombatantId === actor.id) continue;
@@ -278,7 +287,8 @@ export function outgoingAttackRollMode(encounter: EncounterState, combatantId: s
   const incomingDisadvantage = Boolean(targetId && effectsForCombatant(encounter, targetId).some((effect) =>
     effectHasStarted(encounter, effect) && (effect.modifiers.incomingAttacks === "disadvantage"
       || (effect.modifiers.dodge && dodgeBenefitsActive(encounter, targetId) && canSeeCombatant(encounter, targetId, combatantId)))));
-  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage") || Boolean(poisoned) || incomingDisadvantage
+  const grappleDisadvantage = encounter.effects.some(effect => effect.grapple && effect.targetCombatantId === combatantId && effect.sourceCombatantId !== targetId);
+  const hasDisadvantage = situationalMode === "disadvantage" || modifiers.includes("disadvantage") || Boolean(poisoned) || incomingDisadvantage || grappleDisadvantage
     || attackConditions.some((c) => ["prone", "blinded", "restrained"].includes(c)) || targetConditions.includes("invisible") || (targetConditions.includes("prone") && !nearby);
   if (hasAdvantage && hasDisadvantage) return "normal";
   if (hasAdvantage) return "advantage";

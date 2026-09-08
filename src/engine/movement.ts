@@ -4,8 +4,9 @@ import { resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options
 import { queueConcentrationCheck } from "./defensive-responses";
 import { validateSpellSlot } from "./resources";
 import { resolvePointHazardsForCombatant } from "./point-effects";
-import { canOccupyCells, effectiveSpeed, isIncapacitated, canSeeCombatant, revealHiddenInPlainSight } from "./effects";
+import { canOccupyCells, effectiveSpeed, isIncapacitated, canSeeCombatant, occupiedCells, revealHiddenInPlainSight } from "./effects";
 import { crossesSolidCorner, gridStepCost } from "./grid-movement";
+import { applyGrappledStep, grappleEffectsFrom, planGrappledStep } from "./grappling";
 
 export type MovementStep = { x: number; y: number; cost: number };
 export type ReachableMovementCell = { x: number; y: number; cost: number; path: MovementStep[] };
@@ -18,10 +19,9 @@ export type MovementResult = {
 };
 
 const cellKey = (x: number, y: number) => `${x},${y}`;
-const distanceFromCell = (x: number, y: number, other: { position: { x: number; y: number } }) => Math.max(
-  Math.abs(x - other.position.x),
-  Math.abs(y - other.position.y),
-) * 5;
+const occupiedDistance = (encounter: EncounterState, firstId: string, secondId: string) => Math.min(
+  ...occupiedCells(encounter, firstId).flatMap(first => occupiedCells(encounter, secondId).map(second => Math.max(Math.abs(first.x - second.x), Math.abs(first.y - second.y)) * 5)),
+);
 
 export function legalMovementDestinations(encounter: EncounterState): ReachableMovementCell[] {
   const active = encounter.combatants[encounter.activeIndex];
@@ -31,7 +31,7 @@ export function legalMovementDestinations(encounter: EncounterState): ReachableM
   const best = new Map<string, number>([[originKey, 0]]);
   const previous = new Map<string, string>();
   const nodes = new Map<string, MovementStep>([[originKey, { ...active.position, cost: 0 }]]);
-  const queue: Array<{ x: number; y: number; cost: number }> = [{ ...active.position, cost: 0 }];
+  const queue: Array<{ x: number; y: number; cost: number; state: EncounterState }> = [{ ...active.position, cost: 0, state: encounter }];
 
   while (queue.length) {
     queue.sort((left, right) => left.cost - right.cost);
@@ -42,9 +42,11 @@ export function legalMovementDestinations(encounter: EncounterState): ReachableM
       const x = current.x + dx;
       const y = current.y + dy;
       if (x < 0 || y < 0 || x >= encounter.map.width || y >= encounter.map.height) continue;
-      if (!canOccupyCells(encounter, active.id, { x, y })) continue;
-      if (crossesSolidCorner(encounter, active.id, current, { x, y })) continue;
-      const stepCost = gridStepCost(encounter, active.id, { x, y });
+      if (crossesSolidCorner(current.state, active.id, current, { x, y })) continue;
+      const baseCost = gridStepCost(current.state, active.id, { x, y });
+      const plan = planGrappledStep(current.state, active.id, { x, y }, baseCost);
+      if (!plan || (!plan.dragged.length && !canOccupyCells(current.state, active.id, { x, y }))) continue;
+      const stepCost = plan.cost;
       const nextCost = current.cost + stepCost;
       if (nextCost > encounter.turn.movementRemaining) continue;
       const key = cellKey(x, y);
@@ -52,7 +54,9 @@ export function legalMovementDestinations(encounter: EncounterState): ReachableM
       best.set(key, nextCost);
       previous.set(key, cellKey(current.x, current.y));
       nodes.set(key, { x, y, cost: stepCost });
-      queue.push({ x, y, cost: nextCost });
+      const advanced = applyGrappledStep(current.state, active.id, { x, y }, baseCost)?.encounter;
+      if (!advanced) continue;
+      queue.push({ x, y, cost: nextCost, state: advanced });
     }
   }
 
@@ -72,27 +76,36 @@ export function applyMovementContinuation(encounter: EncounterState, continuatio
   const mover = encounter.combatants.find((combatant) => combatant.id === continuation.combatantId);
   if (!mover || mover.hitPoints.current <= 0) return encounter;
   if (effectiveSpeed(encounter, mover.id) === 0) return encounter;
-  if (encounter.pendingResponse || continuation.cost <= 0 || continuation.cost > encounter.turn.movementRemaining
-    || !canOccupyCells(encounter, mover.id, continuation)) return encounter;
+  if (encounter.pendingResponse || continuation.cost <= 0 || continuation.cost > encounter.turn.movementRemaining) return encounter;
   const adjacent = Math.max(Math.abs(mover.position.x - continuation.x), Math.abs(mover.position.y - continuation.y)) <= 1;
-  if (adjacent && (crossesSolidCorner(encounter, mover.id, mover.position, continuation)
-    || continuation.cost < gridStepCost(encounter, mover.id, continuation))) return encounter;
+  if (!adjacent) return encounter;
+  const baseCost = gridStepCost(encounter, mover.id, continuation);
+  const grappled = applyGrappledStep(encounter, mover.id, { x: continuation.x, y: continuation.y }, baseCost);
+  if (!grappled || (!grappled.plan.dragged.length && !canOccupyCells(encounter, mover.id, continuation))) return encounter;
+  if (crossesSolidCorner(encounter, mover.id, mover.position, continuation)
+    || continuation.cost !== grappled.plan.cost) return encounter;
   const coordinate = `${String.fromCharCode(65 + continuation.x)}${continuation.y + 1}`;
   return revealHiddenInPlainSight({
-    ...encounter,
+    ...grappled.encounter,
     completedEnemyMovementId: mover.side === "enemy" ? mover.id : encounter.completedEnemyMovementId,
-    combatants: encounter.combatants.map((combatant) => combatant.id === mover.id
-      ? { ...combatant, position: { x: continuation.x, y: continuation.y } }
-      : combatant),
     turn: { ...encounter.turn, movementRemaining: Math.max(0, encounter.turn.movementRemaining - continuation.cost) },
     log: logMovement ? [`${mover.name} moved ${continuation.cost} feet to ${coordinate}.`, ...encounter.log] : encounter.log,
   });
 }
 
+export function resolveMovementHazards(before: EncounterState, moved: EncounterState, moverId: string, random: () => number): EncounterState {
+  let next = resolvePointHazardsForCombatant(moved, moverId, random);
+  for (const effect of grappleEffectsFrom(before, moverId)) {
+    const oldTarget = before.combatants.find(c => c.id === effect.targetCombatantId), newTarget = moved.combatants.find(c => c.id === effect.targetCombatantId);
+    if (oldTarget && newTarget && (oldTarget.position.x !== newTarget.position.x || oldTarget.position.y !== newTarget.position.y)) next = resolvePointHazardsForCombatant(next, newTarget.id, random);
+  }
+  return next;
+}
+
 export function resumeMovementContinuation(encounter: EncounterState, continuation: MovementContinuation, random = Math.random): MovementResult {
   let moved = applyMovementContinuation(encounter, continuation, false);
   if (moved === encounter) return { legal: false, reason: "Movement stopped: the pending step is no longer legal. Choose a new destination if movement remains.", encounter, attackRoll: null, damageRoll: null };
-  moved = resolvePointHazardsForCombatant(moved, continuation.combatantId, random);
+  moved = resolveMovementHazards(encounter, moved, continuation.combatantId, random);
   if (moved.pendingResponse || moved.combatants.find(c => c.id === continuation.combatantId)!.hitPoints.current <= 0) return { legal: true, reason: "Movement pauses on the entered square for hazard resolution.", encounter: moved, attackRoll: null, damageRoll: null };
   const destination = continuation.destination;
   if (destination && (destination.x !== continuation.x || destination.y !== continuation.y)) {
@@ -121,14 +134,17 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
       return { legal: true, reason: next.pendingResponse ? "Movement paused at the current square. Resolve the pending response, then choose whether to continue moving." : `${mover.name} cannot continue moving from the current square.`, encounter: next, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
     }
     const continuation: MovementContinuation = { combatantId: mover.id, ...step, destination: { x, y } };
+    const preview = applyGrappledStep(next, mover.id, { x: step.x, y: step.y }, gridStepCost(next, mover.id, step))?.encounter;
+    if (!preview) return { legal: true, reason: "Movement stopped because the next dragged step is no longer legal.", encounter: next, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
     const threat = next.turn.disengaged ? null : next.combatants
       .filter((combatant) => combatant.side === "enemy" && combatant.hitPoints.current > 0 && combatant.reactionAvailable && !isIncapacitated(next, combatant.id) && canSeeCombatant(next, combatant.id, mover.id))
       .flatMap((combatant) => combatant.attacks.filter((attack) => attack.kind === "melee").map((attack) => ({ combatant, attack })))
-      .find(({ combatant, attack }) => distanceFromCell(mover.position.x, mover.position.y, combatant) <= attack.normalRangeFeet
-        && distanceFromCell(step.x, step.y, combatant) > attack.normalRangeFeet);
+      .find(({ combatant, attack }) => occupiedDistance(next, mover.id, combatant.id) <= attack.normalRangeFeet
+        && occupiedDistance(preview, mover.id, combatant.id) > attack.normalRangeFeet);
 
     if (!threat) {
-      next = resolvePointHazardsForCombatant(applyMovementContinuation(next, continuation, false), mover.id, random);
+      const before = next;
+      next = resolveMovementHazards(before, applyMovementContinuation(next, continuation, false), mover.id, random);
       continue;
     }
 
@@ -137,7 +153,7 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
     lastAttackRoll = attackResult.roll;
     notes.push(`${threat.combatant.name} uses its reaction as ${mover.name} leaves its reach. ${attackResult.summary}`);
     if (!attackResult.hit) {
-      next = resolvePointHazardsForCombatant(applyMovementContinuation(attackResult.encounter, continuation, false), mover.id, random);
+      next = resolveMovementHazards(attackResult.encounter, applyMovementContinuation(attackResult.encounter, continuation, false), mover.id, random);
       continue;
     }
 
@@ -182,7 +198,7 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
     if (concentrated.pendingResponse?.type === "concentration-check") {
       return { legal: true, reason: `${notes.join(" ")} Resolve the concentration check before movement continues.`, encounter: concentrated, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
     }
-    next = resolvePointHazardsForCombatant(applyMovementContinuation(concentrated, continuation, false), mover.id, random);
+    next = resolveMovementHazards(concentrated, applyMovementContinuation(concentrated, continuation, false), mover.id, random);
   }
 
   const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;

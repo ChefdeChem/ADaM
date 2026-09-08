@@ -1,4 +1,5 @@
 import type { Scenario, ScenarioEnvironment, ScenarioGrid, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "./types";
+import { createId } from "../shared/id";
 
 const environments: Record<ScenarioEnvironment, { words: string[]; name: string; features: string[] }> = {
   forest: { words: ["forest", "woods", "trees", "grove"], name: "Thornwood Crossing", features: ["Half cover from trees", "Difficult terrain in brambles"] },
@@ -98,7 +99,7 @@ export function generateScriptedScenario(input: string | ScenarioSetup): Scenari
       ? ["ashen-scout", "ruined-guardian", "cinder-skirmisher"]
       : ["ashen-scout", "ruined-guardian"];
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     title: environment.name,
     environment: environment.name,
     environmentId,
