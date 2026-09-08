@@ -236,9 +236,11 @@ export function rollCombatantInitiative(encounter:EncounterState,combatantId:str
 }
 
 export function endTurn(encounter: EncounterState, random = Math.random): EncounterState {
+  if (encounter.pendingResponse) return encounter;
   encounter = reconcileConcentration(encounter);
   const endingCombatant = encounter.combatants[encounter.activeIndex];
-  const afterHazards = endingCombatant ? resolvePointHazardsForCombatant(encounter, endingCombatant.id, random) : encounter;
+  const afterHazards = endingCombatant && !encounter.pendingTurnEnd ? resolvePointHazardsForCombatant(encounter, endingCombatant.id, random) : encounter;
+  if (afterHazards.pendingResponse) return { ...afterHazards, pendingTurnEnd: true };
   const afterEndEffects = endingCombatant ? expireEffectsAtTurnEnd(afterHazards, encounter.round, endingCombatant.id) : afterHazards;
   const eligible = (combatant: EncounterState["combatants"][number]) => combatant.side === "enemy"
     ? combatant.hitPoints.current > 0
@@ -255,6 +257,9 @@ export function endTurn(encounter: EncounterState, random = Math.random): Encoun
   const combatants = afterEndEffects.combatants.map((combatant, index) => index === nextIndex ? { ...combatant, reactionAvailable: true } : combatant);
   const advanced = {
     ...afterEndEffects,
+    pendingTurnEnd: undefined,
+    pendingEnemyPath: undefined,
+    completedEnemyMovementId: undefined,
     combatants,
     round,
     activeIndex: nextIndex,

@@ -5,10 +5,12 @@ import { applyEffect, effectiveDamageAmount, effectiveSavingThrowModifier, savin
 import { applyDamageToCombatant, validateSpellAvailability } from "./combat-options";
 import { spendSpellSlot } from "./resources";
 import { hasLineOfSightToPoint } from "./targeting";
+import { automaticallyFailsSave } from "./effects";
+import { queueConcentrationCheck } from "./defensive-responses";
 
 export type PointSpellResolution =
   | { legal: false; reason: string; encounter: EncounterState }
-  | { legal: true; summary: string; encounter: EncounterState; damageRoll?: DamageRoll };
+  | { legal: true; summary: string; encounter: EncounterState; damageRoll?: DamageRoll; saveRoll?: D20Result };
 
 const distanceFeet = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) * 5;
 
@@ -109,12 +111,13 @@ function resolveHazardAtPoint(encounter: EncounterState, effectId: string, comba
   if (!damageRoll) return { legal: false, reason: `ADaM could not read the damage formula “${effect.pointEffect.damage}”.`, encounter };
   const save = effect.pointEffect.save;
   const roll = rollD20({ mode: savingThrowRollMode(encounter, target.id, undefined, "normal", save.ability), modifier: effectiveSavingThrowModifier(encounter, target.id, save.ability), random });
-  const succeeded = roll.total >= save.dc;
+  const succeeded = !automaticallyFailsSave(encounter, target.id, save.ability) && roll.total >= save.dc;
   const amount = succeeded ? save.damageOnSuccess === "half" ? Math.floor(damageRoll.total / 2) : 0 : damageRoll.total;
   const applied = effectiveDamageAmount(encounter, target.id, amount, damageRoll.formula.damageType);
-  const next = amount > 0 ? applyDamageToCombatant(encounter, target.id, amount, { damageType: damageRoll.formula.damageType, sourceCombatantId: effect.sourceCombatantId }) : encounter;
+  let next = amount > 0 ? applyDamageToCombatant(encounter, target.id, amount, { damageType: damageRoll.formula.damageType, sourceCombatantId: effect.sourceCombatantId }) : encounter;
+  if (!next.pendingResponse) next = queueConcentrationCheck(next, target.id, applied);
   const summary = `${target.name} ${succeeded ? "succeeds" : "fails"} the DC ${save.dc} ${save.ability} save against ${effect.name} and takes ${applied} ${damageRoll.formula.damageType} damage.`;
-  return { legal: true, summary, damageRoll, encounter: { ...next, log: [summary, ...next.log] } };
+  return { legal: true, summary, damageRoll, saveRoll: roll, encounter: { ...next, log: [summary, ...next.log] } };
 }
 
 export function executePointSpell(encounter: EncounterState, spell: CharacterSpell, points: Array<{ x: number; y: number }>, random = Math.random, utilityChoiceId?: string): PointSpellResolution {
@@ -157,17 +160,16 @@ export function executePointSpell(encounter: EncounterState, spell: CharacterSpe
       : spell.pointEffect,
     replaceExisting: true,
   });
-  let damageRoll: DamageRoll | undefined;
   const notes: string[] = [];
   if (spell.pointEffect.type === "damaging-hazard") {
-    for (const target of next.combatants.filter((combatant) => points.some((point) => point.x === combatant.position.x && point.y === combatant.position.y))) {
-      const result = resolveHazardAtPoint(next, next.effects.find((effect) => effect.name === spell.name && effect.sourceCombatantId === caster.id)!.id, target.id, random);
-      if (result.legal) { next = result.encounter; damageRoll = result.damageRoll; notes.push(result.summary); }
-    }
+    const effectId = next.effects.find(effect => effect.name === spell.name && effect.sourceCombatantId === caster.id)!.id;
+    const entries = next.combatants.filter(target => points.some(point => point.x === target.position.x && point.y === target.position.y)).map(target => ({ effectId, combatantId: target.id }));
+    next = resumePointHazards({ ...next, pendingPointHazards: [...(next.pendingPointHazards ?? []), ...entries] }, random);
+    if (next.pendingResponse) notes.push("Resolve the pending response before the remaining hazards.");
   }
   const coordinateCopy = points.map((point) => `${String.fromCharCode(65 + point.x)}${point.y + 1}`).join(", ");
   const summary = `${caster.name} casts ${spell.name} at ${coordinateCopy}.${notes.length ? ` ${notes.join(" ")}` : ""}`;
-  return { legal: true, summary, damageRoll, encounter: { ...next, log: [summary, ...next.log] } };
+  return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
 }
 
 export function moveLightPoint(encounter: EncounterState, effectId: string, pointIndex: number, point: { x: number; y: number }): PointSpellResolution {
@@ -187,11 +189,39 @@ export function moveLightPoint(encounter: EncounterState, effectId: string, poin
 }
 
 export function resolvePointHazardsForCombatant(encounter: EncounterState, combatantId: string, random = Math.random): EncounterState {
-  return encounter.effects.filter((effect) => effect.pointEffect?.type === "damaging-hazard")
-    .reduce((next, effect) => {
-      const result = resolveHazardAtPoint(next, effect.id, combatantId, random);
-      return result.legal ? result.encounter : next;
-    }, encounter);
+  const target = encounter.combatants.find(c => c.id === combatantId);
+  if (!target) return encounter;
+  const entries = encounter.effects.filter(effect => effect.pointEffect?.type === "damaging-hazard"
+    && effect.points?.some(point => point.x === target.position.x && point.y === target.position.y))
+    .map(effect => ({ effectId: effect.id, combatantId }));
+  return resumePointHazards({ ...encounter, pendingPointHazards: [...(encounter.pendingPointHazards ?? []), ...entries] }, random);
+}
+
+export function resumePointHazards(encounter: EncounterState, random = Math.random): EncounterState {
+  let next = encounter;
+  while (!next.pendingResponse && next.pendingPointHazards?.length) {
+    const [entry, ...rest] = next.pendingPointHazards;
+    next = { ...next, pendingPointHazards: rest };
+    const effect = next.effects.find(effect => effect.id === entry.effectId);
+    const target = next.combatants.find(c => c.id === entry.combatantId);
+    if (!effect || effect.pointEffect?.type !== "damaging-hazard" || !target || target.deathSaves.failures >= 3
+      || !effect.points?.some(point => point.x === target.position.x && point.y === target.position.y)) continue;
+    if (target.side === "player") {
+      next = { ...next, pendingResponse: { type: "point-hazard-save", effectId: entry.effectId, targetCombatantId: target.id, name: effect.name } };
+      break;
+    }
+    const result = resolveHazardAtPoint(next, entry.effectId, target.id, random);
+    if (result.legal) next = result.encounter;
+  }
+  return next;
+}
+
+export function resolvePointHazardResponse(encounter: EncounterState, random = Math.random) {
+  const p = encounter.pendingResponse;
+  if (p?.type !== "point-hazard-save") return { encounter, summary: "No point-hazard save is pending.", playerRoll: null };
+  const cleared = { ...encounter, pendingResponse: null };
+  const r = resolveHazardAtPoint(cleared, p.effectId, p.targetCombatantId, random);
+  return { encounter: resumePointHazards(r.encounter, random), summary: r.legal ? r.summary : r.reason, playerRoll: r.legal ? r.saveRoll ?? null : null };
 }
 
 export type IllusionStudyResolution =

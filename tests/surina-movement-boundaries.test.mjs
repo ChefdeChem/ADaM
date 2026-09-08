@@ -8,6 +8,7 @@ import { gridStepCost, crossesSolidCorner } from '../src/engine/grid-movement.ts
 import { pushTargetAway } from '../src/engine/areas.ts';
 import { resolveEnemyTurn } from '../src/engine/enemy-turns.ts';
 import { applyEffect } from '../src/engine/effects.ts';
+import { resolvePointHazardResponse } from '../src/engine/point-effects.ts';
 
 function state() {
  const e=createPlayableEncounter(source,generateScriptedScenario({prompt:'',environment:'market',objective:'defeat',difficulty:'easy'}));
@@ -66,5 +67,7 @@ test('lethal damage on a movement square stops the remaining path',()=>{
  e=applyEffect(e,{name:'Test hazard',description:'movement regression',sourceCombatantId:e.combatants[1].id,targetCombatantId:e.combatants[1].id,points:[{x:2,y:1}],pointEffect:{type:'damaging-hazard',damage:'1d6 cold',save:{ability:'dexterity',dc:99,damageOnSuccess:'none'}}});
  e.map.height=2;e.map.terrain=[{x:1,y:0,kind:'wall',label:'wall'},{x:2,y:0,kind:'wall',label:'wall'},{x:3,y:0,kind:'wall',label:'wall'}];
  const r=moveActiveCombatant(e,3,1,()=>0.5);assert.equal(r.legal,true);
+ assert.equal(r.encounter.pendingResponse.type,'point-hazard-save');
+ r.encounter=resolvePointHazardResponse(r.encounter,()=>0.5).encounter;
  assert.equal(r.encounter.combatants[0].hitPoints.current,0);assert.deepEqual(r.encounter.combatants[0].position,{x:2,y:1});assert.equal(r.encounter.turn.movementRemaining,25);
 });

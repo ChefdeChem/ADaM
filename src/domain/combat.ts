@@ -110,6 +110,7 @@ export type EnemySaveAbility = {
 };
 
 export type PendingPlayerResponse =
+  | { type: "point-hazard-save"; effectId: string; targetCombatantId: string; name: string }
   | { type: "readied-attack"; effectId: string; sourceCombatantId: string; targetCombatantId: string; attackId: string; phase: "choice" | "attack-roll" | "damage-roll"; critical?: boolean }
 
   | {
@@ -298,6 +299,9 @@ export type Combatant = {
 };
 
 export type EncounterState = {
+  pendingTurnEnd?: boolean;
+  pendingEnemyPath?: { x: number; y: number; cost: number }[];
+  pendingPointHazards?: { effectId: string; combatantId: string }[];
   completedEnemyMovementId?: string;
   pendingAreaDamage?: { sourceId: string; targetId: string; amount: number; damageType: string; pushFeet: number }[];
   recoveryState?: { hitDiceRemaining: number; elapsedMinutes: number; lastLongRestEnd?: number };

@@ -15,7 +15,7 @@ import { executeSkillAction, skillActionChoices } from "../src/engine/skill-acti
 import { hide, help, helpAbility, readyAttack, resolveReadiedAttack, nearbyDoors, interactWithDoor, endHiding } from "../src/engine/interactions";
 import { completeSurinaRest } from "../src/engine/rests";
 import { recoverRestResources, type RestType } from "../src/engine/resources";
-import { executePointSpell } from "../src/engine/point-effects";
+import { executePointSpell, resumePointHazards, resolvePointHazardResponse } from "../src/engine/point-effects";
 import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
@@ -256,11 +256,13 @@ export default function Home() {
   }, [activeCombatant?.id, activeCombatant?.name, activeCombatant?.side, encounter, enemyTurnPhase, experienceMode, initiativeReady, outcome]);
 
   function finishPlayerResponse(nextEncounter: typeof encounter, summary: string, playerRoll: ReturnType<typeof rollD20> | null) {
+    nextEncounter = resumePointHazards(nextEncounter);
     nextEncounter = resumeAreaDamage(nextEncounter);
+    if (nextEncounter.pendingTurnEnd && !nextEncounter.pendingResponse) nextEncounter = endTurn(nextEncounter);
     setEncounter(nextEncounter);
     if (playerRoll) setLastRoll(playerRoll);
     setFeedback(summary);
-    setEnemyTurnPhase(activeCombatant.side === "enemy" ? (nextEncounter.pendingResponse ? "awaiting-player" : "showing") : "idle");
+    setEnemyTurnPhase(nextEncounter.activeIndex !== encounter.activeIndex ? "idle" : activeCombatant.side === "enemy" ? (nextEncounter.pendingResponse ? "awaiting-player" : nextEncounter.pendingEnemyPath ? "resolving" : "showing") : "idle");
   }
 
   function rollPendingSavingThrow() {
@@ -308,11 +310,8 @@ export default function Home() {
 
   function chooseDamageReductionReaction(useFeature: boolean) {
     const result = resolveDamageReductionReaction(encounter, useFeature);
-    result.encounter = resumeAreaDamage(result.encounter);
-    setEncounter(result.encounter);
+    finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
     if (result.damageRoll) setLastRoll(result.damageRoll);
-    setFeedback(result.summary);
-    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : activeCombatant.side === "enemy" ? "showing" : "idle");
   }
 
   function chooseWeaponMastery(useMastery: boolean) {
@@ -867,6 +866,7 @@ export default function Home() {
         </section>
         <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div><div><span>Difficulty</span><strong>{scenario.difficulty}</strong></div></div>
 
+        {encounter.pendingResponse?.type === "point-hazard-save" && <section className="roll-coach" aria-live="polite"><div><h3>{encounter.pendingResponse.name}</h3><p>Roll your saving throw. Overlapping hazards resolve one at a time, including defensive choices and concentration.</p></div><button type="button" onClick={() => { const r = resolvePointHazardResponse(encounter); finishPlayerResponse(r.encounter, r.summary, r.playerRoll); }}>Roll hazard save</button></section>}
         {playerCombatant.heldWeaponIds !== undefined && <section className="roll-coach" aria-label="Held weapons">
           <div><h3>Held weapons</h3><p>{!initiativeReady ? "Choose what you hold before rolling initiative. Unselected weapons remain carried." : "Draw or stow: first interaction is free, then uses an Action. Two-handed attacks need the other hand free."}</p>
             {playerCombatant.inventory.filter(item => item.attackIds.length && item.current > 0).map(item => <button type="button" key={item.id} disabled={Boolean(encounter.pendingResponse) || (initiativeReady && activeCombatant.id !== playerCombatant.id)} onClick={() => { const r = handleWeapon(encounter, playerCombatant.id, item.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); }}>{playerCombatant.heldWeaponIds!.includes(item.id) ? "Stow" : "Draw"} {item.name}</button>)}

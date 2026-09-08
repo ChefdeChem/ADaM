@@ -12,6 +12,7 @@ import { validateSpellSlot } from "./resources";
 import { applyMovementContinuation } from "./movement";
 import { validateWeaponHands } from "./weapon-hands";
 import { crossesSolidCorner, gridStepCost } from "./grid-movement";
+import { resolvePointHazardsForCombatant, resumePointHazards } from "./point-effects";
 
 export type EnemyTurnStep = {
   kind: "move" | "ability" | "attack" | "damage" | "miss" | "reaction" | "wait";
@@ -50,7 +51,7 @@ export function enemyHealthLabel(combatant: Combatant, mode: ExperienceMode): st
   return "Healthy";
 }
 
-type ReachableCell = { x: number; y: number; cost: number };
+type ReachableCell = { x: number; y: number; cost: number; path?: { x: number; y: number; cost: number }[] };
 
 const cellKey = (x: number, y: number) => `${x},${y}`;
 
@@ -58,7 +59,7 @@ function reachableCells(encounter: EncounterState): ReachableCell[] {
   const active = encounter.combatants[encounter.activeIndex];
   if (effectiveSpeed(encounter, active.id) === 0) return [{ ...active.position, cost: 0 }];
   const best = new Map<string, number>([[cellKey(active.position.x, active.position.y), 0]]);
-  const queue: ReachableCell[] = [{ ...active.position, cost: 0 }];
+  const queue: ReachableCell[] = [{ ...active.position, cost: 0, path: [] }];
   const result: ReachableCell[] = [];
   while (queue.length) {
     queue.sort((left, right) => left.cost - right.cost);
@@ -80,7 +81,7 @@ function reachableCells(encounter: EncounterState): ReachableCell[] {
       const key = cellKey(x, y);
       if (nextCost >= (best.get(key) ?? Number.POSITIVE_INFINITY)) continue;
       best.set(key, nextCost);
-      queue.push({ x, y, cost: nextCost });
+      queue.push({ x, y, cost: nextCost, path: [...(current.path ?? []), { x, y, cost: nextCost - current.cost }] });
     }
   }
   return result;
@@ -159,7 +160,9 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   const active = encounter.combatants[encounter.activeIndex];
   if (!active || active.side !== "enemy") return { encounter, steps: [], attackRoll: null, damageRoll: null };
   if (encounter.pendingResponse) return { encounter, steps: [], attackRoll: null, damageRoll: null };
-  if (encounter.completedEnemyMovementId === active.id) {
+  encounter = resumePointHazards(encounter, rollRandom);
+  if (encounter.pendingResponse) return { encounter, steps: [{ kind: "reaction", summary: "Resolve the next hazard response." }], attackRoll: null, damageRoll: null };
+  if (encounter.completedEnemyMovementId === active.id && !encounter.pendingEnemyPath) {
     encounter = queueReadiedAttack({ ...encounter, completedEnemyMovementId: undefined }, active.id);
     if (encounter.pendingResponse) return { encounter, steps: [{ kind: "reaction", summary: "The interrupted movement finished; a readied attack is available." }], attackRoll: null, damageRoll: null };
   }
@@ -187,13 +190,20 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
   }
   const attacks = active.attacks ?? [];
   const steps: EnemyTurnStep[] = [];
-  const destination = chooseEnemyDestination(encounter, target, attacks, mode);
+  const destination = encounter.pendingEnemyPath ? { ...active.position, cost: 0, path: encounter.pendingEnemyPath } : chooseEnemyDestination(encounter, target, attacks, mode);
   let next: EncounterState = { ...encounter, selectedTargetId: target.id };
-  if (destination.cost > 0) {
-    const availableOpportunityAttacks = target.reactionAvailable && !isIncapacitated(encounter, target.id) && canSeeCombatant(encounter, target.id, active.id) ? target.attacks.filter((attack) => attack.kind === "melee"
-      && validateWeaponHands(encounter, target.id, attack, false).legal
-      && gridDistanceFeet(active, target) <= attack.normalRangeFeet
-      && Math.max(Math.abs(destination.x - target.position.x), Math.abs(destination.y - target.position.y)) * 5 > attack.normalRangeFeet) : [];
+  const path = destination.path ?? [];
+  const wasMoving = Boolean(encounter.pendingEnemyPath) || path.length > 0;
+  for (let index = 0; index < path.length; index++) {
+    const step = path[index];
+    const mover = next.combatants.find(c => c.id === active.id)!;
+    if (mover.hitPoints.current <= 0 || effectiveSpeed(next, mover.id) === 0) break;
+    const observer = next.combatants.find(c => c.id === target.id)!;
+    const availableOpportunityAttacks = observer.reactionAvailable && !isIncapacitated(next, observer.id) && canSeeCombatant(next, observer.id, mover.id) ? observer.attacks.filter((attack) => attack.kind === "melee"
+      && validateWeaponHands(next, observer.id, attack, false).legal
+      && gridDistanceFeet(mover, observer) <= attack.normalRangeFeet
+      && Math.max(Math.abs(step.x - observer.position.x), Math.abs(step.y - observer.position.y)) * 5 > attack.normalRangeFeet) : [];
+    next = { ...next, pendingEnemyPath: path.slice(index + 1), completedEnemyMovementId: undefined };
     if (availableOpportunityAttacks.length && !next.turn.disengaged) {
       const summary = `${active.name} starts to leave ${target.name}'s reach. ${target.name} can spend their reaction on an opportunity attack before the movement completes.`;
       next = {
@@ -204,16 +214,21 @@ export function resolveEnemyTurn(encounter: EncounterState, modeOrRandom: Experi
           targetCombatantId: active.id,
           phase: "choice",
           availableAttackIds: availableOpportunityAttacks.map((attack) => attack.id),
-          continuation: { combatantId: active.id, x: destination.x, y: destination.y, cost: destination.cost },
+          continuation: { combatantId: active.id, ...step },
         },
         log: [summary, ...next.log],
       };
       return { encounter: next, steps: [{ kind: "reaction", summary }], attackRoll: null, damageRoll: null };
     }
-    next = applyMovementContinuation(next, { combatantId: active.id, x: destination.x, y: destination.y, cost: destination.cost });
-    steps.push({ kind: "move", summary: `${active.name} moves ${destination.cost} feet toward a better tactical position.` });
+    const moved = applyMovementContinuation(next, { combatantId: active.id, ...step });
+    if (moved === next) break;
+    next = resolvePointHazardsForCombatant(moved, active.id, rollRandom);
+    steps.push({ kind: "move", summary: `${active.name} moves ${step.cost} feet to ${String.fromCharCode(65 + step.x)}${step.y + 1}.` });
+    if (next.pendingResponse) return { encounter: next, steps: [...steps, { kind: "reaction", summary: "Movement pauses for hazard resolution." }], attackRoll: null, damageRoll: null };
   }
-  if (destination.cost > 0) {
+  next = { ...next, pendingEnemyPath: undefined, completedEnemyMovementId: undefined };
+  if (next.combatants.find(c => c.id === active.id)!.hitPoints.current <= 0) return { encounter: next, steps: [...steps, { kind: "wait", summary: `${active.name} falls before reaching the destination.` }], attackRoll: null, damageRoll: null };
+  if (wasMoving) {
     next = queueReadiedAttack(next, active.id);
     if (next.pendingResponse) return { encounter: next, steps: [...steps, { kind: "reaction", summary: "Movement finished. A readied attack can now be released." }], attackRoll: null, damageRoll: null };
   }

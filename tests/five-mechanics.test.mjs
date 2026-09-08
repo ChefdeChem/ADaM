@@ -117,7 +117,9 @@ test("Sap is not applied on a miss and expires at the start of the attacker's ne
   assert.equal(miss.encounter.effects.some((effect) => effect.name === "Sap"), false);
 
   const hit = resolveAttackRoll(state, longsword, () => 0.5);
-  const enemyTurn = endTurn(hit.encounter);
+  const afterChoice = hit.encounter.pendingResponse?.type === "post-hit-spell-choice"
+    ? resolvePostHitSpellChoice(hit.encounter, false).encounter : hit.encounter;
+  const enemyTurn = endTurn(afterChoice);
   assert.equal(enemyTurn.effects.some((effect) => effect.name === "Sap"), true);
   const nextPlayerTurn = endTurn(enemyTurn);
   assert.equal(nextPlayerTurn.effects.some((effect) => effect.name === "Sap"), false);

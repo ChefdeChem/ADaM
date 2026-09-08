@@ -90,8 +90,10 @@ export function applyMovementContinuation(encounter: EncounterState, continuatio
 }
 
 export function resumeMovementContinuation(encounter: EncounterState, continuation: MovementContinuation, random = Math.random): MovementResult {
-  const moved = applyMovementContinuation(encounter, continuation, false);
+  let moved = applyMovementContinuation(encounter, continuation, false);
   if (moved === encounter) return { legal: false, reason: "Movement stopped: the pending step is no longer legal. Choose a new destination if movement remains.", encounter, attackRoll: null, damageRoll: null };
+  moved = resolvePointHazardsForCombatant(moved, continuation.combatantId, random);
+  if (moved.pendingResponse || moved.combatants.find(c => c.id === continuation.combatantId)!.hitPoints.current <= 0) return { legal: true, reason: "Movement pauses on the entered square for hazard resolution.", encounter: moved, attackRoll: null, damageRoll: null };
   const destination = continuation.destination;
   if (destination && (destination.x !== continuation.x || destination.y !== continuation.y)) {
     return moveActiveCombatant(moved, destination.x, destination.y, random);
