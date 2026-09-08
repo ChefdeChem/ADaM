@@ -11,6 +11,7 @@ import { canHarmTarget, canSeeCombatant, effectiveArmorClass, effectiveSpeed, is
 import { validateSpellSlot } from "./resources";
 import { applyMovementContinuation } from "./movement";
 import { validateWeaponHands } from "./weapon-hands";
+import { crossesSolidCorner, gridStepCost } from "./grid-movement";
 
 export type EnemyTurnStep = {
   kind: "move" | "ability" | "attack" | "damage" | "miss" | "reaction" | "wait";
@@ -71,9 +72,10 @@ function reachableCells(encounter: EncounterState): ReachableCell[] {
       if (x < 0 || y < 0 || x >= encounter.map.width || y >= encounter.map.height) continue;
       const terrain = encounter.map.terrain.find((cell) => cell.x === x && cell.y === y);
       if (terrain?.kind === "wall") continue;
+      if (crossesSolidCorner(encounter, active.id, current, { x, y })) continue;
       const occupied = encounter.combatants.some((combatant) => combatant.id !== active.id && combatant.hitPoints.current > 0 && combatant.position.x === x && combatant.position.y === y);
       if (occupied) continue;
-      const nextCost = current.cost + (terrain?.kind === "difficult" ? 10 : 5);
+      const nextCost = current.cost + gridStepCost(encounter, active.id, { x, y });
       if (nextCost > encounter.turn.movementRemaining) continue;
       const key = cellKey(x, y);
       if (nextCost >= (best.get(key) ?? Number.POSITIVE_INFINITY)) continue;

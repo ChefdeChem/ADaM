@@ -2,6 +2,7 @@ import type { CharacterSpell } from "../domain/character";
 import type { Combatant, EncounterState } from "../domain/combat";
 import { analyzeTarget } from "./targeting";
 import { canOccupyCells, revealHiddenInPlainSight } from "./effects";
+import { crossesSolidCorner } from "./grid-movement";
 
 type Area = NonNullable<CharacterSpell["area"]>;
 
@@ -58,6 +59,7 @@ export function pushTargetAway(encounter: EncounterState, sourceId: string, targ
   for (let step = 0; step < Math.floor(distanceFeet / 5); step += 1) {
     const next = { x: position.x + stepX, y: position.y + stepY };
     if (!canOccupyCells(encounter, targetId, next)) break;
+    if (crossesSolidCorner(encounter, targetId, position, next)) break;
     position = next;
   }
   if (position.x === target.position.x && position.y === target.position.y) return encounter;

@@ -4,7 +4,8 @@ import { resolveAttackDamage, resolveReactionAttackRoll } from "./combat-options
 import { queueConcentrationCheck } from "./defensive-responses";
 import { validateSpellSlot } from "./resources";
 import { resolvePointHazardsForCombatant } from "./point-effects";
-import { canOccupyCells, occupiedCells, effectiveSpeed, isIncapacitated, canSeeCombatant, revealHiddenInPlainSight } from "./effects";
+import { canOccupyCells, effectiveSpeed, isIncapacitated, canSeeCombatant, revealHiddenInPlainSight } from "./effects";
+import { crossesSolidCorner, gridStepCost } from "./grid-movement";
 
 export type MovementStep = { x: number; y: number; cost: number };
 export type ReachableMovementCell = { x: number; y: number; cost: number; path: MovementStep[] };
@@ -42,9 +43,8 @@ export function legalMovementDestinations(encounter: EncounterState): ReachableM
       const y = current.y + dy;
       if (x < 0 || y < 0 || x >= encounter.map.width || y >= encounter.map.height) continue;
       if (!canOccupyCells(encounter, active.id, { x, y })) continue;
-      const difficult = occupiedCells(encounter, active.id, { x, y }).some((point) => encounter.map.terrain.some((cell) => cell.x === point.x && cell.y === point.y && cell.kind === "difficult"));
-      const crawling = active.conditions?.some((condition) => condition.toLowerCase() === "prone");
-      const stepCost = 5 + (difficult ? 5 : 0) + (crawling ? 5 : 0);
+      if (crossesSolidCorner(encounter, active.id, current, { x, y })) continue;
+      const stepCost = gridStepCost(encounter, active.id, { x, y });
       const nextCost = current.cost + stepCost;
       if (nextCost > encounter.turn.movementRemaining) continue;
       const key = cellKey(x, y);
@@ -72,6 +72,11 @@ export function applyMovementContinuation(encounter: EncounterState, continuatio
   const mover = encounter.combatants.find((combatant) => combatant.id === continuation.combatantId);
   if (!mover || mover.hitPoints.current <= 0) return encounter;
   if (effectiveSpeed(encounter, mover.id) === 0) return encounter;
+  if (encounter.pendingResponse || continuation.cost <= 0 || continuation.cost > encounter.turn.movementRemaining
+    || !canOccupyCells(encounter, mover.id, continuation)) return encounter;
+  const adjacent = Math.max(Math.abs(mover.position.x - continuation.x), Math.abs(mover.position.y - continuation.y)) <= 1;
+  if (adjacent && (crossesSolidCorner(encounter, mover.id, mover.position, continuation)
+    || continuation.cost < gridStepCost(encounter, mover.id, continuation))) return encounter;
   const coordinate = `${String.fromCharCode(65 + continuation.x)}${continuation.y + 1}`;
   return revealHiddenInPlainSight({
     ...encounter,
@@ -86,6 +91,7 @@ export function applyMovementContinuation(encounter: EncounterState, continuatio
 
 export function resumeMovementContinuation(encounter: EncounterState, continuation: MovementContinuation, random = Math.random): MovementResult {
   const moved = applyMovementContinuation(encounter, continuation, false);
+  if (moved === encounter) return { legal: false, reason: "Movement stopped: the pending step is no longer legal. Choose a new destination if movement remains.", encounter, attackRoll: null, damageRoll: null };
   const destination = continuation.destination;
   if (destination && (destination.x !== continuation.x || destination.y !== continuation.y)) {
     return moveActiveCombatant(moved, destination.x, destination.y, random);
@@ -109,6 +115,9 @@ export function moveActiveCombatant(encounter: EncounterState, x: number, y: num
 
   for (const step of destination.path) {
     const mover = next.combatants[next.activeIndex];
+    if (next.pendingResponse || mover.hitPoints.current <= 0 || effectiveSpeed(next, mover.id) === 0) {
+      return { legal: true, reason: next.pendingResponse ? "Movement paused at the current square. Resolve the pending response, then choose whether to continue moving." : `${mover.name} cannot continue moving from the current square.`, encounter: next, attackRoll: lastAttackRoll, damageRoll: lastDamageRoll };
+    }
     const continuation: MovementContinuation = { combatantId: mover.id, ...step, destination: { x, y } };
     const threat = next.turn.disengaged ? null : next.combatants
       .filter((combatant) => combatant.side === "enemy" && combatant.hitPoints.current > 0 && combatant.reactionAvailable && !isIncapacitated(next, combatant.id) && canSeeCombatant(next, combatant.id, mover.id))
