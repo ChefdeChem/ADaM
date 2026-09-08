@@ -1,7 +1,7 @@
 import type { Character, CharacterFeatureAction } from "../domain/character";
 import type { CombatAction, EncounterState } from "../domain/combat";
-import { canHarmTarget, automaticallyFailsSave, applyEffect, canOccupyCells, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, extendRage, isIncapacitated, removeCondition, removeEffect, savingThrowRollMode } from "./effects";
-import { analyzeTarget, hasLineOfSightToPoint } from "./targeting";
+import { canHarmTarget, automaticallyFailsSave, applyEffect, canOccupyCells, canRegainHitPoints, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, extendRage, isIncapacitated, occupiedCells, removeCondition, removeEffect, savingThrowRollMode } from "./effects";
+import { hasLineOfSightToPoint } from "./targeting";
 import { spendNamedResource, validateNamedResource } from "./resources";
 import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
 import { rollD20, rollDamage } from "./dice";
@@ -19,6 +19,54 @@ export type FeatureActionOptions = {
   removePoisoned?: boolean;
   afflictionEffectIds?: string[];
 };
+
+export type CreatureSenseSnapshot = {
+  creatures: Array<{ id: string; creatureType: string; position: { x: number; y: number } }>;
+  auras: Array<"consecrated" | "desecrated">;
+  summary: string;
+};
+
+/** Re-evaluate an ongoing creature-type sense from its owner's current position. */
+export function creatureSenseSnapshot(encounter: EncounterState, sourceCombatantId: string): CreatureSenseSnapshot {
+  const source = encounter.combatants.find((combatant) => combatant.id === sourceCombatantId);
+  const effect = encounter.effects.find((candidate) => candidate.sourceCombatantId === sourceCombatantId
+    && candidate.targetCombatantId === sourceCombatantId && candidate.sense);
+  if (!source || !effect?.sense) return { creatures: [], auras: [], summary: "The sense is not active." };
+  const sourceCells = occupiedCells(encounter, source.id);
+  const inRange = (points: Array<{ x: number; y: number }>) => sourceCells.some((from) => points.some((to) =>
+    Math.max(Math.abs(from.x - to.x), Math.abs(from.y - to.y)) * 5 <= effect.sense!.rangeFeet));
+  const detectableTypes = new Set(effect.sense.creatureTypes.map((creatureType) => creatureType.toLowerCase()));
+  const creatures = encounter.combatants.filter((combatant) => combatant.id !== source.id && combatant.hitPoints.current > 0
+    && detectableTypes.has(combatant.creatureType?.toLowerCase() ?? "")
+    && inRange(occupiedCells(encounter, combatant.id))
+    && (!effect.sense!.blockedByTotalCover || occupiedCells(encounter, combatant.id).some((point) => hasLineOfSightToPoint(encounter, source.id, point.x, point.y))))
+    .map((combatant) => ({ id: combatant.id, creatureType: combatant.creatureType!, position: { ...combatant.position } }));
+  const auras = [...new Set(encounter.map.terrain.filter((cell) => cell.divineAura && inRange([cell])).map((cell) => cell.divineAura!))];
+  const creatureCopy = creatures.length
+    ? creatures.map((creature) => `${creature.creatureType} at ${creature.position.x},${creature.position.y}`).join(", ")
+    : "no qualifying creatures";
+  const auraCopy = auras.length ? `${auras.join(" and ")} presence` : "no consecrated or desecrated presence";
+  return { creatures, auras, summary: `${creatureCopy}; ${auraCopy}.` };
+}
+
+export function healingPoolTargetOption(encounter: EncounterState, feature: CharacterFeatureAction, targetCombatantId: string) {
+  const target = encounter.combatants.find((combatant) => combatant.id === targetCombatantId);
+  const active = encounter.combatants[encounter.activeIndex];
+  if (!target || !active || feature.resolution.type !== "healing-pool") return { legal: false as const, reason: "Choose a valid healing target.", maximumHealing: 0, canRemovePoisoned: false, afflictionEffectIds: [] as string[] };
+  const pool = active.resources.find((resource) => resource.name.toLowerCase() === feature.resourceName.toLowerCase())?.current ?? 0;
+  const maximumHealing = Math.min(pool, Math.max(0, target.hitPoints.maximum - target.hitPoints.current));
+  const canRemovePoisoned = Boolean(feature.resolution.removesPoisoned && pool >= 5 && target.conditions.some((condition) => condition.toLowerCase() === "poisoned"));
+  const afflictionEffectIds = encounter.effects.filter((effect) => effect.targetCombatantId === target.id && effect.afflictionKind
+    && feature.resolution.type === "healing-pool" && feature.resolution.removesAfflictions?.includes(effect.afflictionKind)).map((effect) => effect.id);
+  const selectedAfflictions = maximumHealing === 0 && !canRemovePoisoned && afflictionEffectIds.length ? [afflictionEffectIds[0]] : [];
+  const validation = validateFeatureAction(encounter, feature, {
+    targetCombatantId,
+    resourceAmount: maximumHealing > 0 ? 1 : canRemovePoisoned || selectedAfflictions.length ? 0 : 1,
+    removePoisoned: maximumHealing === 0 && canRemovePoisoned,
+    afflictionEffectIds: selectedAfflictions,
+  });
+  return { legal: validation.legal as boolean, reason: validation.reason, maximumHealing, canRemovePoisoned, afflictionEffectIds };
+}
 
 export function featureCombatActions(character: Character): CombatAction[] {
   return (character.featureActions ?? []).map((feature) => ({
@@ -228,15 +276,6 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
 
   if (feature.resolution.type === "sense-creature-types") {
     const resolution = feature.resolution;
-    const detectableTypes = new Set(feature.resolution.creatureTypes.map((creatureType) => creatureType.toLowerCase()));
-    const detectedCreatures = next.combatants.filter((combatant) => {
-      if (combatant.id === active.id || combatant.hitPoints.current <= 0 || !detectableTypes.has(combatant.creatureType?.toLowerCase() ?? "")) return false;
-      const analysis = analyzeTarget(next, combatant.id);
-      return Boolean(analysis && analysis.distanceFeet <= resolution.rangeFeet
-        && (!resolution.blockedByTotalCover || analysis.lineOfSight));
-    });
-    const detectedAuras = next.map.terrain.filter((cell) => cell.divineAura
-      && Math.max(Math.abs(active.position.x - cell.x), Math.abs(active.position.y - cell.y)) * 5 <= resolution.rangeFeet);
     next = applyEffect({ ...next, turn }, {
       name: feature.name,
       description: feature.description,
@@ -253,13 +292,8 @@ export function executeFeatureAction(encounter: EncounterState, feature: Charact
       modifiers: resolution.duration === "ten-minutes" ? { endsOnIncapacitated: true } : {},
       replaceExisting: true,
     });
-    const creatureCopy = detectedCreatures.length
-      ? detectedCreatures.map((combatant) => `${combatant.creatureType} at ${combatant.position.x},${combatant.position.y}`).join(", ")
-      : "no qualifying creatures";
-    const auraCopy = detectedAuras.length
-      ? [...new Set(detectedAuras.map((cell) => cell.divineAura))].join(" and ") + " presence"
-      : "no consecrated or desecrated presence";
-    const summary = `${active.name} uses ${feature.name} and senses ${creatureCopy}; ${auraCopy}.`;
+    const snapshot = creatureSenseSnapshot(next, active.id);
+    const summary = `${active.name} uses ${feature.name} and senses ${snapshot.summary}`;
     return { legal: true, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
 

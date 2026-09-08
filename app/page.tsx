@@ -6,7 +6,7 @@ import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/com
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
 import { executeRitualSpell, executeSpellChoice, revealDetectMagicAuras, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
 import { effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration, occupiedCells, removeEffect } from "../src/engine/effects";
-import { executeFeatureAction, resumeAreaDamage, extendRageWithBonusAction } from "../src/engine/feature-actions";
+import { creatureSenseSnapshot, executeFeatureAction, healingPoolTargetOption, resumeAreaDamage, extendRageWithBonusAction, validateFeatureAction } from "../src/engine/feature-actions";
 import { endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolvePostHitSpellChoice, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
@@ -21,6 +21,7 @@ import { recoverRestResources, type RestType } from "../src/engine/resources";
 import { executePointSpell, resumePointHazards, resolvePointHazardResponse } from "../src/engine/point-effects";
 import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions";
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
+import { areaTargets } from "../src/engine/areas";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
 import { importCharacterFile, type ImportResult } from "../src/importers";
 import { rulesets } from "../src/rulesets";
@@ -50,7 +51,7 @@ type SpellFlow = null | {
 };
 type FeatureFlow = null | {
   feature: CharacterFeatureAction;
-  targetId: string;
+  targetId?: string;
   amount: number;
   maximum: number;
   removePoisoned?: boolean;
@@ -521,19 +522,12 @@ export default function Home() {
     if (feature) {
       if (character.id === "surina-daardendrian" && feature.id === "breath-weapon-gold") { setBreathFlow(feature); setFeedback("Select a creature to aim through, choose your shape, then roll damage."); return; }
       if (feature.resolution.type === "healing-pool") {
-        const selected = encounter.combatants.find((combatant) => combatant.id === encounter.selectedTargetId);
-        const target = selected ?? activeCombatant;
-        const pool = activeCombatant.resources.find((resource) => resource.name.toLowerCase() === feature.resourceName.toLowerCase());
-        const maximum = Math.min(pool?.current ?? 0, target.hitPoints.maximum - target.hitPoints.current);
-        const canRemovePoison = feature.resolution.removesPoisoned && (pool?.current ?? 0) >= 5 && target.conditions.some((condition) => condition.toLowerCase() === "poisoned");
-        const afflictions = encounter.effects.filter((effect) => effect.targetCombatantId === target.id && effect.afflictionKind && feature.resolution.type === "healing-pool" && feature.resolution.removesAfflictions?.includes(effect.afflictionKind));
-        if (maximum < 1 && !canRemovePoison && !afflictions.length) { setFeedback(pool?.current ? `${target.name} is already at maximum Hit Points.` : `${feature.resourceName} has no points remaining.`); return; }
         setChoiceMode(null);
         setAttackFlow(null);
         setSpellFlow(null);
-        setFeatureFlow({ feature, targetId: target.id, amount: maximum, maximum, removePoisoned: maximum === 0 && Boolean(canRemovePoison), afflictionEffectIds: [] });
+        setFeatureFlow({ feature, amount: 0, maximum: 0, afflictionEffectIds: [] });
         setToolFlow(null);
-        setFeedback(`Choose 1 to ${maximum} points to restore to ${target.name}. One pool point restores one Hit Point.`);
+        setFeedback(`Choose a creature within touch range for ${feature.name}.`);
         return;
       }
       const result = executeFeatureAction(encounter, feature);
@@ -584,12 +578,23 @@ export default function Home() {
 
   function confirmFeatureChoice(event: FormEvent) {
     event.preventDefault();
-    if (!featureFlow) return;
+    if (!featureFlow?.targetId) return;
     const result = executeFeatureAction(encounter, featureFlow.feature, { resourceAmount: featureFlow.amount, targetCombatantId: featureFlow.targetId, removePoisoned: featureFlow.removePoisoned, afflictionEffectIds: featureFlow.afflictionEffectIds });
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter);
     setFeatureFlow(null);
     setFeedback(result.summary);
+  }
+
+  function chooseHealingTarget(targetId: string) {
+    if (!featureFlow || featureFlow.feature.resolution.type !== "healing-pool") return;
+    const option = healingPoolTargetOption(encounter, featureFlow.feature, targetId);
+    if (!option.legal) { setFeedback(option.reason ?? "That creature cannot receive this feature now."); return; }
+    const defaultPoison = option.maximumHealing === 0 && option.canRemovePoisoned;
+    const defaultAfflictions = option.maximumHealing === 0 && !defaultPoison ? option.afflictionEffectIds.slice(0, 1) : [];
+    setFeatureFlow({ ...featureFlow, targetId, amount: option.maximumHealing, maximum: option.maximumHealing, removePoisoned: defaultPoison, afflictionEffectIds: defaultAfflictions });
+    const target = encounter.combatants.find((combatant) => combatant.id === targetId)!;
+    setFeedback(`Choose healing and recovery for ${target.name}.`);
   }
 
   function chooseToolAbility(ability: AbilityName) {
@@ -1096,8 +1101,8 @@ export default function Home() {
         <div className="turn-dashboard"><div><span>Current turn</span><strong>{activeCombatant.name}</strong></div><div><span>Action</span><strong>{encounter.turn.action ? "Ready" : "Used"}</strong></div><div><span>Bonus action</span><strong>{encounter.turn.bonusAction ? "Ready" : "Used"}</strong></div><div><span>Movement</span><strong>{encounter.turn.movementRemaining} ft.{encounter.turn.disengaged ? " · Disengaged" : ""}</strong></div><div><span>Your reaction</span><strong>{playerCombatant.reactionAvailable ? "Ready" : "Used"}</strong></div></div>
 
         <section className="state-tray" aria-label="Character resources and temporary effects">
-          <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses and carried weapons</h3></div><div className="resource-pills">{playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>)}{playerCombatant.inventory.map((item) => <div key={`inventory-${item.id}`}><span>{item.name}</span><strong>{item.current}/{item.maximum}</strong></div>)}{!playerCombatant.resources.length && !playerCombatant.inventory.length && <p>No tracked resources imported.</p>}</div>{outcome === "victory" && <div className="rest-recovery"><span>Post-encounter recovery</span><div><button type="button" onClick={() => recoverAfterRest("short-rest")}>Recover after Short Rest</button><button type="button" onClick={() => recoverAfterRest("long-rest")}>Recover after Long Rest</button></div>{character.id === "surina-daardendrian" ? <><button type="button" onClick={() => recoverAfterRest("short-rest", true)}>Short Rest · Roll 1d10 + CON for healing ({encounter.recoveryState?.hitDiceRemaining ?? character.recoveryState?.hitDiceRemaining ?? 1} Hit Die left)</button><small>Safe, uninterrupted downtime: Short Rest advances 1 hour; Long Rest includes 8 hours with sleep and any required 16-hour waiting period since your previous Long Rest. Long Rest restores HP and your Hit Die. Source resource recovery remains unchanged.</small></> : <small>Refreshes only resources whose registered rules recover on that rest.</small>}</div>}</div>
-          <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3>{encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === playerCombatant.id) && <button type="button" onClick={releaseConcentration}>End concentration · No Action</button>}{encounter.effects.some((effect) => effect.sourceCombatantId === playerCombatant.id && effect.modifiers.rageExtension) && <button type="button" onClick={extendRageNow}>Extend Rage · Bonus Action</button>}{encounter.effects.some((effect) => effect.sourceCombatantId === playerCombatant.id && effect.senseMagic) && <button type="button" onClick={inspectMagicAuras}>Reveal magic auras · Action</button>}</div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.description}</small>{effect.modifiers.size === "large" && <button type="button" onClick={() => endLargeForm(effect.id)}>End Large Form · No Action</button>}</div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
+          <div className="resource-tracker"><div><span className="eyebrow">Combat resources</span><h3>Uses and carried weapons</h3></div><div className="resource-pills">{playerCombatant.resources.map((resource) => <div key={resource.id}><span>{resource.kind === "spell-slot" ? `Level ${resource.level} slots` : resource.name}</span><strong>{resource.current}/{resource.maximum}</strong></div>)}{playerCombatant.inventory.map((item) => <div key={`inventory-${item.id}`}><span>{item.name}</span><strong>{item.current}/{item.maximum}</strong></div>)}{playerCombatant.damageResistances.map((type) => <div key={`resistance-${type}`}><span>Damage resistance</span><strong>{type}</strong><small>Matching damage is halved, rounded down, and shown in the combat log.</small></div>)}{!playerCombatant.resources.length && !playerCombatant.inventory.length && !playerCombatant.damageResistances.length && <p>No tracked resources imported.</p>}</div>{outcome === "victory" && <div className="rest-recovery"><span>Post-encounter recovery</span><div><button type="button" onClick={() => recoverAfterRest("short-rest")}>Recover after Short Rest</button><button type="button" onClick={() => recoverAfterRest("long-rest")}>Recover after Long Rest</button></div>{character.id === "surina-daardendrian" ? <><button type="button" onClick={() => recoverAfterRest("short-rest", true)}>Short Rest · Roll 1d10 + CON for healing ({encounter.recoveryState?.hitDiceRemaining ?? character.recoveryState?.hitDiceRemaining ?? 1} Hit Die left)</button><small>Safe, uninterrupted downtime: Short Rest advances 1 hour; Long Rest includes 8 hours with sleep and any required 16-hour waiting period since your previous Long Rest. Long Rest restores HP and your Hit Die. Source resource recovery remains unchanged.</small></> : <small>Refreshes only resources whose registered rules recover on that rest.</small>}</div>}</div>
+          <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3>{encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === playerCombatant.id) && <button type="button" onClick={releaseConcentration}>End concentration · No Action</button>}{encounter.effects.some((effect) => effect.sourceCombatantId === playerCombatant.id && effect.modifiers.rageExtension) && <button type="button" onClick={extendRageNow}>Extend Rage · Bonus Action</button>}{encounter.effects.some((effect) => effect.sourceCombatantId === playerCombatant.id && effect.senseMagic) && <button type="button" onClick={inspectMagicAuras}>Reveal magic auras · Action</button>}</div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.sense ? `Live sense: ${creatureSenseSnapshot(encounter, playerCombatant.id).summary}` : effect.description}</small>{effect.modifiers.size === "large" && <button type="button" onClick={() => endLargeForm(effect.id)}>End Large Form · No Action</button>}</div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
         </section>
 
         <section className="action-console">
@@ -1107,6 +1112,7 @@ export default function Home() {
             const legalCount = actions.filter((action) => validateAction(action, encounter, character).legal).length;
             return <button type="button" key={category.id} className={actionCategory === category.id ? "active" : ""} onClick={() => setActionCategory(category.id)}><span>{category.label}</span><strong>{legalCount}</strong><small>{category.detail}</small></button>;
           })}</div>
+          {choiceMode === "attack" && character.id === "surina-daardendrian" && <section className="choice-panel" aria-label="Unarmed Strike options"><h4>Unarmed Strike options</h4><p>Choose Damage in the attack list, or choose Shove or Grapple below. Each option uses Surina&apos;s Attack action and follows the current 2024 resolution.</p></section>}
           {choiceMode === "attack" && character.id === "surina-daardendrian" && <section className="choice-panel" aria-label="Shove options">
             <h4>Unarmed Strike: Shove · Action</h4>
             <p>Choose an enemy and an outcome. ADaM chooses its Strength or Dexterity save before rolling. No weapon damage, free hand, or mastery is required.</p>
@@ -1133,7 +1139,7 @@ export default function Home() {
             const targetingLabel = action.targeting?.mode === "single" ? `${action.targeting.rangeFeet} ft.` : action.targeting?.mode === "area" ? `${action.targeting.shape} · ${action.targeting.sizeFeet} ft.` : action.cost.replace("-", " ");
             return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{targetingLabel}</span>{experienceMode !== "advanced" && <small>{validation.legal || experienceMode === "beginner" ? action.description : validation.reason}</small>}</button>;
           }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
-          {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose weapon</span><strong>Weapon and attack options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{playerCombatant.attacks.map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
+          {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose attack</span><strong>Weapon and Unarmed Strike options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{playerCombatant.attacks.map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.id === "unarmed-strike" ? "Unarmed Strike: Damage" : attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : spell.freeCastResourceName ? `Level ${spell.level} · free use or slot` : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : spell.target === "area" && spell.area ? `${spell.area.sizeFeet} ft. ${spell.area.shape}` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           {encounter.effects.some(e => e.hidden && e.targetCombatantId === playerCombatant.id) && <button type="button" onClick={() => { setEncounter(endHiding(encounter, playerCombatant.id, "player speaks loudly")); setFeedback("You speak above a whisper and stop hiding."); }}>Speak loudly / end Hide</button>}
           {interactionFlow && <div className="choice-panel"><h3>{interactionFlow === "ready" ? "Ready a weapon attack" : interactionFlow === "help" ? "Help" : "Object interaction"}</h3>
@@ -1148,15 +1154,24 @@ export default function Home() {
             if (!result.legal) { setFeedback(result.reason); return; }
             setEncounter(result.encounter); setLastRoll(result.roll); setFeedback(result.summary); setSkillFlow(null);
           }}>Roll {skill}</button>)}<button type="button" onClick={() => setSkillFlow(null)}>Cancel</button></div>}
-          {breathFlow && <div className="choice-panel"><h3>Breath Weapon</h3><label>Shape <select value={breathShape} onChange={(event) => setBreathShape(event.target.value as "cone" | "line")}><option value="cone">15-foot Cone</option><option value="line">30-foot Line, 5 feet wide</option></select></label><p>Aim through the selected creature. All creatures in the area are affected.</p><button type="button" onClick={() => {
-            if (breathFlow.resolution.type !== "area-saving-throw") return;
+          {breathFlow && breathFlow.resolution.type === "area-saving-throw" && (() => {
             const feature = { ...breathFlow, resolution: { ...breathFlow.resolution, area: { ...breathFlow.resolution.area, shape: breathShape, sizeFeet: breathShape === "line" ? 30 : 15 } } };
-            const result = executeFeatureAction(encounter, feature);
-            if (!result.legal) { setFeedback(result.reason); return; }
-            setEncounter(result.encounter); if (result.roll) setLastRoll(result.roll); setFeedback(result.summary); setBreathFlow(null);
-          }}>Roll 1d10 fire damage</button><button type="button" onClick={() => setBreathFlow(null)}>Cancel</button></div>}
+            const candidates = encounter.combatants.filter((combatant) => combatant.id !== playerCombatant.id && combatant.hitPoints.current > 0).map((combatant) => {
+              const validation = validateFeatureAction(encounter, feature, { targetCombatantId: combatant.id });
+              const affected = validation.legal ? areaTargets(encounter, playerCombatant.id, combatant.id, feature.resolution.area) : [];
+              return { combatant, validation, affected };
+            });
+            const selected = candidates.find((candidate) => candidate.combatant.id === encounter.selectedTargetId && candidate.validation.legal);
+            return <div className="choice-panel"><h3>Breath Weapon</h3><label>Shape <select value={breathShape} onChange={(event) => setBreathShape(event.target.value as "cone" | "line")}><option value="cone">15-foot Cone</option><option value="line">30-foot Line, 5 feet wide</option></select></label><p>Choose a creature to set the direction. The preview names every creature that will make a save, including allies.</p>{candidates.map(({ combatant, validation, affected }) => <button type="button" key={combatant.id} disabled={!validation.legal} className={encounter.selectedTargetId === combatant.id ? "selected" : ""} onClick={() => setEncounter(selectTarget(encounter, combatant.id))}><strong>Aim through {combatant.name}</strong><small>{validation.legal ? `Affects ${affected.map((target) => target.name).join(", ")}` : validation.reason}</small></button>)}<button type="button" disabled={!selected} onClick={() => {
+              if (!selected) return;
+              const result = executeFeatureAction(encounter, feature, { targetCombatantId: selected.combatant.id });
+              if (!result.legal) { setFeedback(result.reason); return; }
+              setEncounter(result.encounter); if (result.roll) setLastRoll(result.roll); setFeedback(result.summary); setBreathFlow(null);
+            }}>Roll 1d10 fire damage</button><button type="button" onClick={() => setBreathFlow(null)}>Cancel</button></div>;
+          })()}
           {featureFlow && (() => {
-            const target = encounter.combatants.find((combatant) => combatant.id === featureFlow.targetId)!;
+            const target = encounter.combatants.find((combatant) => combatant.id === featureFlow.targetId);
+            if (!target) return <div className="choice-panel feature-choice"><div className="choice-heading"><div><span>Step 1 · Choose target</span><strong>{featureFlow.feature.name}</strong></div><button type="button" onClick={() => setFeatureFlow(null)}>Cancel</button></div><p>Choose yourself or another creature within touch range. A prior attack target does not become the healing target automatically.</p><div className="choice-grid">{encounter.combatants.map((combatant) => { const option = healingPoolTargetOption(encounter, featureFlow.feature, combatant.id); return <button type="button" key={combatant.id} disabled={!option.legal} onClick={() => chooseHealingTarget(combatant.id)}><strong>{combatant.name}</strong><small>{combatant.hitPoints.current}/{combatant.hitPoints.maximum} HP</small><p>{option.legal ? `${option.maximumHealing} healing available${option.canRemovePoisoned ? " · Poisoned removal available" : ""}` : option.reason}</p></button>; })}</div></div>;
             const pool = playerCombatant.resources.find((resource) => resource.name.toLowerCase() === featureFlow.feature.resourceName.toLowerCase())?.current ?? 0;
             const afflictionCost = (featureFlow.afflictionEffectIds?.length ?? 0) * 5;
             const maximum = Math.min(featureFlow.maximum, Math.max(0, pool - (featureFlow.removePoisoned ? 5 : 0) - afflictionCost));
