@@ -31,6 +31,7 @@ import { defaultScenarioSetup, generateScriptedScenario, scenarioTemplates } fro
 import type { ScenarioDifficulty, ScenarioEnvironment, ScenarioObjective, ScenarioSetup, ScenarioTemplate } from "../src/scenarios/types";
 import { CHARACTER_ROSTER_LIMIT, CHARACTER_ROSTER_SEED_VERSION, mergeBuiltInCharacters, removeRosterCharacter, upsertRosterCharacter } from "../src/characters/roster";
 import { buildCharacterMechanicCoverage } from "../src/rules-registry";
+import { buildTurnGuidance } from "../src/ui/turn-guidance";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
 type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
@@ -177,6 +178,7 @@ export default function Home() {
   const [breathShape, setBreathShape] = useState<"cone" | "line">("cone");
   const [toolFlow, setToolFlow] = useState<ToolFlow>(null);
   const [enemyTurnPhase, setEnemyTurnPhase] = useState<"idle" | "resolving" | "awaiting-player" | "showing">("idle");
+  const [scenarioBuilderOpen, setScenarioBuilderOpen] = useState(true);
 
   const activeRuleset = rulesets.find((ruleset) => ruleset.id === rulesetId)!;
   const visibleActions = useMemo(
@@ -208,6 +210,22 @@ export default function Home() {
   const mechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(sourceCharacter), [sourceCharacter]);
   const playableMechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(character), [character]);
   const importMechanicCoverage = useMemo(() => reviewCharacter ? buildCharacterMechanicCoverage(reviewCharacter) : null, [reviewCharacter]);
+  const surinaGuide = buildTurnGuidance({
+    initiativeReady,
+    outcome,
+    activeSide: activeCombatant.side,
+    hasRequiredResponse: Boolean(encounter.pendingResponse) || deathSaveRequired,
+    choiceMode,
+    attackPhase: attackFlow?.phase ?? null,
+    spellPhase: spellFlow?.phase ?? null,
+    breathActive: Boolean(breathFlow),
+    healingPhase: featureFlow ? featureFlow.targetId ? "amount" : "target" : null,
+    interactionActive: Boolean(interactionFlow),
+    skillActive: Boolean(skillFlow),
+    actionAvailable: encounter.turn.action,
+    bonusActionAvailable: encounter.turn.bonusAction,
+    movementRemaining: encounter.turn.movementRemaining,
+  });
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -488,6 +506,38 @@ export default function Home() {
     setFeedback(result.summary);
   }
 
+  function focusSurface(surface: "actions" | "map" | "response" | "outcome") {
+    window.requestAnimationFrame(() => {
+      const selector = surface === "actions"
+        ? "#action-console"
+        : surface === "map"
+          ? "#tactical-map"
+          : surface === "outcome"
+            ? "#encounter-outcome"
+            : "[data-guided-step='true']";
+      document.querySelector<HTMLElement>(selector)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
+  function followGuidePrimary() {
+    if (surinaGuide.focus === "initiative") { rollInitiative(); return; }
+    if (surinaGuide.phase === "finish-turn") {
+      runAction(actionCatalog.find((action) => action.id === "end-turn")!);
+      return;
+    }
+    if (surinaGuide.focus === "actions") setActionCategory("action");
+    focusSurface(surinaGuide.focus);
+  }
+
+  function followGuideSecondary() {
+    if (surinaGuide.phase === "finish-turn") {
+      focusSurface("map");
+      return;
+    }
+    setActionCategory("movement");
+    focusSurface("map");
+  }
+
   function runAction(action: CombatAction) {
     if (!initiativeReady) { setFeedback("Roll your initiative before taking actions. ADaM rolls for the enemies automatically."); return; }
     if (outcome !== "active") { setFeedback("This encounter is complete. Build a new encounter to continue training."); return; }
@@ -574,6 +624,7 @@ export default function Home() {
     setFeatureFlow(null);
     setToolFlow(null);
     setFeedback(`${attack.name} selected. Choose one of the highlighted enemy targets on the tactical map.`);
+    focusSurface("map");
   }
 
   function confirmFeatureChoice(event: FormEvent) {
@@ -640,6 +691,7 @@ export default function Home() {
     const result = rollPlayerAndEnemyInitiative(encounter, playerNeedsInitiative.id);
     setEncounter(result.encounter);
     setLastRoll(result.playerRoll);
+    setScenarioBuilderOpen(false);
     setFeedback(`You rolled ${result.playerRoll.total}. ADaM rolled initiative for ${result.enemyRolls.length} ${result.enemyRolls.length === 1 ? "enemy" : "enemies"}. ${result.encounter.combatants[0].name} acts first.`);
   }
 
@@ -700,6 +752,7 @@ export default function Home() {
       setSpellFlow({ spell, phase: "point", castingResource });
       setAttackFlow(null);
       setFeedback(`${spell.name} selected. Choose a point on the tactical map.`);
+      focusSurface("map");
       return;
     }
     if (spell.target === "self-or-single" && spell.targetSide === "friendly" && !hasOtherFriendlyTarget) {
@@ -713,6 +766,7 @@ export default function Home() {
       setSpellFlow({ spell, phase: "target", castingResource });
       setAttackFlow(null);
       setFeedback(`${spell.name} selected. Choose one of the highlighted legal targets on the tactical map.`);
+      focusSurface("map");
       return;
     }
     const result = executeSpellChoice(encounter, spell, Math.random, { castingResource });
@@ -731,6 +785,7 @@ export default function Home() {
     if (!choice) return;
     setSpellFlow({ ...spellFlow, phase: "point", utilityChoiceId });
     setFeedback(`${choice.name} selected. Choose a point within ${spellFlow.spell.rangeFeet} feet on the tactical map.`);
+    focusSurface("map");
   }
 
   function rollSelectedSpellAttack() {
@@ -768,6 +823,7 @@ export default function Home() {
     const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
     if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
     setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(createPlayableEncounter(sourceCharacter, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
+    setScenarioBuilderOpen(false);
   }
 
   function loadTemplate(template: ScenarioTemplate) {
@@ -778,6 +834,7 @@ export default function Home() {
     const next = generateScriptedScenario(template.setup);
     if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
     setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(createPlayableEncounter(sourceCharacter, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
+    setScenarioBuilderOpen(false);
   }
 
   function saveTemplate() {
@@ -822,6 +879,7 @@ export default function Home() {
       setEncounter((state) => selectTarget(state, occupantId));
       setAttackFlow({ ...attackFlow, phase: "attack-roll", targetId: occupantId });
       setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Click to roll the attack: d20 ${attackFlow.attack.attackBonus >= 0 ? "+" : "−"} ${Math.abs(attackFlow.attack.attackBonus)}.${rollMode}`);
+      focusSurface("response");
       return;
     }
     if (spellFlow?.phase === "target") {
@@ -835,6 +893,7 @@ export default function Home() {
         const rollMode = validation.rollMode === "disadvantage" ? " Roll two d20s and use the lower result because a hostile creature is within 5 feet." : "";
         setSpellFlow({ ...spellFlow, phase: "attack-roll", targetId: occupantId });
         setFeedback(`${analysis.target.name} selected at ${analysis.distanceFeet} feet. Click to roll the spell attack: d20 ${spellFlow.spell.attackBonus >= 0 ? "+" : "−"} ${Math.abs(spellFlow.spell.attackBonus)}.${rollMode}`);
+        focusSurface("response");
         return;
       }
       const result = executeSpellChoice(targetedEncounter, spellFlow.spell, Math.random, { castingResource: spellFlow.castingResource });
@@ -902,7 +961,8 @@ export default function Home() {
 
       <section className="combat-area">
         <div className="combat-heading"><div><span className="eyebrow">Scripted scenario engine</span><h2>{scenario.title}</h2></div><div className="rules-badge">{activeRuleset.label}</div></div>
-        <section className="scenario-studio">
+        <div className="scenario-editor-bar"><div><span>Encounter setup</span><strong>{scenarioBuilderOpen ? "Choose or revise the training encounter" : "Setup hidden while you play"}</strong></div><button type="button" aria-expanded={scenarioBuilderOpen} onClick={() => setScenarioBuilderOpen((open) => !open)}>{scenarioBuilderOpen ? "Hide setup" : "Edit setup"}</button></div>
+        {scenarioBuilderOpen && <section className="scenario-studio">
           <div className="setup-tabs" aria-label="Scenario setup method">{(Object.keys(setupModeCopy) as ScenarioSetupMode[]).map((mode) => <button key={mode} type="button" className={setupMode === mode ? "active" : ""} onClick={() => setSetupMode(mode)}><strong>{setupModeCopy[mode].label}</strong><small>{setupModeCopy[mode].detail}</small></button>)}</div>
           <label><input type="checkbox" checked={doorPractice} onChange={event => setDoorPractice(event.target.checked)} /> Include an unlocked practice door beside the starting position</label>
           {setupMode === "templates" ? <div className="template-grid">{[...scenarioTemplates, ...savedTemplates].map((template) => <button type="button" key={template.id} onClick={() => loadTemplate(template)}><span>{template.setup.difficulty}</span><strong>{template.name}</strong><small>{template.description}</small></button>)}</div> : <form className="scenario-builder" onSubmit={buildScenario}>
@@ -914,9 +974,18 @@ export default function Home() {
             </div>}
             <div className="scenario-actions"><button className="generate-button">Build encounter</button><button type="button" className="save-button" onClick={saveTemplate}>Save setup</button></div>
           </form>}
-        </section>
+        </section>}
         <div className="scenario-summary"><div><span>Objective</span><strong>{scenario.objective}</strong></div><div><span>Terrain</span><strong>{scenario.features.join(" · ")}</strong></div><div><span>Difficulty</span><strong>{scenario.difficulty}</strong></div></div>
 
+        {character.id === "surina-daardendrian" && <section className={`surina-play-guide phase-${surinaGuide.phase}`} aria-live="polite">
+          <div className="guide-progress" aria-label={`Surina turn guide, step ${surinaGuide.step} of 4`}>
+            {["Start", "Choose", "Resolve", "Finish"].map((label, index) => <div key={label} className={index + 1 === surinaGuide.step ? "current" : index + 1 < surinaGuide.step ? "complete" : ""}><span>{index + 1}</span><strong>{label}</strong></div>)}
+          </div>
+          <div className="guide-body"><div><span>Surina play guide · Next step</span><h3>{surinaGuide.title}</h3><p>{surinaGuide.detail}</p></div><div className="guide-actions">{surinaGuide.primaryLabel && <button type="button" onClick={followGuidePrimary}>{surinaGuide.primaryLabel}</button>}{surinaGuide.secondaryLabel && <button type="button" className="secondary" onClick={followGuideSecondary}>{surinaGuide.secondaryLabel}</button>}</div></div>
+          <div className="guide-vitals"><span><b>{playerCombatant.hitPoints.current}/{playerCombatant.hitPoints.maximum}</b> HP</span><span><b>{playerArmorClass}</b> AC</span><span><b>{encounter.turn.movementRemaining} ft.</b> movement</span><span><b>{encounter.turn.action ? "Ready" : "Used"}</b> Action</span><span><b>{playerCombatant.reactionAvailable ? "Ready" : "Used"}</b> Reaction</span></div>
+        </section>}
+
+        <div className="guided-response-stack" data-guided-step="true">
         {encounter.pendingResponse?.type === "point-hazard-save" && <section className="roll-coach" aria-live="polite"><div><h3>{encounter.pendingResponse.name}</h3><p>Roll your saving throw. Overlapping hazards resolve one at a time, including defensive choices and concentration.</p></div><button type="button" onClick={() => { const r = resolvePointHazardResponse(encounter); finishPlayerResponse(r.encounter, r.summary, r.playerRoll); }}>Roll hazard save</button></section>}
         {grappleEffectsOn(encounter, playerCombatant.id).map(effect => {
           const source = encounter.combatants.find(c => c.id === effect.sourceCombatantId);
@@ -1023,7 +1092,7 @@ export default function Home() {
           <div><span>Start of turn · Death saving throw</span><h3>{activeCombatant.name} is unconscious</h3><p>Roll a <strong>d20</strong> with no modifier. A 10 or higher succeeds; a natural 1 causes two failures; a natural 20 restores 1 HP. Three successes stabilize you and three failures mean death.</p><div className="death-save-track"><span>Successes <strong>{activeCombatant.deathSaves.successes}/3</strong></span><span>Failures <strong>{activeCombatant.deathSaves.failures}/3</strong></span></div></div>
           <button type="button" onClick={rollPendingDeathSave}><small>Roll death save</small><strong>d20</strong></button>
         </section>}
-        {outcome !== "active" && <section className={`combat-outcome ${outcome}`} aria-live="assertive"><span>Encounter complete</span><h3>{outcome === "victory" ? "Victory" : outcome === "stabilized" ? "Your character is stabilized" : "Your character is defeated"}</h3><p>{outcome === "victory" ? "All hostile creatures have been defeated." : outcome === "stabilized" ? "You are unconscious but no longer making death saving throws. This solo scenario ends here." : "Build a new encounter or import another character to try again."}</p></section>}
+        {outcome !== "active" && <section id="encounter-outcome" className={`combat-outcome ${outcome}`} aria-live="assertive"><span>Encounter complete</span><h3>{outcome === "victory" ? "Victory" : outcome === "stabilized" ? "Your character is stabilized" : "Your character is defeated"}</h3><p>{outcome === "victory" ? "All hostile creatures have been defeated." : outcome === "stabilized" ? "You are unconscious but no longer making death saving throws. This solo scenario ends here." : "Build a new encounter or import another character to try again."}</p></section>}
         {initiativeReady && attackFlow?.phase === "target" && <section className="roll-coach target-coach" aria-live="polite">
           <div><span>Weapon selected · Choose target</span><h3>{attackFlow.attack.name}</h3><p>Targets highlighted in gold are within range and line of sight. Long-range targets remain legal and will roll with disadvantage.</p></div>
           <div className="target-count"><strong>{legalAttackTargetIds.size}</strong><small>legal targets</small></div>
@@ -1060,8 +1129,9 @@ export default function Home() {
           <div><span>{spellFlow.critical ? "Critical hit · Double the damage dice" : "Spell hit confirmed · Click to roll damage"}</span><h3>{spellFlow.spell.damage}</h3><p>Roll the spell&apos;s damage separately. The total will be applied to {targetAnalysis.target.name}&apos;s hit points.</p></div>
           <button type="button" onClick={rollSelectedSpellDamage}><small>Roll spell damage</small><strong>{spellFlow.critical ? `Critical · ${spellFlow.spell.damage}` : spellFlow.spell.damage}</strong></button>
         </section>}
+        </div>
 
-        <section className="tactical-map-panel">
+        <section id="tactical-map" className="tactical-map-panel">
           <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span><span className="legend-flame">Flame</span></div></div>
           <div className={`target-panel ${targetAnalysis ? "has-target" : ""}`}>
             {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} · AC {effectiveArmorClass(encounter, targetAnalysis.target.id)} · {targetAnalysis.target.side === "enemy" ? enemyHealthLabel(targetAnalysis.target, experienceMode) : `${targetAnalysis.target.hitPoints.current}/${targetAnalysis.target.hitPoints.maximum} HP`}</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" disabled={activeCombatant.side !== "player"} onClick={() => { setEncounter((state) => selectTarget(state, null)); setAttackFlow(attackFlow ? { ...attackFlow, phase: "target", targetId: undefined } : null); setSpellFlow(spellFlow ? { ...spellFlow, phase: "target", targetId: undefined } : null); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>{attackFlow?.phase === "target" ? `Targeting · ${attackFlow.attack.name}` : spellFlow?.phase === "target" ? `Targeting · ${spellFlow.spell.name}` : "Choose an action"}</span><strong>{attackFlow?.phase === "target" || spellFlow?.phase === "target" ? "Select a highlighted creature" : "Choose an attack or spell first"}</strong><small>{attackFlow?.phase === "target" ? "Gold rings indicate targets within this weapon’s range and line of sight." : spellFlow?.phase === "target" ? "Gold rings indicate legal targets for the selected spell." : "The selected option determines which targets ADaM highlights."}</small></div>}
@@ -1105,7 +1175,7 @@ export default function Home() {
           <div className="effect-tracker"><div><span className="eyebrow">Derived statistics</span><h3>Active effects</h3>{encounter.effects.some((effect) => effect.concentration && effect.sourceCombatantId === playerCombatant.id) && <button type="button" onClick={releaseConcentration}>End concentration · No Action</button>}{encounter.effects.some((effect) => effect.sourceCombatantId === playerCombatant.id && effect.modifiers.rageExtension) && <button type="button" onClick={extendRageNow}>Extend Rage · Bonus Action</button>}{encounter.effects.some((effect) => effect.sourceCombatantId === playerCombatant.id && effect.senseMagic) && <button type="button" onClick={inspectMagicAuras}>Reveal magic auras · Action</button>}</div><div className="effect-pills">{playerEffects.length ? playerEffects.map((effect) => { const remaining = remainingEffectRounds(encounter, effect); return <div key={effect.id}><span>{effect.concentration ? "Concentration" : remaining === 1 ? "Until next turn" : remaining === null ? "Ongoing" : `${remaining} rounds`}</span><strong>{effect.name}</strong><small>{effect.sense ? `Live sense: ${creatureSenseSnapshot(encounter, playerCombatant.id).summary}` : effect.description}</small>{effect.modifiers.size === "large" && <button type="button" onClick={() => endLargeForm(effect.id)}>End Large Form · No Action</button>}</div>; }) : <p>Base statistics only; no temporary modifiers are active.</p>}</div></div>
         </section>
 
-        <section className="action-console">
+        <section id="action-console" className="action-console">
           <div className="console-heading"><div><span className="eyebrow">{modeCopy[experienceMode].label} mode</span><h3>{targetAnalysis ? `Actions against ${targetAnalysis.target.name}` : "Choose your action"}</h3></div>{lastRoll && <div className="mini-roll"><span>Last roll</span><strong>{lastRoll.total}</strong></div>}</div>
           <div className="action-category-tabs" aria-label="Action economy categories">{actionCategoryCopy.map((category) => {
             const actions = visibleActions.filter((action) => action.cost === category.id);
