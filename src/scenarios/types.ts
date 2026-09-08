@@ -19,6 +19,8 @@ export type GridTerrainCell = {
   label: string;
   divineAura?: "consecrated" | "desecrated";
   magicAura?: string;
+  magicBarrier?: { material: "stone" | "dirt" | "wood" | "metal" | "lead"; thicknessInches: number };
+  looseObject?: { unsecured: true };
   flame?: { lit: boolean; controlled: boolean };
 };
 

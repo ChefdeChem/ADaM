@@ -44,8 +44,8 @@ test("the prior ten-mechanic slice remains executable at the current milestone",
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
   assert.equal(reports.reduce((total, report) => total + report.executable, 0), 99);
   const expected = [
-    ["cleira-oestwilde", "spell", "detect-magic", "srd-5.1"],
-    ["cleira-oestwilde", "spell", "thunderwave", "srd-5.1"],
+    ["cleira-oestwilde", "spell", "detect-magic", "srd-5.2.1"],
+    ["cleira-oestwilde", "spell", "thunderwave", "srd-5.2.1"],
     ["cleira-oestwilde", "feature", "keen-senses", "srd-5.1"],
     ["surina-daardendrian", "feature", "breath-weapon-gold", "srd-5.1"],
     ["irven-weber", "spell", "burning-hands", "srd-5.2.1"],

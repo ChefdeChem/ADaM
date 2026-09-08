@@ -3,6 +3,22 @@ import { applyDamageToCombatant } from "./combat-options";
 import { rollD20, rollDamage } from "./dice";
 import { effectHasStarted, effectiveDamageAmount, effectiveSavingThrowModifier, removeEffect, savingThrowRollMode } from "./effects";
 import { queueConcentrationCheck } from "./defensive-responses";
+import type { TurnStartEffectContinuation } from "../domain/combat";
+
+export function resumeTurnStartEffect(encounter: EncounterState, continuation: TurnStartEffectContinuation, random = Math.random): EncounterState {
+  const effect = encounter.effects.find((candidate) => candidate.id === continuation.effectId);
+  const target = encounter.combatants.find((combatant) => combatant.id === continuation.combatantId);
+  let next: EncounterState = { ...encounter, pendingResponse: null };
+  if (!effect || !target) return next;
+  if (effect.turnStartSave) {
+    const modifier = effectiveSavingThrowModifier(next, target.id, effect.turnStartSave.ability);
+    const save = rollD20({ mode: savingThrowRollMode(next, target.id, undefined, "normal", effect.turnStartSave.ability), modifier, random });
+    const succeeded = save.total >= effect.turnStartSave.dc;
+    next = { ...next, log: [`${target.name} rolls ${save.total} against ${effect.name}'s DC ${effect.turnStartSave.dc} ${effect.turnStartSave.ability} save and ${succeeded ? "succeeds" : "fails"}.`, ...next.log] };
+    if (succeeded && effect.turnStartSave.endsOnSuccess) next = removeEffect(next, effect.id, "the saving throw succeeded");
+  }
+  return continuation.damageTaken > 0 ? queueConcentrationCheck(next, target.id, continuation.damageTaken) : next;
+}
 
 export function resolveTurnStartEffects(encounter: EncounterState, combatantId: string, random = Math.random): EncounterState {
   const target = encounter.combatants.find((combatant) => combatant.id === combatantId);
@@ -34,21 +50,13 @@ export function resolveTurnStartEffects(encounter: EncounterState, combatantId: 
         sourceCombatantId: effect.sourceCombatantId,
       });
       next = { ...next, log: [`${effect.name} deals ${applied} ${damageRoll.formula.damageType} damage to ${target.name}.`, ...next.log] };
-      const updatedTarget = next.combatants.find((combatant) => combatant.id === combatantId);
-      if (!updatedTarget || updatedTarget.hitPoints.current <= 0 || next.pendingResponse) continue;
+      if (next.pendingResponse?.type === "damage-reduction-reaction" || next.pendingResponse?.type === "zero-hit-point-replacement") {
+        const turnStartContinuation = { effectId: effect.id, combatantId, damageTaken: applied };
+        return { ...next, pendingResponse: { ...next.pendingResponse, turnStartContinuation } };
+      }
     }
 
-    if (effect.turnStartSave) {
-      const modifier = effectiveSavingThrowModifier(next, combatantId, effect.turnStartSave.ability);
-      const save = rollD20({ mode: savingThrowRollMode(next, combatantId, undefined, "normal", effect.turnStartSave.ability), modifier, random });
-      const succeeded = save.total >= effect.turnStartSave.dc;
-      next = {
-        ...next,
-        log: [`${target.name} rolls ${save.total} against ${effect.name}'s DC ${effect.turnStartSave.dc} ${effect.turnStartSave.ability} save and ${succeeded ? "succeeds" : "fails"}.`, ...next.log],
-      };
-      if (succeeded && effect.turnStartSave.endsOnSuccess) next = removeEffect(next, effect.id, "the saving throw succeeded");
-    }
-    if (damageApplied > 0 && !next.pendingResponse) next = queueConcentrationCheck(next, combatantId, damageApplied);
+    if (effect.turnStartSave || damageApplied > 0) next = resumeTurnStartEffect(next, { effectId: effect.id, combatantId, damageTaken: damageApplied }, random);
   }
   return next;
 }

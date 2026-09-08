@@ -139,8 +139,8 @@ test("concentration DC follows the caster edition, and persisted incapacitation 
 test("coverage distinguishes descriptive Control Flames and keeps unfinished mechanics partial", () => {
   const reports = BUILT_IN_CHARACTERS.map(buildCharacterMechanicCoverage);
   const sum = (key) => reports.reduce((n, r) => n + r.supportSummary[key], 0);
-  assert.equal(sum("fullySupported"), 85);
-  assert.equal(sum("partial"), 13);
+  assert.equal(sum("fullySupported"), 95);
+  assert.equal(sum("partial"), 3);
   assert.equal(sum("descriptive"), 1);
   assert.equal(sum("needsReview"), 0);
   assert.equal(reports.reduce((n, r) => n + r.total, 0), 99);

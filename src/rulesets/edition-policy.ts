@@ -46,6 +46,8 @@ export function playableCharacter(source: Character): { character: Character; as
   const notes: string[] = [];
   if (assessment.edition !== "dnd-2024") notes.push("Character features and resources follow the imported build. Combat defaults to 2024; edition differences can affect play. No character conversion is performed.");
   if (assessment.edition === "uncertain" || assessment.edition === "mixed") notes.push("The source edition cannot be established confidently. Existing features are retained; missing features and player choices are not invented.");
+  const unownedMasteryLabels = (source.attacks ?? []).filter((attack) => attack.masteryOwnership === "not-granted" && /\b(graze|nick|push|sap|slow|topple|vex)\b/i.test(attack.description ?? ""));
+  if (unownedMasteryLabels.length) notes.push(`Weapon Mastery: ${unownedMasteryLabels.map((attack) => attack.name).join(", ")} ${unownedMasteryLabels.length === 1 ? "shows" : "show"} a printed mastery property, but the verified character build does not grant mastery for ${unownedMasteryLabels.length === 1 ? "that weapon" : "those weapons"}. No mastery rider is applied.`);
   const featureActions = source.featureActions?.map((feature): CharacterFeatureAction => {
     if (source.id === "surina-daardendrian" && source.level === 1 && feature.id === "breath-weapon-gold" && feature.resolution.type === "area-saving-throw") {
       notes.push("Breath Weapon: the source build retains its one-use Short Rest pool. Current resolution uses 1d10 fire damage and a choice of 15-foot Cone or 30-foot Line. At level one it replaces your sole attack, using your Action. No Extra Attack or additional resource uses are granted.");

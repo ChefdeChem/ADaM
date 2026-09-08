@@ -86,7 +86,7 @@ export const surinaDaardendrian: Character = {
     provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Lay on Hands" },
   }],
   attacks: [
-    { id: "glaive", name: "Glaive", kind: "melee", attackBonus: 5, damage: "1d10 + 3 slashing", normalRangeFeet: 10, description: "Martial, heavy, reach, two-handed, Graze." },
+    { id: "glaive", name: "Glaive", kind: "melee", attackBonus: 5, damage: "1d10 + 3 slashing", normalRangeFeet: 10, description: "Martial, heavy, reach, two-handed, Graze.", masteryOwnership: "not-granted" },
     { id: "longsword", name: "Longsword", kind: "melee", attackBonus: 5, damage: "1d8 + 3 slashing", normalRangeFeet: 5, description: "Carried martial weapon; one-handed damage." },
     { id: "javelin", name: "Javelin", kind: "melee", attackBonus: 5, damage: "1d6 + 3 piercing", normalRangeFeet: 5, description: "Carried simple melee weapon." },
     { id: "thrown-javelin", name: "Thrown Javelin", kind: "ranged", attackBonus: 5, damage: "1d6 + 3 piercing", normalRangeFeet: 30, longRangeFeet: 120, description: "Normal to 30 feet; disadvantage from 35 to 120 feet." },
@@ -195,7 +195,6 @@ export const goliathBarbarian: Character = {
     resourceName: "Large Form",
     resourceCost: 1,
     resolution: { type: "activate-large-form", minimumLevel: 5, durationRounds: 100, speedBonusFeet: 10, strengthCheckAdvantage: true, requiresLargeSpace: true },
-    missingCapabilities: ["Target range and area inclusion still use anchor cells; squeezing is not modeled."],
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Large Form" },
   }],
   triggeredFeatures: [{
@@ -308,7 +307,7 @@ export const irvenWeber: Character = {
   }],
   attacks: [
     { id: "longsword", name: "Longsword", kind: "melee", attackBonus: 4, damage: "1d8 + 2 slashing", normalRangeFeet: 5, description: "Martial, versatile, Sap; one-handed damage.", mastery: "sap" },
-    { id: "quarterstaff", name: "Quarterstaff", kind: "melee", attackBonus: 4, damage: "1d6 + 2 bludgeoning", normalRangeFeet: 5, description: "Simple, versatile, Topple; one-handed damage." },
+    { id: "quarterstaff", name: "Quarterstaff", kind: "melee", attackBonus: 4, damage: "1d6 + 2 bludgeoning", normalRangeFeet: 5, description: "Simple, versatile, Topple; one-handed damage.", masteryOwnership: "not-granted" },
     { id: "javelin", name: "Javelin", kind: "melee", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 5, description: "Simple, thrown, Slow.", mastery: "slow" },
     { id: "thrown-javelin", name: "Thrown Javelin", kind: "ranged", attackBonus: 4, damage: "1d6 + 2 piercing", normalRangeFeet: 30, longRangeFeet: 120, description: "Normal to 30 feet; disadvantage from 35 to 120 feet. Slow.", mastery: "slow" },
     { id: "unarmed-strike", name: "Unarmed Strike", kind: "melee", attackBonus: 4, damage: "3 bludgeoning", normalRangeFeet: 5, description: "Fixed damage shown on the source sheet." },
@@ -318,7 +317,7 @@ export const irvenWeber: Character = {
     { id: "control-flames", name: "Control Flames", level: 0, castingTime: "action", rangeFeet: 60, target: "point", requiresLineOfSight: true, description: "Select and manipulate a registered nonmagical flame in a 5-foot cube.", missingCapabilities: ["The player-defined outcome remains descriptive because the imported sheet does not contain the spell's non-SRD option text."], utilityChoices: [
       { id: "control", name: "Manipulate flame", description: "Select an active nonmagical flame within range and record it as controlled.", resolution: { type: "flame", operation: "control" } },
     ], provenance: { rulesetId: "dnd-2024", sourceId: "user-imported", sourceReference: "Warforged Paladin.pdf, Control Flames" } },
-    { id: "searing-smite", name: "Searing Smite", level: 1, castingTime: "bonus-action", rangeFeet: 0, target: "self", requiresLineOfSight: false, trigger: "after-melee-hit", triggeredDamage: "1d6 fire", durationRounds: 10, missingCapabilities: ["Turn-start damage/save continuation across defensive prompts and higher-level casting remain incomplete."], description: "Immediately after a melee weapon or Unarmed Strike hit, deal extra fire damage and ignite the target until it succeeds on a Constitution save.", effect: { name: "Searing Smite", description: "At the start of each turn, the target takes 1d6 fire damage and then makes a DC 12 Constitution save, ending the spell on a success.", turnStartDamage: "1d6 fire", turnStartSave: { ability: "constitution", dc: 12, endsOnSuccess: true } }, provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Searing Smite" } },
+    { id: "searing-smite", name: "Searing Smite", level: 1, school: "evocation", castingTime: "bonus-action", rangeFeet: 0, target: "self", requiresLineOfSight: false, trigger: "after-melee-hit", triggeredDamage: "1d6 fire", upcastDamagePerSlot: "1d6 fire", durationRounds: 10, description: "Immediately after a melee weapon or Unarmed Strike hit, deal extra fire damage and ignite the target until it succeeds on a Constitution save.", effect: { name: "Searing Smite", description: "At the start of each turn, the target takes fire damage and then makes a DC 12 Constitution save, ending the spell on a success.", turnStartDamage: "1d6 fire", turnStartSave: { ability: "constitution", dc: 12, endsOnSuccess: true } }, provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Searing Smite, pp. 159-160" } },
     { id: "heroism", name: "Heroism", level: 1, castingTime: "action", rangeFeet: 5, target: "self-or-single", targetSide: "friendly", requiresLineOfSight: true, concentration: true, durationRounds: 10, description: "A willing creature is immune to the Frightened condition and gains temporary hit points at the start of each turn.", effect: { name: "Heroism", description: "The target is immune to Frightened and gains 2 temporary hit points at the start of each turn.", applyTo: "target", modifiers: { conditionImmunities: ["frightened"] }, turnStartTemporaryHitPoints: 2 }, provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Heroism" } },
     { id: "burning-hands", name: "Burning Hands", level: 1, castingTime: "action", rangeFeet: 0, target: "area", targetSide: "hostile", requiresLineOfSight: false, damage: "3d6 fire", save: { ability: "dexterity", dc: 12, damageOnSuccess: "half" }, freeCastResourceName: "Magic Initiate Free Cast", area: { origin: "self", shape: "cone", sizeFeet: 15, affects: "all-creatures" }, description: "Aim a 15-foot cone through a selected creature. Each creature in it makes a DC 12 Dexterity save; choose the free Magic Initiate cast or a spell slot.", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Burning Hands" } },
   ],
@@ -434,9 +433,9 @@ export const pharos: Character = {
     provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Orc: Relentless Endurance" },
   }],
   attacks: [
-    { id: "club", name: "Club", kind: "melee", attackBonus: 1, damage: "1d4 - 1 bludgeoning", normalRangeFeet: 5, description: "Simple, light, Slow." },
-    { id: "light-crossbow", name: "Light Crossbow", kind: "ranged", attackBonus: 3, damage: "1d8 + 1 piercing", normalRangeFeet: 80, longRangeFeet: 320, description: "Simple, ammunition, loading, two-handed, Slow." },
-    { id: "dagger", name: "Dagger", kind: "melee", attackBonus: 3, damage: "1d4 + 1 piercing", normalRangeFeet: 5, description: "Simple, finesse, light, Nick." },
+    { id: "club", name: "Club", kind: "melee", attackBonus: 1, damage: "1d4 - 1 bludgeoning", normalRangeFeet: 5, description: "Simple, light, Slow.", masteryOwnership: "not-granted" },
+    { id: "light-crossbow", name: "Light Crossbow", kind: "ranged", attackBonus: 3, damage: "1d8 + 1 piercing", normalRangeFeet: 80, longRangeFeet: 320, description: "Simple, ammunition, loading, two-handed, Slow.", masteryOwnership: "not-granted" },
+    { id: "dagger", name: "Dagger", kind: "melee", attackBonus: 3, damage: "1d4 + 1 piercing", normalRangeFeet: 5, description: "Simple, finesse, light, Nick.", masteryOwnership: "not-granted" },
     { id: "thrown-dagger", name: "Thrown Dagger", kind: "ranged", attackBonus: 3, damage: "1d4 + 1 piercing", normalRangeFeet: 20, longRangeFeet: 60, description: "Normal to 20 feet; disadvantage from 25 to 60 feet." },
     { id: "unarmed-strike", name: "Unarmed Strike", kind: "melee", attackBonus: 1, damage: "0 bludgeoning", normalRangeFeet: 5, description: "Fixed damage shown on the source sheet." },
   ],

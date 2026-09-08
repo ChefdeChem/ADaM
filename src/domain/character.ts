@@ -31,6 +31,8 @@ export type CharacterAttack = {
   description?: string;
   ability?: AbilityName;
   mastery?: "sap" | "slow" | "topple";
+  /** A printed weapon mastery property is not itself a character mastery grant. */
+  masteryOwnership?: "granted" | "not-granted" | "uncertain";
   requiresTwoHands?: boolean;
   masteryProvenance?: MechanicProvenance;
 };
@@ -39,6 +41,7 @@ export type CharacterSpell = {
   id: string;
   name: string;
   level: number;
+  school?: "abjuration" | "conjuration" | "divination" | "enchantment" | "evocation" | "illusion" | "necromancy" | "transmutation";
   castingTime: "action" | "bonus-action" | "reaction";
   rangeFeet: number;
   target: "self" | "single" | "self-or-single" | "area" | "point";
@@ -68,6 +71,7 @@ export type CharacterSpell = {
   };
   trigger?: "after-melee-hit";
   triggeredDamage?: string;
+  upcastDamagePerSlot?: string;
   onHitEffect?: {
     preventsHealing?: boolean;
     undeadTargetDisadvantageAgainstCaster?: boolean;

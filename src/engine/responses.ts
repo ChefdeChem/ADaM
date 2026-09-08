@@ -4,9 +4,10 @@ import { applyDamageToCombatant, resolveAttackDamage, resolveReactionAttackRoll 
 import { rollD20, rollDamage, type D20Result, type DamageRoll } from "./dice";
 import { applyEffect, effectiveDamageAmount, effectiveSavingThrowModifier, effectiveSpeed, endConcentration } from "./effects";
 import { queueConcentrationCheck } from "./defensive-responses";
-import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
+import { availableSpellSlotLevels, spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { resumeMovementContinuation } from "./movement";
 import { canCastSpells, isIncapacitated, reconcileConcentration, savingThrowRollMode } from "./effects";
+import { resumeTurnStartEffect } from "./turn-effects";
 
 export { queueConcentrationCheck } from "./defensive-responses";
 
@@ -17,7 +18,15 @@ export type PlayerResponseResolution = {
   summary: string;
 };
 
-export function resolvePostHitSpellChoice(encounter: EncounterState, castSpell: boolean, random = Math.random): PlayerResponseResolution {
+function scaledDamageFormula(base: string, increase: string | undefined, levels: number): string {
+  if (!increase || levels <= 0) return base;
+  const baseMatch = base.match(/^(\d+)d(\d+)(.*)$/i);
+  const increaseMatch = increase.match(/^(\d+)d(\d+)/i);
+  if (!baseMatch || !increaseMatch || baseMatch[2] !== increaseMatch[2]) return base;
+  return `${Number(baseMatch[1]) + Number(increaseMatch[1]) * levels}d${baseMatch[2]}${baseMatch[3]}`;
+}
+
+export function resolvePostHitSpellChoice(encounter: EncounterState, castSpell: boolean, random = Math.random, options: { slotLevel?: number } = {}): PlayerResponseResolution {
   const pending = encounter.pendingResponse;
   if (!pending || pending.type !== "post-hit-spell-choice") return { encounter, playerRoll: null, damageRoll: null, summary: "No post-hit spell choice is pending." };
   const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId);
@@ -30,11 +39,16 @@ export function resolvePostHitSpellChoice(encounter: EncounterState, castSpell: 
   }
   if (!encounter.turn.bonusAction) return { encounter, playerRoll: null, damageRoll: null, summary: `${source.name}'s Bonus Action is unavailable.` };
   if (!canCastSpells(encounter, source.id)) return { encounter, playerRoll: null, damageRoll: null, summary: `${source.name} cannot cast spells right now.` };
-  const slot = validateSpellSlot(encounter, source.id, spell.level);
+  const availableLevels = availableSpellSlotLevels(encounter, source.id, spell.level);
+  const slotLevel = options.slotLevel ?? availableLevels[0] ?? spell.level;
+  const slot = validateSpellSlot(encounter, source.id, slotLevel);
+  if (slotLevel < spell.level) return { encounter, playerRoll: null, damageRoll: null, summary: `${spell.name} requires a level ${spell.level} or higher spell slot.` };
   if (!slot.legal) return { encounter, playerRoll: null, damageRoll: null, summary: slot.reason ?? `${spell.name} is unavailable.` };
-  const damageRoll = spell.triggeredDamage ? rollDamage(spell.triggeredDamage, { critical: pending.critical, random }) : null;
+  const upcastLevels = slotLevel - spell.level;
+  const immediateFormula = spell.triggeredDamage ? scaledDamageFormula(spell.triggeredDamage, spell.upcastDamagePerSlot, upcastLevels) : undefined;
+  const damageRoll = immediateFormula ? rollDamage(immediateFormula, { critical: pending.critical, random }) : null;
   if (!damageRoll) return { encounter, playerRoll: null, damageRoll: null, summary: `ADaM could not read ${spell.name}'s damage formula.` };
-  let next = spendSpellSlot({ ...encounter, pendingResponse: null }, source.id, spell.level);
+  let next = spendSpellSlot({ ...encounter, pendingResponse: null }, source.id, slotLevel);
   next = { ...next, turn: { ...next.turn, bonusAction: false } };
   const damageApplied = effectiveDamageAmount(next, target.id, damageRoll.total, damageRoll.formula.damageType);
   next = applyDamageToCombatant(next, target.id, damageRoll.total, { damageType: damageRoll.formula.damageType, sourceCombatantId: source.id });
@@ -42,6 +56,8 @@ export function resolvePostHitSpellChoice(encounter: EncounterState, castSpell: 
   if (spell.effect) {
     next = applyEffect(next, {
       ...spell.effect,
+      turnStartDamage: spell.effect.turnStartDamage ? scaledDamageFormula(spell.effect.turnStartDamage, spell.upcastDamagePerSlot, upcastLevels) : undefined,
+      magicSchool: spell.school,
       magical: true,
       sourceCombatantId: source.id,
       targetCombatantId: target.id,
@@ -50,7 +66,7 @@ export function resolvePostHitSpellChoice(encounter: EncounterState, castSpell: 
       replaceExisting: true,
     });
   }
-  const summary = `${source.name} casts ${spell.name} after the ${pending.attackName} hit, dealing ${damageApplied} ${damageRoll.formula.damageType} damage${pending.critical ? " with doubled damage dice" : ""}.`;
+  const summary = `${source.name} casts ${spell.name} with a level ${slotLevel} slot after the ${pending.attackName} hit, dealing ${damageApplied} ${damageRoll.formula.damageType} damage${pending.critical ? " with doubled damage dice" : ""}.`;
   next = { ...next, log: [summary, ...next.log] };
   return { encounter: next, playerRoll: null, damageRoll, summary };
 }
@@ -85,7 +101,13 @@ export function resolveDamageReductionReaction(encounter: EncounterState, useFea
   if (next.pendingResponse?.type === "zero-hit-point-replacement" && pending.continuation) {
     next = { ...next, pendingResponse: { ...next.pendingResponse, continuation: pending.continuation } };
   }
+  if (next.pendingResponse?.type === "zero-hit-point-replacement" && pending.turnStartContinuation) {
+    next = { ...next, pendingResponse: { ...next.pendingResponse, turnStartContinuation: { ...pending.turnStartContinuation, damageTaken: damageApplied } } };
+  }
   next = { ...next, log: [summary, ...next.log] };
+  if (!next.pendingResponse && pending.turnStartContinuation) {
+    next = resumeTurnStartEffect(next, { ...pending.turnStartContinuation, damageTaken: damageApplied }, random);
+  }
   if (!next.pendingResponse) next = queueConcentrationCheck(next, target.id, damageApplied, pending.continuation);
   const updatedTarget = next.combatants.find((combatant) => combatant.id === target.id);
   if (!next.pendingResponse && pending.continuation && (updatedTarget?.hitPoints.current ?? 0) > 0) {
@@ -125,7 +147,9 @@ export function resolveZeroHitPointReplacement(encounter: EncounterState, useFea
     };
     summary = `${target.name} uses ${feature.name}, spends one use, and drops to 1 HP instead of 0.`;
     next = { ...next, log: [summary, ...next.log] };
-    next = queueConcentrationCheck(next, target.id, pending.damageTaken, pending.continuation);
+    next = pending.turnStartContinuation
+      ? resumeTurnStartEffect(next, pending.turnStartContinuation, random)
+      : queueConcentrationCheck(next, target.id, pending.damageTaken, pending.continuation);
     if (!next.pendingResponse && pending.continuation) {
       const resumed = resumeMovementContinuation(next, pending.continuation, random);
       return { encounter: resumed.encounter, playerRoll: null, damageRoll: resumed.damageRoll, summary: `${summary} ${resumed.reason}` };
@@ -135,7 +159,9 @@ export function resolveZeroHitPointReplacement(encounter: EncounterState, useFea
 
   summary = `${target.name} declines ${feature.name} and falls unconscious at 0 HP.`;
   next = { ...next, log: [summary, ...next.log] };
-  next = queueConcentrationCheck(next, target.id, pending.damageTaken);
+  next = pending.turnStartContinuation
+    ? resumeTurnStartEffect(next, pending.turnStartContinuation, random)
+    : queueConcentrationCheck(next, target.id, pending.damageTaken);
   return { encounter: next, playerRoll: null, damageRoll: null, summary };
 }
 

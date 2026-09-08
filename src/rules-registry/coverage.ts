@@ -52,7 +52,8 @@ function entry(
 }
 
 function attackEntry(character: Character, attack: CharacterAttack): RuleRegistryEntry {
-  const hasUnresolvedRider = (masteryPattern.test(attack.description ?? "") && !attack.mastery) || unresolvedPattern.test(attack.description ?? "");
+  const masteryLabelWithoutAudit = masteryPattern.test(attack.description ?? "") && !attack.mastery && attack.masteryOwnership !== "not-granted";
+  const hasUnresolvedRider = masteryLabelWithoutAudit || attack.masteryOwnership === "uncertain" || unresolvedPattern.test(attack.description ?? "");
   const components: MechanicComponent[] = ["targeting", "range", "attack-roll", "damage-roll"];
   if (attack.mastery === "sap") components.push("trigger", "duration");
   if (attack.mastery === "slow") components.push("trigger", "movement", "duration");

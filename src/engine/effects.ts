@@ -29,6 +29,7 @@ export type EffectInput = {
   revealsSourceOnEnd?: boolean;
   sense?: ActiveEffect["sense"];
   senseMagic?: ActiveEffect["senseMagic"];
+  magicSchool?: ActiveEffect["magicSchool"];
   rollBonus?: ActiveEffect["rollBonus"];
   consumeOnRollBonus?: boolean;
   points?: ActiveEffect["points"];
@@ -102,6 +103,7 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     revealsSourceOnEnd: input.revealsSourceOnEnd,
     sense: input.sense,
     senseMagic: input.senseMagic,
+    magicSchool: input.magicSchool,
     rollBonus: input.rollBonus,
     consumeOnRollBonus: input.consumeOnRollBonus,
     points: input.points,

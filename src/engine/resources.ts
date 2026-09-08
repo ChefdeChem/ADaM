@@ -102,6 +102,13 @@ export function validateSpellSlot(encounter: EncounterState, combatantId: string
   return { legal: true };
 }
 
+export function availableSpellSlotLevels(encounter: EncounterState, combatantId: string, minimumLevel: number): number[] {
+  return encounter.combatants.find((combatant) => combatant.id === combatantId)?.resources
+    .filter((resource) => resource.kind === "spell-slot" && (resource.level ?? 0) >= minimumLevel && resource.current > 0)
+    .map((resource) => resource.level!)
+    .sort((left, right) => left - right) ?? [];
+}
+
 export function spendSpellSlot(encounter: EncounterState, combatantId: string, level: number): EncounterState {
   if (level === 0 || !validateSpellSlot(encounter, combatantId, level).legal) return encounter;
   return {

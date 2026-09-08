@@ -4,12 +4,13 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import type { AbilityName, Character, CharacterAttack, CharacterEquipmentRule, CharacterFeatureAction, CharacterSpell } from "../src/domain/character";
 import type { ActionCost, CombatAction, ExperienceMode } from "../src/domain/combat";
 import { actionCatalog, consumeAction, findActionFromText, validateAction, visibleActionsForMode } from "../src/engine/actions";
-import { executeSpellChoice, revealDetectMagicAuras, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
+import { executeRitualSpell, executeSpellChoice, revealDetectMagicAuras, resolveAttackDamage, resolveAttackRoll, resolveSpellAttackRoll, resolveSpellDamage, spellCastingResourceOptions, validateAttackChoice, validateAttackTarget, validateSpellAvailability, validateSpellChoice, validateSpellTarget, type SpellCastingResourceChoice } from "../src/engine/combat-options";
 import { effectiveArmorClass, effectiveSavingThrowModifier, effectsForCombatant, remainingEffectRounds, endConcentration, occupiedCells, removeEffect } from "../src/engine/effects";
 import { executeFeatureAction, resumeAreaDamage, extendRageWithBonusAction } from "../src/engine/feature-actions";
 import { endTurn, rollPlayerAndEnemyInitiative } from "../src/engine/encounter";
 import { combatOutcome, enemyHealthLabel, resolveEnemyTurn } from "../src/engine/enemy-turns";
 import { chooseOpportunityAttack, resolveAttackReaction, resolveConcentrationResponse, resolveDamageReductionReaction, resolvePostHitSpellChoice, resolveSavingThrowResponse, resolveWeaponMasteryChoice, resolveZeroHitPointReplacement, rollDeathSave, rollOpportunityAttack, rollOpportunityDamage } from "../src/engine/responses";
+import { availableSpellSlotLevels } from "../src/engine/resources";
 import { legalMovementDestinations, moveActiveCombatant } from "../src/engine/movement";
 import { executeSkillAction, skillActionChoices } from "../src/engine/skill-actions";
 import { hide, help, helpAbility, readyAttack, resolveReadiedAttack, nearbyDoors, interactWithDoor, endHiding, type ReadyAttackTrigger } from "../src/engine/interactions";
@@ -324,8 +325,8 @@ export default function Home() {
     setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : activeCombatant.side === "enemy" ? "resolving" : "idle");
   }
 
-  function choosePostHitSpell(castSpell: boolean) {
-    const result = resolvePostHitSpellChoice(encounter, castSpell);
+  function choosePostHitSpell(castSpell: boolean, slotLevel?: number) {
+    const result = resolvePostHitSpellChoice(encounter, castSpell, Math.random, { slotLevel });
     setEncounter(result.encounter);
     if (result.damageRoll) setLastRoll(result.damageRoll);
     setFeedback(result.summary);
@@ -637,6 +638,13 @@ export default function Home() {
     setFeedback(`You rolled ${result.playerRoll.total}. ADaM rolled initiative for ${result.enemyRolls.length} ${result.enemyRolls.length === 1 ? "enemy" : "enemies"}. ${result.encounter.combatants[0].name} acts first.`);
   }
 
+  function castRitualBeforeInitiative(spell: CharacterSpell) {
+    const result = executeRitualSpell(encounter, spell);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
+  }
+
   function rollSelectedAttack() {
     if (!attackFlow || attackFlow.phase !== "attack-roll") return;
     const result = resolveAttackRoll(encounter, attackFlow.attack);
@@ -921,7 +929,7 @@ export default function Home() {
           </div>
         </section>}
         {!initiativeReady && playerNeedsInitiative && <section className="roll-coach initiative-coach" aria-live="polite">
-          <div><span>Your initiative · Click to roll</span><h3>{playerNeedsInitiative.name}</h3><p>Roll a <strong>d20</strong> and add your initiative modifier ({playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "−"}{Math.abs(playerNeedsInitiative.initiativeModifier)}). ADaM rolls enemy initiative privately and then reveals turn order.</p></div>
+          <div><span>Your initiative · Click to roll</span><h3>{playerNeedsInitiative.name}</h3><p>Roll a <strong>d20</strong> and add your initiative modifier ({playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "−"}{Math.abs(playerNeedsInitiative.initiativeModifier)}). ADaM rolls enemy initiative privately and then reveals turn order.</p>{playerNeedsInitiative.spells.filter((spell) => spell.ritual).map((spell) => <button type="button" key={`ritual-${spell.id}`} onClick={() => castRitualBeforeInitiative(spell)}>Cast {spell.name} as a 10-minute ritual · No slot</button>)}</div>
           <button type="button" onClick={rollInitiative}><small>Roll your initiative</small><strong>d20 {playerNeedsInitiative.initiativeModifier >= 0 ? "+" : "−"} {Math.abs(playerNeedsInitiative.initiativeModifier)}</strong></button>
         </section>}
         {initiativeReady && activeCombatant.side === "enemy" && outcome === "active" && <section className="roll-coach enemy-coach" aria-live="polite">
@@ -1001,8 +1009,9 @@ export default function Home() {
           const source = encounter.combatants.find((combatant) => combatant.id === pending.sourceCombatantId)!;
           const target = encounter.combatants.find((combatant) => combatant.id === pending.targetCombatantId)!;
           const spell = source.spells.find((candidate) => candidate.id === pending.spellId)!;
+          const slotLevels = availableSpellSlotLevels(encounter, source.id, spell.level);
           return <section className="roll-coach response-coach reaction-coach" aria-live="assertive">
-            <div><span>Player choice · After a melee hit</span><h3>Cast {spell.name}?</h3><p>{pending.attackName} hit {target.name}. You may spend your Bonus Action and a level {spell.level} spell slot now, or save both resources. The weapon&apos;s damage roll still follows.</p><div className="response-actions"><button type="button" onClick={() => choosePostHitSpell(true)}><small>Bonus Action · Level {spell.level} slot</small><strong>Cast {spell.name}</strong><em>Roll {spell.triggeredDamage}{pending.critical ? " with doubled damage dice" : ""} now.</em></button><button type="button" className="decline-response" onClick={() => choosePostHitSpell(false)}><small>Save resources</small><strong>Skip {spell.name}</strong></button></div></div>
+            <div><span>Player choice · After a melee hit</span><h3>Cast {spell.name}?</h3><p>{pending.attackName} hit {target.name}. Spend your Bonus Action and choose an available spell slot, or save both resources. The weapon&apos;s damage roll still follows.</p><div className="response-actions">{slotLevels.map((level) => <button type="button" key={level} onClick={() => choosePostHitSpell(true, level)}><small>Bonus Action · Level {level} slot</small><strong>Cast {spell.name}</strong><em>{level > spell.level ? `Upcast by ${level - spell.level} level${level - spell.level === 1 ? "" : "s"}. ` : ""}Roll {spell.triggeredDamage}{pending.critical ? " with doubled damage dice" : ""} now.</em></button>)}<button type="button" className="decline-response" onClick={() => choosePostHitSpell(false)}><small>Save resources</small><strong>Skip {spell.name}</strong></button></div></div>
           </section>;
         })()}
         {deathSaveRequired && encounter.turn.action && <section className="roll-coach response-coach death-save-coach" aria-live="assertive">

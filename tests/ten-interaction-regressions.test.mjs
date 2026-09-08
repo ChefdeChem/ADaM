@@ -161,8 +161,8 @@ test("Searing Smite: recurring Constitution save honors disadvantage", () => {
 test("coverage audit separates known gaps from executable paths", () => {
   const reports = BUILT_IN_CHARACTERS.map(buildCharacterMechanicCoverage);
   const sum = (key) => reports.reduce((n,r) => n+r.supportSummary[key],0);
-  assert.equal(sum("fullySupported"), 85);
-  assert.equal(sum("partial"), 13);
+  assert.equal(sum("fullySupported"), 95);
+  assert.equal(sum("partial"), 3);
   assert.equal(sum("descriptive"), 1);
   assert.equal(reports.reduce((n,r) => n+r.total,0), 99);
 });

@@ -3,11 +3,11 @@ import type { CharacterAttack, CharacterSpell } from "../domain/character";
 import type { EncounterState } from "../domain/combat";
 import { rollD20, rollDamage, type D20Result, type DamageRoll, type RollMode } from "./dice";
 import { activeWeaponDamageBonus, applyEffect, canHarmTarget, canRegainHitPoints, canSeeCombatant, isIncapacitated, consumeAttackRollEffects, effectiveArmorClass, effectiveAttackModifier, effectiveDamageAmount, effectiveSavingThrowModifier, endEffectsBrokenByHarm, extendRage, nextTurnRound, outgoingAttackRollMode, savingThrowRollMode } from "./effects";
-import { spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
+import { availableSpellSlotLevels, spendNamedResource, spendSpellSlot, validateNamedResource, validateSpellSlot } from "./resources";
 import { attackInventoryAvailable, consumeAttackInventory } from "./inventory";
 import { validateWeaponHands, drawWeaponForAttack } from "./weapon-hands";
-import { analyzeTarget, gridDistanceFeet, hasLineOfSightToPoint } from "./targeting";
-import { areaTargets, pushTargetAway, validateAreaAim } from "./areas";
+import { analyzeTarget, gridDistanceFeet, hasLineOfSightToPoint, lineCellsBetween } from "./targeting";
+import { areaTargets, pushLooseObjectsInArea, pushTargetAway, validateAreaAim } from "./areas";
 import { canCastSpells, effectHasStarted, reconcileConcentration } from "./effects";
 
 export type OptionValidation = {
@@ -95,7 +95,7 @@ export function resolveAttackRoll(encounter:EncounterState,attack:CharacterAttac
   }
   if(hit&&attack.kind==="melee"&&active.side==="player"&&!next.pendingResponse){
     const triggeredSpell=active.spells.find((spell)=>spell.trigger==="after-melee-hit"
-      &&validateSpellSlot(next,active.id,spell.level).legal);
+      &&availableSpellSlotLevels(next,active.id,spell.level).length > 0);
     if(triggeredSpell&&next.turn.bonusAction){
       next={...next,pendingResponse:{
         type:"post-hit-spell-choice",
@@ -446,6 +446,7 @@ function applySpellEffect(encounter: EncounterState, spell: CharacterSpell, cast
   return applyEffect(encounter, {
     ...spell.effect,
     magical: true,
+    magicSchool: spell.school,
     sourceCombatantId: casterId,
     targetCombatantId: effectTargetId,
     attackTargetId: spell.effect.attackTarget === "spell-target" ? spellTargetId : undefined,
@@ -457,6 +458,21 @@ function applySpellEffect(encounter: EncounterState, spell: CharacterSpell, cast
     expiresAt: effectExpiration(encounter, spell, casterId, spellTargetId),
     replaceExisting: true,
   });
+}
+
+export function executeRitualSpell(encounter: EncounterState, spell: CharacterSpell): OptionResolution {
+  const caster = encounter.combatants.find((combatant) => combatant.side === "player");
+  if (!caster || !spell.ritual) return { legal: false, reason: `${spell.name} is not available as a ritual.`, encounter };
+  if (encounter.combatants.some((combatant) => combatant.initiativeRolled)) return { legal: false, reason: "A ten-minute ritual must be completed before initiative in this trainer.", encounter };
+  if (encounter.pendingResponse || !canCastSpells(encounter, caster.id)) return { legal: false, reason: "The caster cannot begin a ritual right now.", encounter };
+  let next = applySpellEffect(encounter, spell, caster.id, caster.id);
+  const summary = `${caster.name} casts ${spell.name} as a ten-minute ritual without spending a spell slot.`;
+  next = {
+    ...next,
+    recoveryState: { ...(next.recoveryState ?? { hitDiceRemaining: 0, elapsedMinutes: 0 }), elapsedMinutes: (next.recoveryState?.elapsedMinutes ?? 0) + 10 },
+    log: [summary, ...next.log],
+  };
+  return { legal: true, encounter: next, roll: null, summary };
 }
 
 export function executeSpellChoice(encounter: EncounterState, spell: CharacterSpell, random = Math.random, options: { castingResource?: SpellCastingResourceChoice } = {}): OptionResolution {
@@ -485,6 +501,10 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
   };
   if (spell.target === "area" && spell.area && spell.save && spell.damage) {
     const targets = areaTargets(next, active.id, targetId, spell.area);
+    const looseObjects = spell.name === "Thunderwave"
+      ? pushLooseObjectsInArea(next, active.id, targetId, spell.area, 10)
+      : { encounter: next, moved: 0 };
+    next = looseObjects.encounter;
     const damageRoll = rollDamage(spell.damage, { random });
     if (!damageRoll) return { legal: false, reason: `ADaM could not read the damage formula “${spell.damage}”.`, encounter };
     const results: string[] = [];
@@ -500,7 +520,7 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
       results.push(`${target.name} ${succeeded ? "succeeds" : "fails"} (${saveRoll.total}) and takes ${effectiveDamageAmount(encounter, target.id, damage, damageRoll.formula.damageType)} damage`);
     }
     const sourceCopy = castingResource === "free-cast" ? spell.freeCastResourceName : `a level ${spell.level} slot`;
-    const environmentalCopy = spell.name === "Thunderwave" ? " The thunderous boom is audible to 300 feet, and unsecured objects wholly inside the cube are pushed 10 feet." : "";
+    const environmentalCopy = spell.name === "Thunderwave" ? ` The thunderous boom is audible to 300 feet; ${looseObjects.moved} unsecured object${looseObjects.moved === 1 ? " was" : "s were"} pushed.` : "";
     const summary = `${active.name} casts ${spell.name} using ${sourceCopy}; ${damageRoll.total} ${damageRoll.formula.damageType} rolled. ${results.join(";")}.${environmentalCopy}`;
     return { legal: true, roll: damageRoll, summary, encounter: { ...next, log: [summary, ...next.log] } };
   }
@@ -545,22 +565,40 @@ export function executeSpellChoice(encounter: EncounterState, spell: CharacterSp
   if (roll) next = consumeAttackRollEffects(next, active.id, targetId);
   const slotCopy = spell.level === 0 ? "cantrip" : castingResource === "free-cast" ? spell.freeCastResourceName! : `level ${spell.level} slot`;
   const rollCopy = roll ? ` Attack roll: ${roll.total} (${roll.kept} + ${roll.modifier}).` : "";
+  const magicBlocked = (position: { x: number; y: number }) => magicDetectionBlocked(encounter, active.id, position);
   const detectedMagic = spell.effect?.senseMagic
     ? next.map.terrain.filter((cell) => cell.magicAura
       && Math.max(Math.abs(active.position.x - cell.x), Math.abs(active.position.y - cell.y)) * 5 <= spell.effect!.senseMagic!.rangeFeet
-      && (!spell.effect!.senseMagic!.blockedByTotalCover || hasLineOfSightToPoint(next, active.id, cell.x, cell.y)))
+      && !magicBlocked(cell))
     : [];
   const detectedSpellEffect = spell.effect?.senseMagic && next.effects.some((effect) => {
     if (!effect.magical || effect.senseMagic || !effectHasStarted(next, effect)) return false;
     const target = next.combatants.find((candidate) => candidate.id === effect.targetCombatantId);
     return (effect.points ?? (target ? [target.position] : [])).some((point) => Math.max(Math.abs(active.position.x - point.x), Math.abs(active.position.y - point.y)) * 5 <= spell.effect!.senseMagic!.rangeFeet
-      && (!spell.effect!.senseMagic!.blockedByTotalCover || hasLineOfSightToPoint(next, active.id, point.x, point.y)));
+      && !magicBlocked(point));
   });
   const detectionCopy = spell.effect?.senseMagic
     ? detectedMagic.length || detectedSpellEffect ? " Magic is present within range." : " No registered magic is present within range."
     : "";
   const summary = `${spell.name} cast on ${targetName} using ${slotCopy}.${rollCopy}${detectionCopy}`;
   return { legal: true, roll, summary, encounter: { ...next, log: [`${active.name}: ${summary}`, ...next.log] } };
+}
+
+function magicBarrierBlocks(cell: EncounterState["map"]["terrain"][number]): boolean {
+  if (cell.kind !== "wall") return false;
+  if (!cell.magicBarrier) return true;
+  const { material, thicknessInches } = cell.magicBarrier;
+  if (material === "lead") return thicknessInches > 0;
+  if (material === "metal") return thicknessInches >= 1;
+  return thicknessInches >= 12;
+}
+
+export function magicDetectionBlocked(encounter: EncounterState, combatantId: string, position: { x: number; y: number }): boolean {
+  const actor = encounter.combatants.find((combatant) => combatant.id === combatantId);
+  if (!actor) return true;
+  const width = actor.size === "large" || encounter.effects.some((effect) => effect.targetCombatantId === actor.id && effect.modifiers.size === "large") ? 2 : 1;
+  const origins = Array.from({ length: width * width }, (_, index) => ({ x: actor.position.x + index % width, y: actor.position.y + Math.floor(index / width) }));
+  return origins.every((origin) => lineCellsBetween(origin, position).some((point) => encounter.map.terrain.some((cell) => cell.x === point.x && cell.y === point.y && magicBarrierBlocks(cell))));
 }
 
 export function revealDetectMagicAuras(encounter: EncounterState, combatantId: string): OptionResolution {
@@ -571,14 +609,14 @@ export function revealDetectMagicAuras(encounter: EncounterState, combatantId: s
   if (!encounter.turn.action) return { legal: false, reason: "Revealing magical auras requires an available Action.", encounter };
   const inRange = (position: { x: number; y: number }) => Math.max(Math.abs(actor.position.x - position.x), Math.abs(actor.position.y - position.y)) * 5 <= detectMagic.senseMagic!.rangeFeet;
   const visible = (position: { x: number; y: number }) => !actor.conditions.some((condition) => condition.toLowerCase() === "blinded") && hasLineOfSightToPoint(encounter, combatantId, position.x, position.y);
-  const terrainAuras = encounter.map.terrain.filter((cell) => cell.magicAura && inRange(cell) && visible(cell)).map((cell) => `${cell.magicAura} at ${String.fromCharCode(65 + cell.x)}${cell.y + 1}`);
+  const terrainAuras = encounter.map.terrain.filter((cell) => cell.magicAura && inRange(cell) && !magicDetectionBlocked(encounter, combatantId, cell) && visible(cell)).map((cell) => `${cell.magicAura} at ${String.fromCharCode(65 + cell.x)}${cell.y + 1}`);
   const effectAuras = encounter.effects.filter((effect) => {
     if (effect.id === detectMagic.id || !effect.magical || !effectHasStarted(encounter, effect)) return false;
-    if (effect.points?.length) return effect.points.some((point) => inRange(point) && visible(point));
+    if (effect.points?.length) return effect.points.some((point) => inRange(point) && !magicDetectionBlocked(encounter, combatantId, point) && visible(point));
     const target = encounter.combatants.find((candidate) => candidate.id === effect.targetCombatantId);
-    return Boolean(target && !target.conditions.some((condition) => condition.toLowerCase() === "invisible") && inRange(target.position) && visible(target.position));
+    return Boolean(target && !target.conditions.some((condition) => condition.toLowerCase() === "invisible") && inRange(target.position) && !magicDetectionBlocked(encounter, combatantId, target.position) && visible(target.position));
   })
-    .map((effect) => effect.points?.length ? `${effect.name} at its visible map points` : `${effect.name} on ${encounter.combatants.find((candidate) => candidate.id === effect.targetCombatantId)?.name ?? "a creature"}`);
+    .map((effect) => `${effect.points?.length ? `${effect.name} at its visible map points` : `${effect.name} on ${encounter.combatants.find((candidate) => candidate.id === effect.targetCombatantId)?.name ?? "a creature"}`}${effect.magicSchool ? ` (${effect.magicSchool})` : ""}`);
   const auras = [...terrainAuras, ...effectAuras];
   const summary = `${actor.name} uses an Action to inspect magical auras and detects ${auras.length ? auras.join(", ") : "no visible registered auras"}.`;
   return { legal: true, roll: null, summary, encounter: { ...encounter, turn: { ...encounter.turn, action: false }, log: [summary, ...encounter.log] } };

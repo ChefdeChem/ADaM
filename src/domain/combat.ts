@@ -51,6 +51,12 @@ export type MovementContinuation = {
   destination?: { x: number; y: number };
 };
 
+export type TurnStartEffectContinuation = {
+  effectId: string;
+  combatantId: string;
+  damageTaken: number;
+};
+
 export type CombatResource = {
   id: string;
   name: string;
@@ -147,6 +153,7 @@ export type PendingPlayerResponse =
       damageTaken: number;
       dc: number;
       continuation?: MovementContinuation;
+      turnStartContinuation?: TurnStartEffectContinuation;
     }
   | {
       type: "zero-hit-point-replacement";
@@ -154,6 +161,7 @@ export type PendingPlayerResponse =
       featureId: string;
       damageTaken: number;
       continuation?: MovementContinuation;
+      turnStartContinuation?: TurnStartEffectContinuation;
     }
   | {
       type: "damage-reduction-reaction";
@@ -164,6 +172,7 @@ export type PendingPlayerResponse =
       sourceCombatantId?: string;
       critical: boolean;
       continuation?: MovementContinuation;
+      turnStartContinuation?: TurnStartEffectContinuation;
     }
   | {
       type: "weapon-mastery-choice";
@@ -232,6 +241,7 @@ export type ActiveEffect = {
   revealsSourceOnEnd?: boolean;
   sense?: { creatureTypes: string[]; rangeFeet: number; blockedByTotalCover: boolean };
   senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
+  magicSchool?: import("./character").CharacterSpell["school"];
   rollBonus?: { die: "1d4" | "1d6"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
   consumeOnRollBonus?: boolean;
   points?: Array<{ x: number; y: number }>;
