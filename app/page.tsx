@@ -33,6 +33,7 @@ import { CHARACTER_ROSTER_LIMIT, CHARACTER_ROSTER_SEED_VERSION, mergeBuiltInChar
 import { buildCharacterMechanicCoverage } from "../src/rules-registry";
 import { buildTurnGuidance } from "../src/ui/turn-guidance";
 import { actionCostLabel, quickActionPresentation } from "../src/ui/action-presentation";
+import { buildResolutionReceipt, type ResolutionReceipt } from "../src/ui/resolution-receipt";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
 type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
@@ -188,6 +189,7 @@ export default function Home() {
   const [toolFlow, setToolFlow] = useState<ToolFlow>(null);
   const [enemyTurnPhase, setEnemyTurnPhase] = useState<"idle" | "resolving" | "awaiting-player" | "showing">("idle");
   const [scenarioBuilderOpen, setScenarioBuilderOpen] = useState(true);
+  const [resolutionReceipt, setResolutionReceipt] = useState<ResolutionReceipt | null>(null);
 
   const activeRuleset = rulesets.find((ruleset) => ruleset.id === rulesetId)!;
   const visibleActions = useMemo(
@@ -296,6 +298,7 @@ export default function Home() {
     nextEncounter = resumeAreaDamage(nextEncounter);
     if (nextEncounter.pendingTurnEnd && !nextEncounter.pendingResponse) nextEncounter = endTurn(nextEncounter);
     setEncounter(nextEncounter);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "defense", before: encounter, after: nextEncounter, actorId: playerCombatant.id, summary, concealEnemyHitPoints: experienceMode === "advanced" }));
     if (playerRoll) setLastRoll(playerRoll);
     setFeedback(summary);
     setEnemyTurnPhase(nextEncounter.activeIndex !== encounter.activeIndex ? "idle" : activeCombatant.side === "enemy" ? (nextEncounter.pendingResponse ? "awaiting-player" : nextEncounter.pendingEnemyPath ? "resolving" : "showing") : "idle");
@@ -403,6 +406,7 @@ export default function Home() {
     setFeatureFlow(null);
     setToolFlow(null);
     setEnemyTurnPhase("idle");
+    setResolutionReceipt(null);
     localStorage.setItem("adam-active-character-id", nextCharacter.id);
     setMessage(announcement);
   }
@@ -646,6 +650,7 @@ export default function Home() {
     const result = executeFeatureAction(encounter, featureFlow.feature, { resourceAmount: featureFlow.amount, targetCombatantId: featureFlow.targetId, removePoisoned: featureFlow.removePoisoned, afflictionEffectIds: featureFlow.afflictionEffectIds });
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "lay-on-hands", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
     setFeatureFlow(null);
     setFeedback(result.summary);
   }
@@ -724,6 +729,7 @@ export default function Home() {
     const updatedTarget = result.encounter.combatants.find((combatant) => combatant.id === attackFlow.targetId);
     const healthCopy = updatedTarget?.side === "enemy" && experienceMode !== "advanced" ? ` ${updatedTarget.name}: ${enemyHealthLabel(updatedTarget, experienceMode)}.` : "";
     setFeedback(`${result.summary}${healthCopy}`);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "attack", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.hit ? `${result.summary} Roll damage next.` : `${result.summary}${healthCopy}`, concealEnemyHitPoints: experienceMode === "advanced" }));
     if (result.hit) setAttackFlow({ ...attackFlow, phase: "damage-roll", critical: result.critical });
     else { setAttackFlow(null); setChoiceMode(null); }
   }
@@ -735,6 +741,7 @@ export default function Home() {
     setEncounter(result.encounter);
     setLastRoll(result.roll);
     setFeedback(`${result.summary} You still have ${result.encounter.turn.movementRemaining} feet of movement and may use it before ending your turn.`);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "attack", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary, concealEnemyHitPoints: experienceMode === "advanced" }));
     setAttackFlow(null);
     setChoiceMode(null);
   }
@@ -865,7 +872,10 @@ export default function Home() {
 
   function handleGridMove(x: number, y: number) {
     const result = moveActiveCombatant(encounter, x, y);
-    if (result.legal) setEncounter(result.encounter);
+    if (result.legal) {
+      setEncounter(result.encounter);
+      setResolutionReceipt(buildResolutionReceipt({ kind: "movement", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.reason, concealEnemyHitPoints: experienceMode === "advanced" }));
+    }
     if (result.damageRoll ?? result.attackRoll) setLastRoll(result.damageRoll ?? result.attackRoll);
     setFeedback(result.reason);
   }
@@ -996,6 +1006,12 @@ export default function Home() {
           </div>
           <div className="guide-body"><div><span>Surina play guide · Next step</span><h3>{surinaGuide.title}</h3><p>{surinaGuide.detail}</p></div><div className="guide-actions">{surinaGuide.primaryLabel && <button type="button" onClick={followGuidePrimary}>{surinaGuide.primaryLabel}</button>}{surinaGuide.secondaryLabel && <button type="button" className="secondary" onClick={followGuideSecondary}>{surinaGuide.secondaryLabel}</button>}</div></div>
           <div className="guide-vitals"><span><b>{playerCombatant.hitPoints.current}/{playerCombatant.hitPoints.maximum}</b> HP</span><span><b>{playerArmorClass}</b> AC</span><span><b>{encounter.turn.movementRemaining} ft.</b> movement</span><span><b>{encounter.turn.action ? "Ready" : "Used"}</b> Action</span><span><b>{playerCombatant.reactionAvailable ? "Ready" : "Used"}</b> Reaction</span></div>
+        </section>}
+
+        {character.id === "surina-daardendrian" && resolutionReceipt && <section className={`resolution-receipt receipt-${resolutionReceipt.kind}`} aria-live="polite">
+          <div className="receipt-heading"><div><span>{resolutionReceipt.eyebrow}</span><h3>{resolutionReceipt.title}</h3></div><button type="button" onClick={() => setResolutionReceipt(null)}>Dismiss</button></div>
+          <p>{resolutionReceipt.summary}</p>
+          <div className="receipt-changes" aria-label="What changed">{resolutionReceipt.changes.map((change) => <span key={change}>{change}</span>)}</div>
         </section>}
 
         <div className="guided-response-stack" data-guided-step="true">
@@ -1263,7 +1279,7 @@ export default function Home() {
               if (!selected) return;
               const result = executeFeatureAction(encounter, feature, { targetCombatantId: selected.combatant.id });
               if (!result.legal) { setFeedback(result.reason); return; }
-              setEncounter(result.encounter); if (result.roll) setLastRoll(result.roll); setFeedback(result.summary); setBreathFlow(null);
+              setEncounter(result.encounter); if (result.roll) setLastRoll(result.roll); setFeedback(result.summary); setResolutionReceipt(buildResolutionReceipt({ kind: "breath-weapon", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary, concealEnemyHitPoints: experienceMode === "advanced" })); setBreathFlow(null);
             }}>Roll 1d10 fire damage</button><button type="button" onClick={() => setBreathFlow(null)}>Cancel</button></div>;
           })()}
           {featureFlow && (() => {
