@@ -36,6 +36,7 @@ import { actionCostLabel, quickActionPresentation } from "../src/ui/action-prese
 import { buildResolutionReceipt, type ResolutionReceipt } from "../src/ui/resolution-receipt";
 import { explainD20Roll, explainDamageRoll, type RollExplanation } from "../src/ui/roll-explanation";
 import { buildSurinaTacticalActions, type SurinaTacticalActionId } from "../src/ui/surina-tactical-actions";
+import { buildSurinaUtilityActions, legalInfluenceTargetIds, type SurinaUtilityActionId } from "../src/ui/surina-utility-actions";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
 type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
@@ -185,6 +186,7 @@ export default function Home() {
   const [featureFlow, setFeatureFlow] = useState<FeatureFlow>(null);
   const [breathFlow, setBreathFlow] = useState<CharacterFeatureAction | null>(null);
   const [interactionFlow, setInteractionFlow] = useState<"help" | "ready" | "utilize" | null>(null);
+  const [utilityTargetFlow, setUtilityTargetFlow] = useState<"influence" | null>(null);
   const [assistanceConfirmed, setAssistanceConfirmed] = useState(false);
   const [doorPractice, setDoorPractice] = useState(false);
   const [skillFlow, setSkillFlow] = useState<string | null>(null);
@@ -205,6 +207,7 @@ export default function Home() {
     .map((id) => characterActions.find((action) => action.id === id))
     .filter((action): action is CombatAction => Boolean(action)), [characterActions]);
   const surinaTacticalActions = useMemo(() => buildSurinaTacticalActions(encounter), [encounter]);
+  const surinaUtilityActions = useMemo(() => buildSurinaUtilityActions(encounter), [encounter]);
   const categorizedActions = useMemo(() => visibleActions.filter((action) => action.cost === actionCategory), [actionCategory, visibleActions]);
   const activeCombatant = encounter.combatants[encounter.activeIndex];
   const playerCombatant = encounter.combatants.find((combatant) => combatant.id === character.id) ?? encounter.combatants[0];
@@ -225,6 +228,9 @@ export default function Home() {
       ? encounter.combatants.filter((combatant) => validateSpellTarget(encounter, spellFlow.spell, combatant.id).legal).map((combatant) => combatant.id)
       : [],
   ), [encounter, spellFlow]);
+  const legalUtilityTargetIds = useMemo(() => new Set(
+    utilityTargetFlow === "influence" ? legalInfluenceTargetIds(encounter) : [],
+  ), [encounter, utilityTargetFlow]);
   const legalMovementCells = useMemo(() => legalMovementDestinations(encounter), [encounter]);
   const legalMovementByCell = useMemo(() => new Map(legalMovementCells.map((cell) => [`${cell.x},${cell.y}`, cell])), [legalMovementCells]);
   const mechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(sourceCharacter), [sourceCharacter]);
@@ -440,6 +446,7 @@ export default function Home() {
     setCharacter(nextCharacter);
     setBreathFlow(null);
     setInteractionFlow(null);
+    setUtilityTargetFlow(null);
     setEncounter(createPlayableEncounter(nextCharacter, scenario));
     setChoiceMode(null);
     setAttackFlow(null);
@@ -621,6 +628,25 @@ export default function Home() {
     if (id === "ready") focusSurface("map");
   }
 
+  function openSurinaUtilityAction(id: SurinaUtilityActionId) {
+    const action = actionCatalog.find((candidate) => candidate.id === id);
+    if (!action) return;
+    if (id === "influence" && !validateAction(action, encounter).legal) {
+      setUtilityTargetFlow("influence");
+      setChoiceMode(null);
+      setAttackFlow(null);
+      setSpellFlow(null);
+      setFeatureFlow(null);
+      setBreathFlow(null);
+      setInteractionFlow(null);
+      setSkillFlow(null);
+      setFeedback("Choose a highlighted creature within 30 feet for Influence, then select a social skill.");
+      focusSurface("map");
+      return;
+    }
+    runAction(action);
+  }
+
   function runAction(action: CombatAction) {
     if (!initiativeReady) { setFeedback("Roll your initiative before taking actions. ADaM rolls for the enemies automatically."); return; }
     if (outcome !== "active") { setFeedback("This encounter is complete. Build a new encounter to continue training."); return; }
@@ -628,6 +654,7 @@ export default function Home() {
     if (activeCombatant.side !== "player") { setFeedback("ADaM is resolving the enemy turn."); return; }
     if (deathSaveRequired && encounter.turn.action) { setFeedback("Roll the required death saving throw before ending this turn."); return; }
     if (activeCombatant.hitPoints.current <= 0 && action.id !== "end-turn") { setFeedback("An unconscious character cannot take actions."); return; }
+    setUtilityTargetFlow(null);
     if (action.id === "end-turn") { const nextEncounter = endTurn(encounter); setEncounter(nextEncounter); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setBreathFlow(null); setToolFlow(null); setInteractionFlow(null); setFeedback("Turn ended. Initiative advanced."); setResolutionReceipt(buildResolutionReceipt({ kind: "end-turn", before: encounter, after: nextEncounter, actorId: playerCombatant.id, summary: "Surina's turn ended and initiative advanced to the next living combatant." })); return; }
     if (action.id === "attack") {
       setChoiceMode("attack");
@@ -647,7 +674,8 @@ export default function Home() {
     if (action.id === "magic" || action.id === "cast-spell") { setChoiceMode("spell"); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setFeedback("Choose a spell first. ADaM will then highlight every legal target for its range and line of sight."); return; }
     if (action.id === "hide") {
       const result = hide(encounter); if (!result.legal) { setFeedback(result.reason); return; }
-      setEncounter(result.encounter); setLastRoll(result.roll); setFeedback(result.summary); return;
+      const hidden = result.encounter.effects.some((effect) => effect.hidden && effect.targetCombatantId === playerCombatant.id);
+      setEncounter(result.encounter); setLastRoll(result.roll); setRollExplanation(explainD20Roll({ kind: "ability-check", title: "Hide: Stealth check", roll: result.roll, target: { label: "DC", value: 15 }, outcome: hidden ? "Hidden" : "Still detectable", nextStep: hidden ? "Move carefully, stay out of unobstructed enemy view, or choose another action on a later turn." : "The Action is spent. Reposition behind Total Cover before trying again on a later turn." })); setFeedback(result.summary); return;
     }
     if (["help", "ready", "utilize", "use-object"].includes(action.id)) {
       setInteractionFlow(action.id === "use-object" ? "utilize" : action.id as "help" | "ready" | "utilize"); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setBreathFlow(null); return;
@@ -698,6 +726,7 @@ export default function Home() {
         ? " Your movement will not provoke opportunity attacks for the rest of this turn."
         : "";
     setFeedback(`${action.name}${targetCopy} accepted. This action does not require a dice roll.${tacticalCopy}`);
+    if (action.id === "dash" || action.id === "disengage") focusSurface("map");
   }
 
   function chooseAttack(attack: CharacterAttack) {
@@ -943,7 +972,7 @@ export default function Home() {
     const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
     if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
     const nextEncounter = createPlayableEncounter(sourceCharacter, next);
-    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`); setRollExplanation(null); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${next.opening} The encounter is reset and ready for initiative.` }));
+    setInteractionFlow(null); setUtilityTargetFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`); setRollExplanation(null); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${next.opening} The encounter is reset and ready for initiative.` }));
     setScenarioBuilderOpen(false);
   }
 
@@ -955,7 +984,7 @@ export default function Home() {
     const next = generateScriptedScenario(template.setup);
     if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
     const nextEncounter = createPlayableEncounter(sourceCharacter, next);
-    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`); setRollExplanation(null); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${template.name} loaded. The encounter is reset and ready for initiative.` }));
+    setInteractionFlow(null); setUtilityTargetFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`); setRollExplanation(null); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${template.name} loaded. The encounter is reset and ready for initiative.` }));
     setScenarioBuilderOpen(false);
   }
 
@@ -985,6 +1014,16 @@ export default function Home() {
   function handleGridInteraction(x: number, y: number, occupantId?: string) {
     if (!initiativeReady) { setFeedback("Finish rolling initiative before interacting with the map."); return; }
     if (activeCombatant.side !== "player") { setFeedback("ADaM controls targeting and movement during enemy turns."); return; }
+    if (utilityTargetFlow === "influence") {
+      if (!occupantId || !legalUtilityTargetIds.has(occupantId)) { setFeedback("Choose a highlighted creature within 30 feet and clear line of sight for Influence."); return; }
+      const targetedEncounter = selectTarget(encounter, occupantId);
+      setEncounter(targetedEncounter);
+      setUtilityTargetFlow(null);
+      setSkillFlow("influence");
+      setFeedback(`Influence target selected: ${targetedEncounter.combatants.find((combatant) => combatant.id === occupantId)?.name}. Choose the social skill that matches Surina's approach.`);
+      focusSurface("actions");
+      return;
+    }
     if (spellFlow?.phase === "point") {
       const result = executePointSpell(encounter, spellFlow.spell, [{ x, y }], Math.random, spellFlow.utilityChoiceId);
       if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Point disallowed." : result.reason); return; }
@@ -1238,6 +1277,10 @@ export default function Home() {
           <div><span>Spell selected · Choose target</span><h3>{spellFlow.spell.name}</h3><p>Targets highlighted in gold are legal for this spell&apos;s range, line of sight, and target type.</p></div>
           <div className="target-count"><strong>{legalSpellTargetIds.size}</strong><small>legal targets</small></div>
         </section>}
+        {initiativeReady && utilityTargetFlow === "influence" && <section className="roll-coach target-coach" aria-live="polite">
+          <div><span>Influence · Choose target</span><h3>Select a creature to approach</h3><p>Gold rings mark conscious creatures within 30 feet and clear line of sight. Communication and the result still depend on the scene.</p></div>
+          <div className="target-count"><strong>{legalUtilityTargetIds.size}</strong><small>legal targets</small></div>
+        </section>}
         {initiativeReady && spellFlow?.phase === "point" && <section className="roll-coach target-coach" aria-live="polite">
           <div><span>Point spell · Choose location</span><h3>{spellFlow.spell.name}</h3><p>Choose a map square within {spellFlow.spell.rangeFeet} feet and line of sight.{spellFlow.utilityChoiceId ? ` ${spellFlow.spell.utilityChoices?.find((choice) => choice.id === spellFlow.utilityChoiceId)?.description ?? ""}` : ""}</p></div>
         </section>}
@@ -1271,7 +1314,7 @@ export default function Home() {
         <section id="tactical-map" className="tactical-map-panel">
           <div className="map-heading"><div><span className="eyebrow">5-foot square grid</span><h3>Tactical map</h3></div><div className="map-legend"><span className="legend-player">Player</span><span className="legend-enemy">Enemy</span><span className="legend-difficult">Difficult</span><span className="legend-cover">Cover</span><span className="legend-objective">Objective</span><span className="legend-flame">Flame</span></div></div>
           <div className={`target-panel ${targetAnalysis ? "has-target" : ""}`}>
-            {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} · AC {effectiveArmorClass(encounter, targetAnalysis.target.id)} · {targetAnalysis.target.side === "enemy" ? enemyHealthLabel(targetAnalysis.target, experienceMode) : `${targetAnalysis.target.hitPoints.current}/${targetAnalysis.target.hitPoints.maximum} HP`}</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" disabled={activeCombatant.side !== "player"} onClick={() => { setEncounter((state) => selectTarget(state, null)); setAttackFlow(attackFlow ? { ...attackFlow, phase: "target", targetId: undefined } : null); setSpellFlow(spellFlow ? { ...spellFlow, phase: "target", targetId: undefined } : null); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>{attackFlow?.phase === "target" ? `Targeting · ${attackFlow.attack.name}` : spellFlow?.phase === "target" ? `Targeting · ${spellFlow.spell.name}` : "Choose an action"}</span><strong>{attackFlow?.phase === "target" || spellFlow?.phase === "target" ? "Select a highlighted creature" : "Choose an attack or spell first"}</strong><small>{attackFlow?.phase === "target" ? "Gold rings indicate targets within this weapon’s range and line of sight." : spellFlow?.phase === "target" ? "Gold rings indicate legal targets for the selected spell." : "The selected option determines which targets ADaM highlights."}</small></div>}
+            {targetAnalysis ? <><div><span>Selected target</span><strong>{targetAnalysis.target.name}</strong><small>{targetAnalysis.target.side} · AC {effectiveArmorClass(encounter, targetAnalysis.target.id)} · {targetAnalysis.target.side === "enemy" ? enemyHealthLabel(targetAnalysis.target, experienceMode) : `${targetAnalysis.target.hitPoints.current}/${targetAnalysis.target.hitPoints.maximum} HP`}</small></div><div><span>Distance</span><strong>{targetAnalysis.distanceFeet} ft.</strong></div><div><span>Sightline</span><strong>{targetAnalysis.lineOfSight ? "Clear" : "Blocked"}</strong></div><div><span>Cover</span><strong>{targetAnalysis.cover === "half" ? "Half (+2 AC)" : "None"}</strong></div><button type="button" disabled={activeCombatant.side !== "player"} onClick={() => { setEncounter((state) => selectTarget(state, null)); setAttackFlow(attackFlow ? { ...attackFlow, phase: "target", targetId: undefined } : null); setSpellFlow(spellFlow ? { ...spellFlow, phase: "target", targetId: undefined } : null); setFeedback("Target cleared."); }}>Clear target</button></> : <div className="target-empty"><span>{attackFlow?.phase === "target" ? `Targeting · ${attackFlow.attack.name}` : spellFlow?.phase === "target" ? `Targeting · ${spellFlow.spell.name}` : utilityTargetFlow === "influence" ? "Targeting · Influence" : "Choose an action"}</span><strong>{attackFlow?.phase === "target" || spellFlow?.phase === "target" || utilityTargetFlow ? "Select a highlighted creature" : "Choose an attack, spell, or guided action first"}</strong><small>{attackFlow?.phase === "target" ? "Gold rings indicate targets within this weapon’s range and line of sight." : spellFlow?.phase === "target" ? "Gold rings indicate legal targets for the selected spell." : utilityTargetFlow === "influence" ? "Gold rings indicate conscious creatures within 30 feet and clear line of sight." : "The selected option determines which targets ADaM highlights."}</small></div>}
           </div>
           <div className="map-scroll" role="region" aria-label="Tactical combat map">
             <div className="battle-grid" style={{ gridTemplateColumns: `repeat(${encounter.map.width}, 46px)` }}>
@@ -1283,13 +1326,13 @@ export default function Home() {
                 const occupant = encounter.combatants.find((combatant) => occupiedCells(encounter, combatant.id).some((cell) => cell.x === x && cell.y === y));
                 const occupantAnchor = occupant?.position.x === x && occupant?.position.y === y;
                 const movementCell = legalMovementByCell.get(`${x},${y}`);
-                const reachable = !attackFlow && !spellFlow && initiativeReady && activeCombatant.side === "player" && !occupant && Boolean(movementCell);
+                const reachable = !attackFlow && !spellFlow && !utilityTargetFlow && initiativeReady && activeCombatant.side === "player" && !occupant && Boolean(movementCell);
                 const coordinate = `${String.fromCharCode(65 + x)}${y + 1}`;
                 const targeted = occupant?.id === encounter.selectedTargetId;
-                const targetCandidate = Boolean(occupant && (attackFlow?.phase === "target" || spellFlow?.phase === "target"));
-                const legalOptionTarget = Boolean(occupant && (legalAttackTargetIds.has(occupant.id) || legalSpellTargetIds.has(occupant.id)));
-                const targetValidation = occupant && attackFlow?.phase === "target" ? validateAttackTarget(encounter, attackFlow.attack, occupant.id) : occupant && spellFlow?.phase === "target" ? validateSpellTarget(encounter, spellFlow.spell, occupant.id) : null;
-                const targetOptionName = attackFlow?.attack.name ?? spellFlow?.spell.name;
+                const targetCandidate = Boolean(occupant && (attackFlow?.phase === "target" || spellFlow?.phase === "target" || utilityTargetFlow));
+                const legalOptionTarget = Boolean(occupant && (legalAttackTargetIds.has(occupant.id) || legalSpellTargetIds.has(occupant.id) || legalUtilityTargetIds.has(occupant.id)));
+                const targetValidation = occupant && attackFlow?.phase === "target" ? validateAttackTarget(encounter, attackFlow.attack, occupant.id) : occupant && spellFlow?.phase === "target" ? validateSpellTarget(encounter, spellFlow.spell, occupant.id) : occupant && utilityTargetFlow ? validateAction(actionCatalog.find((action) => action.id === utilityTargetFlow)!, { ...encounter, selectedTargetId: occupant.id }) : null;
+                const targetOptionName = attackFlow?.attack.name ?? spellFlow?.spell.name ?? (utilityTargetFlow === "influence" ? "Influence" : undefined);
                 return <button type="button" key={`${x}-${y}`} className={`grid-cell terrain-${terrain?.kind ?? "open"} ${reachable ? "reachable" : ""} ${targeted ? "targeted" : ""} ${legalOptionTarget ? "legal-target" : targetCandidate ? "illegal-target" : ""}`} onClick={() => handleGridInteraction(x, y, occupant?.id)} aria-pressed={targeted} aria-label={`${coordinate}. ${terrain?.label ?? "Open ground"}${movementCell ? `. Reachable for ${movementCell.cost} feet.` : ""}${occupant ? `. Occupied by ${occupant.name}. ${legalOptionTarget ? `Legal target for ${targetOptionName}.` : "Select as target."}` : ""}`} title={`${coordinate} · ${occupant ? legalOptionTarget ? `${occupant.name}: legal target` : targetValidation?.reason ?? `Select ${occupant.name}` : movementCell ? `${movementCell.cost} ft. by legal path` : terrain?.label ?? "Open ground"}`}>
                   <small>{coordinate}</small>
                   {terrain && <span className="terrain-mark" aria-hidden="true">{terrain.kind === "wall" ? "■" : terrain.kind === "difficult" ? "≈" : terrain.kind === "cover" ? "◩" : terrain.kind === "flame" ? terrain.flame?.lit ? "♨" : "○" : "◆"}</span>}
@@ -1300,7 +1343,7 @@ export default function Home() {
               })}
             </div>
           </div>
-          <div className="map-help"><span>{attackFlow?.phase === "target" || spellFlow?.phase === "target" ? "Gold ring: legal target for selected option" : "Creature token: inspect target"}</span><span>Highlighted empty square: tap once to move there</span><span>ADaM finds a legal path and charges terrain costs</span></div>
+          <div className="map-help"><span>{attackFlow?.phase === "target" || spellFlow?.phase === "target" || utilityTargetFlow ? "Gold ring: legal target for selected option" : "Creature token: inspect target"}</span><span>Highlighted empty square: tap once to move there</span><span>ADaM finds a legal path and charges terrain costs</span></div>
         </section>
 
         <div className="initiative-strip"><div className="round">Round <strong>{encounter.round}</strong></div>{encounter.combatants.map((combatant, index) => <div key={combatant.id} className={`initiative-card ${initiativeReady && index === encounter.activeIndex ? "active" : ""} ${combatant.hitPoints.current <= 0 ? combatant.side === "player" && !combatant.stabilized && combatant.deathSaves.failures < 3 ? "unconscious" : "defeated" : ""}`}><span>{combatant.initiativeRolled ? combatant.initiative : "—"}</span><div><strong>{combatant.name}</strong><small>{combatant.hitPoints.current <= 0 ? combatant.stabilized ? "stabilized" : combatant.deathSaves.failures >= 3 ? "defeated" : `${combatant.deathSaves.successes} saves · ${combatant.deathSaves.failures} failures` : combatant.initiativeRolled ? `initiative · ${combatant.side}` : combatant.side === "player" ? `d20 ${combatant.initiativeModifier >= 0 ? "+" : "−"}${Math.abs(combatant.initiativeModifier)} · your roll` : "ADaM rolls privately"}</small></div></div>)}</div>
@@ -1330,6 +1373,12 @@ export default function Home() {
           {character.id === "surina-daardendrian" && <section className="surina-tactical-actions" aria-label="Surina's tactical actions">
             <div className="quick-actions-heading"><div><span>Tactical choices</span><h4>More ways to shape the turn</h4></div><small>These options need a target, trigger, or skill choice before Surina spends her Action.</small></div>
             <div className="tactical-action-grid">{surinaTacticalActions.map((action) => <button type="button" key={`tactical-${action.id}`} data-tactical-action={action.id} className={`quick-action tactical-action ${action.tone}`} disabled={action.tone === "blocked"} onClick={() => openSurinaTacticalAction(action.id)}>
+              <span className="quick-status">{action.status}</span><strong>{action.label}</strong><small>{action.cost}</small><p>{action.detail}</p>
+            </button>)}</div>
+          </section>}
+          {character.id === "surina-daardendrian" && <section className="surina-utility-actions" aria-label="Surina's movement and roleplay actions">
+            <div className="quick-actions-heading"><div><span>Movement and roleplay</span><h4>Change position or approach the scene</h4></div><small>These cards explain when cover, targets, or skill choices are required.</small></div>
+            <div className="utility-action-grid">{surinaUtilityActions.map((action) => <button type="button" key={`utility-${action.id}`} data-utility-action={action.id} className={`quick-action utility-action ${action.tone}`} disabled={action.tone === "blocked"} onClick={() => openSurinaUtilityAction(action.id)}>
               <span className="quick-status">{action.status}</span><strong>{action.label}</strong><small>{action.cost}</small><p>{action.detail}</p>
             </button>)}</div>
           </section>}
