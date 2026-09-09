@@ -35,6 +35,7 @@ import { buildTurnGuidance } from "../src/ui/turn-guidance";
 import { actionCostLabel, quickActionPresentation } from "../src/ui/action-presentation";
 import { buildResolutionReceipt, type ResolutionReceipt } from "../src/ui/resolution-receipt";
 import { explainD20Roll, explainDamageRoll, type RollExplanation } from "../src/ui/roll-explanation";
+import { buildSurinaTacticalActions, type SurinaTacticalActionId } from "../src/ui/surina-tactical-actions";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
 type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
@@ -179,6 +180,7 @@ export default function Home() {
   const [actionCategory, setActionCategory] = useState<ActionCategory>("action");
   const [choiceMode, setChoiceMode] = useState<ChoiceMode>(null);
   const [attackFlow, setAttackFlow] = useState<AttackFlow>(null);
+  const [unarmedFlow, setUnarmedFlow] = useState<"grapple" | "shove" | null>(null);
   const [spellFlow, setSpellFlow] = useState<SpellFlow>(null);
   const [featureFlow, setFeatureFlow] = useState<FeatureFlow>(null);
   const [breathFlow, setBreathFlow] = useState<CharacterFeatureAction | null>(null);
@@ -202,6 +204,7 @@ export default function Home() {
   const surinaQuickActions = useMemo(() => ["attack", "move", "breath-weapon-gold", "lay-on-hands", "dodge"]
     .map((id) => characterActions.find((action) => action.id === id))
     .filter((action): action is CombatAction => Boolean(action)), [characterActions]);
+  const surinaTacticalActions = useMemo(() => buildSurinaTacticalActions(encounter), [encounter]);
   const categorizedActions = useMemo(() => visibleActions.filter((action) => action.cost === actionCategory), [actionCategory, visibleActions]);
   const activeCombatant = encounter.combatants[encounter.activeIndex];
   const playerCombatant = encounter.combatants.find((combatant) => combatant.id === character.id) ?? encounter.combatants[0];
@@ -440,6 +443,7 @@ export default function Home() {
     setEncounter(createPlayableEncounter(nextCharacter, scenario));
     setChoiceMode(null);
     setAttackFlow(null);
+    setUnarmedFlow(null);
     setSpellFlow(null);
     setFeatureFlow(null);
     setToolFlow(null);
@@ -535,7 +539,7 @@ export default function Home() {
     setEncounter(result.encounter);
     setLastRoll(result.roll);
     setFeedback(result.summary);
-    setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
+    setChoiceMode(null); setAttackFlow(null); setUnarmedFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
   }
 
   function performGrapple(targetId: string) {
@@ -545,7 +549,7 @@ export default function Home() {
     setEncounter(result.encounter);
     setLastRoll(result.roll);
     setFeedback(result.summary);
-    setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
+    setChoiceMode(null); setAttackFlow(null); setUnarmedFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
   }
 
   function escapeGrapple(effectId: string, ability: EscapeAbility) {
@@ -595,6 +599,28 @@ export default function Home() {
     focusSurface("map");
   }
 
+  function openSurinaTacticalAction(id: SurinaTacticalActionId) {
+    if (id === "grapple" || id === "shove") {
+      setChoiceMode("attack");
+      setUnarmedFlow(id);
+      setAttackFlow(null);
+      setSpellFlow(null);
+      setFeatureFlow(null);
+      setToolFlow(null);
+      setInteractionFlow(null);
+      setFeedback(id === "grapple" ? "Choose one of the legal adjacent targets for Grapple." : "Choose a legal adjacent target, then knock it Prone or push it 5 feet.");
+      focusSurface("actions");
+      return;
+    }
+    const action = actionCatalog.find((candidate) => candidate.id === id);
+    if (!action) return;
+    setUnarmedFlow(null);
+    runAction(action);
+    if (id === "help") setFeedback("Choose how Surina helps and who receives that help.");
+    if (id === "ready") setFeedback("Select a visible enemy on the map, then choose a held weapon and trigger.");
+    if (id === "ready") focusSurface("map");
+  }
+
   function runAction(action: CombatAction) {
     if (!initiativeReady) { setFeedback("Roll your initiative before taking actions. ADaM rolls for the enemies automatically."); return; }
     if (outcome !== "active") { setFeedback("This encounter is complete. Build a new encounter to continue training."); return; }
@@ -605,6 +631,7 @@ export default function Home() {
     if (action.id === "end-turn") { const nextEncounter = endTurn(encounter); setEncounter(nextEncounter); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setBreathFlow(null); setToolFlow(null); setInteractionFlow(null); setFeedback("Turn ended. Initiative advanced."); setResolutionReceipt(buildResolutionReceipt({ kind: "end-turn", before: encounter, after: nextEncounter, actorId: playerCombatant.id, summary: "Surina's turn ended and initiative advanced to the next living combatant." })); return; }
     if (action.id === "attack") {
       setChoiceMode("attack");
+      setUnarmedFlow(null);
       setAttackFlow(null);
       setSpellFlow(null);
       setFeatureFlow(null);
@@ -1300,14 +1327,20 @@ export default function Home() {
               </button>;
             })}</div>
           </section>}
+          {character.id === "surina-daardendrian" && <section className="surina-tactical-actions" aria-label="Surina's tactical actions">
+            <div className="quick-actions-heading"><div><span>Tactical choices</span><h4>More ways to shape the turn</h4></div><small>These options need a target, trigger, or skill choice before Surina spends her Action.</small></div>
+            <div className="tactical-action-grid">{surinaTacticalActions.map((action) => <button type="button" key={`tactical-${action.id}`} data-tactical-action={action.id} className={`quick-action tactical-action ${action.tone}`} disabled={action.tone === "blocked"} onClick={() => openSurinaTacticalAction(action.id)}>
+              <span className="quick-status">{action.status}</span><strong>{action.label}</strong><small>{action.cost}</small><p>{action.detail}</p>
+            </button>)}</div>
+          </section>}
           <div className="all-actions-heading"><span>Full action list</span><p>Use these categories for tactical, skill, object, and less common choices.</p></div>
           <div className="action-category-tabs" aria-label="Action economy categories">{actionCategoryCopy.map((category) => {
             const actions = visibleActions.filter((action) => action.cost === category.id);
             const legalCount = actions.filter((action) => validateAction(action, encounter, character).legal).length;
             return <button type="button" key={category.id} className={actionCategory === category.id ? "active" : ""} onClick={() => setActionCategory(category.id)}><span>{category.label}</span><strong>{legalCount}</strong><small>{category.detail}</small></button>;
           })}</div>
-          {choiceMode === "attack" && character.id === "surina-daardendrian" && <section className="choice-panel" aria-label="Unarmed Strike options"><h4>Unarmed Strike options</h4><p>Choose Damage in the attack list, or choose Shove or Grapple below. Each option uses Surina&apos;s Attack action and follows the current 2024 resolution.</p></section>}
-          {choiceMode === "attack" && character.id === "surina-daardendrian" && <section className="choice-panel" aria-label="Shove options">
+          {choiceMode === "attack" && character.id === "surina-daardendrian" && !unarmedFlow && <section className="choice-panel" aria-label="Unarmed Strike options"><h4>Unarmed Strike options</h4><p>Choose Damage in the attack list, or choose Shove or Grapple below. Each option uses Surina&apos;s Attack action and follows the current 2024 resolution.</p></section>}
+          {choiceMode === "attack" && character.id === "surina-daardendrian" && (!unarmedFlow || unarmedFlow === "shove") && <section className="choice-panel" aria-label="Shove options">
             <h4>Unarmed Strike: Shove · Action</h4>
             <p>Choose an enemy and an outcome. ADaM chooses its Strength or Dexterity save before rolling. No weapon damage, free hand, or mastery is required.</p>
             <p>Edition note: 2014 uses contested Athletics against Athletics or Acrobatics. Applied 2024 resolution uses a target saving throw against DC {8 + playerCombatant.abilityModifiers.strength + playerCombatant.proficiencyBonus}; Surina&apos;s Athletics proficiency does not add to this DC. Her character build is unchanged.</p>
@@ -1318,7 +1351,7 @@ export default function Home() {
             })}
             <small>Current surface: your-turn Shoves against enemies. Reaction Shoves are not modeled.</small>
           </section>}
-          {choiceMode === "attack" && character.id === "surina-daardendrian" && <section className="choice-panel" aria-label="Grapple options">
+          {choiceMode === "attack" && character.id === "surina-daardendrian" && (!unarmedFlow || unarmedFlow === "grapple") && <section className="choice-panel" aria-label="Grapple options">
             <h4>Unarmed Strike: Grapple · Action</h4>
             <p>Choose an enemy within 5 feet. Grapple requires a free hand and holds the target at Speed 0. Dragging normally costs one additional foot per foot moved. You can release the target at any time without an Action.</p>
             <p>Edition note: 2014 uses a contested Athletics check. Applied 2024 resolution lets the target choose a Strength or Dexterity save against DC {8 + playerCombatant.abilityModifiers.strength + playerCombatant.proficiencyBonus}; later escape attempts use Athletics or Acrobatics against that DC. Surina&apos;s character build is unchanged.</p>
@@ -1333,7 +1366,7 @@ export default function Home() {
             const targetingLabel = action.targeting?.mode === "single" ? `${action.targeting.rangeFeet} ft.` : action.targeting?.mode === "area" ? `${action.targeting.shape} · ${action.targeting.sizeFeet} ft.` : action.cost.replace("-", " ");
             return <button key={action.id} className={!validation.legal ? "illegal" : ""} onClick={() => runAction(action)} title={experienceMode === "training" ? (validation.legal ? action.description : validation.reason) : undefined}><strong>{action.name}</strong><span>{targetingLabel}</span>{experienceMode !== "advanced" && <small>{validation.legal || experienceMode === "beginner" ? action.description : validation.reason}</small>}</button>;
           }) : <div className="category-empty"><strong>No actions available</strong><p>Your imported sheet and current turn state do not provide an option in this category.</p></div>}</div>
-          {choiceMode === "attack" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose attack</span><strong>Weapon and Unarmed Strike options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); }}>Cancel</button></div><div className="choice-grid">{playerCombatant.attacks.map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.id === "unarmed-strike" ? "Unarmed Strike: Damage" : attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
+          {choiceMode === "attack" && !unarmedFlow && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose attack</span><strong>Weapon and Unarmed Strike options</strong></div><button type="button" onClick={() => { setChoiceMode(null); setAttackFlow(null); setUnarmedFlow(null); }}>Cancel</button></div><div className="choice-grid">{playerCombatant.attacks.map((attack) => { const selected = attackFlow?.attack.id === attack.id; return <button type="button" key={attack.id} className={selected ? "selected" : ""} onClick={() => chooseAttack(attack)}><span>{attack.kind} · {attack.normalRangeFeet}{attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.</span><strong>{attack.id === "unarmed-strike" ? "Unarmed Strike: Damage" : attack.name}</strong><small>{attack.damage} · {attack.attackBonus >= 0 ? "+" : ""}{attack.attackBonus} to hit</small><p>{selected && attackFlow?.phase === "target" ? `${legalAttackTargetIds.size} legal target${legalAttackTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : attack.description}</p></button>; })}</div></div>}
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : spell.freeCastResourceName ? `Level ${spell.level} · free use or slot` : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : spell.target === "area" && spell.area ? `${spell.area.sizeFeet} ft. ${spell.area.shape}` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           {encounter.effects.some(e => e.hidden && e.targetCombatantId === playerCombatant.id) && <button type="button" onClick={() => { setEncounter(endHiding(encounter, playerCombatant.id, "player speaks loudly")); setFeedback("You speak above a whisper and stop hiding."); }}>Speak loudly / end Hide</button>}
           {interactionFlow && <div className="choice-panel"><h3>{interactionFlow === "ready" ? "Ready a weapon attack" : interactionFlow === "help" ? "Help" : "Object interaction"}</h3>
