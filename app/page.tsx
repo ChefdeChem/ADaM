@@ -34,6 +34,7 @@ import { buildCharacterMechanicCoverage } from "../src/rules-registry";
 import { buildTurnGuidance } from "../src/ui/turn-guidance";
 import { actionCostLabel, quickActionPresentation } from "../src/ui/action-presentation";
 import { buildResolutionReceipt, type ResolutionReceipt } from "../src/ui/resolution-receipt";
+import { explainD20Roll, explainDamageRoll, type RollExplanation } from "../src/ui/roll-explanation";
 
 type ScenarioSetupMode = "describe" | "guided" | "combined" | "templates";
 type ActionCategory = Extract<ActionCost, "action" | "bonus-action" | "movement">;
@@ -190,6 +191,7 @@ export default function Home() {
   const [enemyTurnPhase, setEnemyTurnPhase] = useState<"idle" | "resolving" | "awaiting-player" | "showing">("idle");
   const [scenarioBuilderOpen, setScenarioBuilderOpen] = useState(true);
   const [resolutionReceipt, setResolutionReceipt] = useState<ResolutionReceipt | null>(null);
+  const [rollExplanation, setRollExplanation] = useState<RollExplanation | null>(null);
 
   const activeRuleset = rulesets.find((ruleset) => ruleset.id === rulesetId)!;
   const visibleActions = useMemo(
@@ -307,8 +309,33 @@ export default function Home() {
   }
 
   function rollPendingSavingThrow() {
+    const pending = encounter.pendingResponse?.type === "saving-throw" ? encounter.pendingResponse : null;
     const result = resolveSavingThrowResponse(encounter);
     finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
+    if (pending && result.playerRoll) setRollExplanation(explainD20Roll({
+      kind: "saving-throw",
+      title: `${pending.ability.name}: ${pending.ability.saveAbility} save`,
+      roll: result.playerRoll,
+      target: { label: "DC", value: pending.ability.saveDc },
+      outcome: result.playerRoll.total >= pending.ability.saveDc ? "Success" : "Failure",
+      nextStep: result.encounter.pendingResponse ? "Resolve the next defensive choice." : "Review the damage result, then continue the encounter.",
+    }));
+  }
+
+  function rollPendingPointHazard() {
+    const pending = encounter.pendingResponse?.type === "point-hazard-save" ? encounter.pendingResponse : null;
+    const effect = pending ? encounter.effects.find((candidate) => candidate.id === pending.effectId) : undefined;
+    const save = effect?.pointEffect?.type === "damaging-hazard" ? effect.pointEffect.save : undefined;
+    const result = resolvePointHazardResponse(encounter);
+    finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
+    if (pending && save && result.playerRoll) setRollExplanation(explainD20Roll({
+      kind: "saving-throw",
+      title: `${pending.name}: ${save.ability} save`,
+      roll: result.playerRoll,
+      target: { label: "DC", value: save.dc },
+      outcome: result.playerRoll.total >= save.dc ? "Success" : "Failure",
+      nextStep: result.encounter.pendingResponse ? "Resolve the next hazard response." : "Continue the interrupted turn or movement.",
+    }));
   }
 
   function choosePendingReaction(reactionId: string | null) {
@@ -340,8 +367,17 @@ export default function Home() {
   }
 
   function rollPendingConcentration() {
+    const pending = encounter.pendingResponse?.type === "concentration-check" ? encounter.pendingResponse : null;
     const result = resolveConcentrationResponse(encounter);
     finishPlayerResponse(result.encounter, result.summary, result.playerRoll);
+    if (pending && result.playerRoll) setRollExplanation(explainD20Roll({
+      kind: "saving-throw",
+      title: "Concentration: Constitution save",
+      roll: result.playerRoll,
+      target: { label: "DC", value: pending.dc },
+      outcome: result.playerRoll.total >= pending.dc ? "Concentration continues" : "Concentration ends",
+      nextStep: result.encounter.pendingResponse ? "Resolve the next response." : "Continue the interrupted turn or movement.",
+    }));
   }
 
   function chooseZeroHitPointReplacement(useFeature: boolean) {
@@ -409,6 +445,7 @@ export default function Home() {
     setToolFlow(null);
     setEnemyTurnPhase("idle");
     setResolutionReceipt(null);
+    setRollExplanation(null);
     localStorage.setItem("adam-active-character-id", nextCharacter.id);
     setMessage(announcement);
   }
@@ -675,6 +712,13 @@ export default function Home() {
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
+    setRollExplanation(explainD20Roll({
+      kind: "ability-check",
+      title: `${toolFlow.rule.name}: ${ability} check`,
+      roll: result.roll,
+      outcome: result.proficient ? "Tool proficiency included" : "No tool proficiency",
+      nextStep: "Use this total to resolve the attempted task with the scenario or DM.",
+    }));
     setToolFlow(null);
     setFeedback(result.summary);
   }
@@ -712,6 +756,13 @@ export default function Home() {
     const result = rollPlayerAndEnemyInitiative(encounter, playerNeedsInitiative.id);
     setEncounter(result.encounter);
     setLastRoll(result.playerRoll);
+    setRollExplanation(explainD20Roll({
+      kind: "initiative",
+      title: `${playerNeedsInitiative.name}'s initiative`,
+      roll: result.playerRoll,
+      outcome: `Turn order position ${result.encounter.combatants.findIndex((combatant) => combatant.id === playerNeedsInitiative.id) + 1}`,
+      nextStep: result.encounter.combatants[0].side === "player" ? "Choose Surina's movement or Action." : "Watch ADaM resolve the first enemy turn.",
+    }));
     setScenarioBuilderOpen(false);
     const summary = `You rolled ${result.playerRoll.total}. ADaM rolled initiative for ${result.enemyRolls.length} ${result.enemyRolls.length === 1 ? "enemy" : "enemies"}. ${result.encounter.combatants[0].name} acts first.`;
     setFeedback(summary);
@@ -731,6 +782,16 @@ export default function Home() {
     if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Action disallowed." : result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
+    const attackTarget = encounter.combatants.find((combatant) => combatant.id === attackFlow.targetId);
+    setRollExplanation(explainD20Roll({
+      kind: "attack",
+      title: `${attackFlow.attack.name} against ${attackTarget?.name ?? "target"}`,
+      roll: result.roll,
+      target: experienceMode === "advanced" || !attackTarget ? undefined : { label: `${attackTarget.name} AC`, value: effectiveArmorClass(encounter, attackTarget.id) },
+      hiddenTargetLabel: experienceMode === "advanced" ? "Target AC" : undefined,
+      outcome: result.hit ? "Hit" : "Miss",
+      nextStep: result.hit ? "Roll damage to complete the attack." : "Move, choose another available option, or end the turn.",
+    }));
     const updatedTarget = result.encounter.combatants.find((combatant) => combatant.id === attackFlow.targetId);
     const healthCopy = updatedTarget?.side === "enemy" && experienceMode !== "advanced" ? ` ${updatedTarget.name}: ${enemyHealthLabel(updatedTarget, experienceMode)}.` : "";
     setFeedback(`${result.summary}${healthCopy}`);
@@ -745,6 +806,13 @@ export default function Home() {
     if (!result.legal) { setFeedback(result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
+    const damageTarget = encounter.combatants.find((combatant) => combatant.id === attackFlow.targetId);
+    setRollExplanation(explainDamageRoll({
+      title: `${attackFlow.attack.name} damage`,
+      roll: result.roll,
+      targetName: damageTarget?.name ?? "The target",
+      nextStep: result.encounter.pendingResponse ? "Resolve the pending response before continuing." : "Use remaining movement or end the turn.",
+    }));
     setFeedback(`${result.summary} You still have ${result.encounter.turn.movementRemaining} feet of movement and may use it before ending your turn.`);
     setResolutionReceipt(buildResolutionReceipt({ kind: "attack", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary, concealEnemyHitPoints: experienceMode === "advanced" }));
     setAttackFlow(null);
@@ -848,7 +916,7 @@ export default function Home() {
     const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
     if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
     const nextEncounter = createPlayableEncounter(sourceCharacter, next);
-    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${next.opening} The encounter is reset and ready for initiative.` }));
+    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`); setRollExplanation(null); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${next.opening} The encounter is reset and ready for initiative.` }));
     setScenarioBuilderOpen(false);
   }
 
@@ -860,7 +928,7 @@ export default function Home() {
     const next = generateScriptedScenario(template.setup);
     if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
     const nextEncounter = createPlayableEncounter(sourceCharacter, next);
-    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${template.name} loaded. The encounter is reset and ready for initiative.` }));
+    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`); setRollExplanation(null); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${template.name} loaded. The encounter is reset and ready for initiative.` }));
     setScenarioBuilderOpen(false);
   }
 
@@ -1021,8 +1089,14 @@ export default function Home() {
           <div className="receipt-changes" aria-label="What changed">{resolutionReceipt.changes.map((change) => <span key={change}>{change}</span>)}</div>
         </section>}
 
+        {character.id === "surina-daardendrian" && rollExplanation && <section className={`roll-explanation roll-explanation-${rollExplanation.kind}`} aria-live="polite">
+          <div className="roll-explanation-main"><span>{rollExplanation.eyebrow}</span><h3>{rollExplanation.title}</h3><p>{rollExplanation.formula} = <strong>{rollExplanation.total}</strong></p></div>
+          <div className="roll-explanation-result"><span>Resolution</span><strong>{rollExplanation.comparison}</strong><p>Next: {rollExplanation.nextStep}</p></div>
+          <button type="button" onClick={() => setRollExplanation(null)}>Dismiss</button>
+        </section>}
+
         <div className="guided-response-stack" data-guided-step="true">
-        {encounter.pendingResponse?.type === "point-hazard-save" && <section className="roll-coach" aria-live="polite"><div><h3>{encounter.pendingResponse.name}</h3><p>Roll your saving throw. Overlapping hazards resolve one at a time, including defensive choices and concentration.</p></div><button type="button" onClick={() => { const r = resolvePointHazardResponse(encounter); finishPlayerResponse(r.encounter, r.summary, r.playerRoll); }}>Roll hazard save</button></section>}
+        {encounter.pendingResponse?.type === "point-hazard-save" && <section className="roll-coach" aria-live="polite"><div><h3>{encounter.pendingResponse.name}</h3><p>Roll your saving throw. Overlapping hazards resolve one at a time, including defensive choices and concentration.</p></div><button type="button" onClick={rollPendingPointHazard}>Roll hazard save</button></section>}
         {grappleEffectsOn(encounter, playerCombatant.id).map(effect => {
           const source = encounter.combatants.find(c => c.id === effect.sourceCombatantId);
           const canEscape = initiativeReady && activeCombatant.id === playerCombatant.id && encounter.turn.action && !encounter.pendingResponse;
@@ -1272,7 +1346,7 @@ export default function Home() {
           {skillFlow && <div className="choice-panel"><h3>{skillFlow} check</h3><p>Roll using the character’s sheet modifiers and applicable conditions. The result does not automatically reveal information or change an enemy’s behavior.</p>{skillActionChoices[skillFlow].map(skill => <button key={skill} type="button" onClick={() => {
             const result = executeSkillAction(encounter, skillFlow, skill);
             if (!result.legal) { setFeedback(result.reason); return; }
-            setEncounter(result.encounter); setLastRoll(result.roll); setFeedback(result.summary); setSkillFlow(null);
+            setEncounter(result.encounter); setLastRoll(result.roll); setRollExplanation(explainD20Roll({ kind: "ability-check", title: `${skillFlow}: ${skill} check`, roll: result.roll, nextStep: "Use this total with the scenario or DM to determine what is learned or how the creature responds." })); setFeedback(result.summary); setSkillFlow(null);
           }}>Roll {skill}</button>)}<button type="button" onClick={() => setSkillFlow(null)}>Cancel</button></div>}
           {breathFlow && breathFlow.resolution.type === "area-saving-throw" && (() => {
             const feature = { ...breathFlow, resolution: { ...breathFlow.resolution, area: { ...breathFlow.resolution.area, shape: breathShape, sizeFeet: breathShape === "line" ? 30 : 15 } } };
