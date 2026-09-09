@@ -10,7 +10,12 @@ export type ResolutionReceiptKind =
   | "enemy-turn"
   | "end-turn"
   | "recovery"
-  | "new-encounter";
+  | "new-encounter"
+  | "equipment"
+  | "object"
+  | "stand-up"
+  | "grapple-escape"
+  | "death-save";
 
 export interface ResolutionReceipt {
   kind: ResolutionReceiptKind;
@@ -31,6 +36,11 @@ const receiptCopy: Record<ResolutionReceiptKind, { eyebrow: string; title: strin
   "end-turn": { eyebrow: "Turn result", title: "Surina's turn is complete" },
   recovery: { eyebrow: "Recovery result", title: "Rest changes are applied" },
   "new-encounter": { eyebrow: "Encounter ready", title: "A fresh training encounter is prepared" },
+  equipment: { eyebrow: "Equipment result", title: "Surina changed what she is holding" },
+  object: { eyebrow: "Object result", title: "The nearby object is updated" },
+  "stand-up": { eyebrow: "Movement result", title: "Surina stood up" },
+  "grapple-escape": { eyebrow: "Grapple result", title: "The escape attempt is resolved" },
+  "death-save": { eyebrow: "Death save result", title: "Surina's survival track is updated" },
 };
 
 function signed(value: number): string {
@@ -66,6 +76,13 @@ export function buildResolutionReceipt(input: {
     changes.push(`Round ${input.after.round}`);
   }
 
+  if (input.kind === "object") {
+    for (const afterCell of input.after.map.terrain.filter((cell) => cell.door)) {
+      const beforeCell = input.before.map.terrain.find((cell) => cell.x === afterCell.x && cell.y === afterCell.y);
+      if (beforeCell?.kind !== afterCell.kind) changes.push(`${afterCell.label}: ${afterCell.kind === "wall" ? "closed" : "open"}`);
+    }
+  }
+
   for (const afterCombatant of input.after.combatants) {
     const beforeCombatant = input.before.combatants.find((combatant) => combatant.id === afterCombatant.id);
     if (!beforeCombatant) continue;
@@ -83,6 +100,19 @@ export function buildResolutionReceipt(input: {
     const moved = beforeActor.position.x !== afterActor.position.x || beforeActor.position.y !== afterActor.position.y;
     const movementSpent = input.before.turn.movementRemaining - input.after.turn.movementRemaining;
     if (moved) changes.push(`Position ${String.fromCharCode(65 + beforeActor.position.x)}${beforeActor.position.y + 1} → ${String.fromCharCode(65 + afterActor.position.x)}${afterActor.position.y + 1} · ${Math.max(0, movementSpent)} ft. spent`);
+    if (input.kind === "stand-up" && movementSpent > 0) changes.push(`Movement ${movementSpent} ft. spent · ${input.after.turn.movementRemaining} ft. remains`);
+
+    if (input.kind === "equipment") {
+      const heldNames = afterActor.inventory.filter((item) => afterActor.heldWeaponIds?.includes(item.id)).map((item) => item.name);
+      changes.push(`In hand: ${heldNames.join(", ") || "nothing"}`);
+      if (input.before.turn.objectInteractionUsed !== input.after.turn.objectInteractionUsed) changes.push("Free object interaction used");
+    }
+
+    if (input.kind === "death-save") {
+      changes.push(`Death saves: ${afterActor.deathSaves.successes} successes · ${afterActor.deathSaves.failures} failures`);
+      if (!beforeActor.stabilized && afterActor.stabilized) changes.push("Stable at 0 HP");
+      if (afterActor.deathSaves.failures >= 3) changes.push("Three failures · defeated");
+    }
 
     for (const afterResource of afterActor.resources) {
       const beforeResource = beforeActor.resources.find((resource) => resource.id === afterResource.id);

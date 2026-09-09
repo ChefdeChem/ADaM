@@ -417,8 +417,14 @@ export default function Home() {
   function rollPendingDeathSave() {
     const result = rollDeathSave(encounter, activeCombatant.id);
     setEncounter(result.encounter);
-    if (result.playerRoll) setLastRoll(result.playerRoll);
+    if (result.playerRoll) {
+      const after = result.encounter.combatants.find((combatant) => combatant.id === activeCombatant.id)!;
+      const outcomeCopy = after.hitPoints.current > 0 ? "Natural 20 · 1 HP" : after.deathSaves.failures >= 3 ? "Three failures" : after.stabilized ? "Stabilized" : result.playerRoll.total >= 10 ? "Success" : "Failure";
+      setLastRoll(result.playerRoll);
+      setRollExplanation(explainD20Roll({ kind: "saving-throw", title: "Death saving throw", roll: result.playerRoll, target: { label: "DC", value: 10 }, outcome: outcomeCopy, nextStep: after.hitPoints.current > 0 ? "Surina is conscious and can act if her turn resources remain." : after.stabilized || after.deathSaves.failures >= 3 ? "This solo encounter is complete." : "End the turn. Surina rolls again at the start of her next turn if still unstable." }));
+    }
     setFeedback(result.summary);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "death-save", before: encounter, after: result.encounter, actorId: activeCombatant.id, summary: result.summary }));
   }
 
   async function handleImport(event: ChangeEvent<HTMLInputElement>) {
@@ -560,11 +566,31 @@ export default function Home() {
   }
 
   function escapeGrapple(effectId: string, ability: EscapeAbility) {
+    const dc = encounter.effects.find((effect) => effect.id === effectId)?.grapple?.escapeDc ?? 0;
     const result = resolveGrappleEscape(encounter, effectId, ability);
     if (!result.legal) { setFeedback(result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
+    setRollExplanation(explainD20Roll({ kind: "ability-check", title: `Escape Grapple: ${ability}`, roll: result.roll, target: { label: "DC", value: dc }, outcome: result.roll.total >= dc ? "Escaped" : "Still Grappled", nextStep: result.roll.total >= dc ? "Surina can move with any remaining movement." : "The Action is spent and Surina's Speed remains 0." }));
+    setResolutionReceipt(buildResolutionReceipt({ kind: "grapple-escape", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
     setFeedback(result.summary);
+  }
+
+  function changeHeldWeapon(itemId: string) {
+    const result = handleWeapon(encounter, playerCombatant.id, itemId);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "equipment", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
+  }
+
+  function interactWithNearbyDoor(x: number, y: number) {
+    const result = interactWithDoor(encounter, x, y);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
+    setInteractionFlow(null);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "object", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
   }
 
   function voluntarilyReleaseGrapple(effectId: string) {
@@ -725,6 +751,7 @@ export default function Home() {
       : action.id === "disengage"
         ? " Your movement will not provoke opportunity attacks for the rest of this turn."
         : "";
+    if (action.id === "stand-up") setResolutionReceipt(buildResolutionReceipt({ kind: "stand-up", before: encounter, after: next, actorId: playerCombatant.id, summary: `${playerCombatant.name} stands and is no longer Prone.` }));
     setFeedback(`${action.name}${targetCopy} accepted. This action does not require a dice roll.${tacticalCopy}`);
     if (action.id === "dash" || action.id === "disengage") focusSurface("map");
   }
@@ -1173,7 +1200,7 @@ export default function Home() {
         })}
         {playerCombatant.heldWeaponIds !== undefined && <section className="roll-coach" aria-label="Held weapons">
           <div><h3>Held weapons</h3><p>{!initiativeReady ? "Choose what you hold before rolling initiative. Unselected weapons remain carried." : "Draw or stow: first interaction is free, then uses an Action. Two-handed attacks need the other hand free."}</p>
-            {playerCombatant.inventory.filter(item => item.attackIds.length && item.current > 0).map(item => <button type="button" key={item.id} disabled={Boolean(encounter.pendingResponse) || (initiativeReady && activeCombatant.id !== playerCombatant.id)} onClick={() => { const r = handleWeapon(encounter, playerCombatant.id, item.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); }}>{playerCombatant.heldWeaponIds!.includes(item.id) ? "Stow" : "Draw"} {item.name}</button>)}
+            {playerCombatant.inventory.filter(item => item.attackIds.length && item.current > 0).map(item => <button type="button" key={item.id} disabled={Boolean(encounter.pendingResponse) || (initiativeReady && activeCombatant.id !== playerCombatant.id)} onClick={() => changeHeldWeapon(item.id)}>{playerCombatant.heldWeaponIds!.includes(item.id) ? "Stow" : "Draw"} {item.name}</button>)}
             <p>In hand: {[...playerCombatant.inventory.filter(item => playerCombatant.heldWeaponIds!.includes(item.id)).map(item => item.name), ...grappleEffectsFrom(encounter, playerCombatant.id).map(effect => `grappling ${encounter.combatants.find(c => c.id === effect.targetCombatantId)?.name ?? "creature"}`)].join(", ") || "none (Unarmed Strike available)"}</p>
             {grappleEffectsFrom(encounter, playerCombatant.id).map(effect => <button type="button" key={`release-${effect.id}`} disabled={Boolean(encounter.pendingResponse)} onClick={() => voluntarilyReleaseGrapple(effect.id)}>Release {encounter.combatants.find(c => c.id === effect.targetCombatantId)?.name ?? "grapple"} · No Action</button>)}
           </div>
@@ -1422,7 +1449,7 @@ export default function Home() {
             {interactionFlow === "ready" && <><p>Select an enemy on the map, then a weapon and a supported perceivable trigger. Range, visibility, held equipment, and the Reaction are checked when the trigger occurs.</p>{playerCombatant.attacks.flatMap(attack => ([{ id: "finishes-moving", label: "after movement" }, { id: "becomes-attackable", label: "when first attackable" }] as Array<{ id: ReadyAttackTrigger; label: string }>).map(trigger => <button key={`${attack.id}:${trigger.id}`} type="button" onClick={() => { const r = readyAttack(encounter, attack.id, encounter.selectedTargetId ?? "", trigger.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); }}>{attack.name} · {trigger.label}</button>))}</>}
             {interactionFlow === "help" && <><p>Distract an adjacent enemy for an ally’s next attack, or roll Medicine to stabilize an adjacent ally at 0 HP. Helping yourself is not allowed.</p>{encounter.combatants.filter(c => c.id !== playerCombatant.id).map(target => <button key={target.id} type="button" onClick={() => { const r = help(encounter, target.side === playerCombatant.side ? "stabilize" : "attack", target.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); if ("roll" in r && r.roll) setLastRoll(r.roll); setFeedback(r.summary); setInteractionFlow(null); }}>{target.side === playerCombatant.side ? "Stabilize" : "Distract"} {target.name}</button>)}</>}
             {interactionFlow === "help" && <><label><input type="checkbox" checked={assistanceConfirmed} onChange={e => setAssistanceConfirmed(e.target.checked)} /> The adjacent ally can understand and use my assistance</label>{encounter.combatants.filter(c => c.side === playerCombatant.side && c.id !== playerCombatant.id && c.hitPoints.current > 0).flatMap(ally => playerCombatant.skillProficiencies.map(skill => <button type="button" key={`${ally.id}:${skill}`} onClick={() => { const r = helpAbility(encounter, ally.id, skill, assistanceConfirmed); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); setAssistanceConfirmed(false); }}>Help {ally.name}: {skill}</button>))}</>}
-            {interactionFlow === "utilize" && <><p>The first simple door interaction on your turn is free. Another uses the Utilize Action. The squeaky practice door ends Hide. Locked doors need a supported unlocking method.</p>{nearbyDoors(encounter).map(door => <button type="button" key={`${door.x}:${door.y}`} onClick={() => { const r = interactWithDoor(encounter, door.x, door.y); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); }}>{door.kind === "wall" ? "Open" : "Close"} {door.label}</button>)}</>}
+            {interactionFlow === "utilize" && <><p>The first simple door interaction on your turn is free. Another uses the Utilize Action. The squeaky practice door ends Hide. Locked doors need a supported unlocking method.</p>{nearbyDoors(encounter).map(door => <button type="button" key={`${door.x}:${door.y}`} onClick={() => interactWithNearbyDoor(door.x, door.y)}>{door.kind === "wall" ? "Open" : "Close"} {door.label}</button>)}</>}
             <button type="button" onClick={() => setInteractionFlow(null)}>Cancel</button>
           </div>}
           {skillFlow && <div className="choice-panel"><h3>{skillFlow} check</h3><p>Roll using the character’s sheet modifiers and applicable conditions. The result does not automatically reveal information or change an enemy’s behavior.</p>{skillActionChoices[skillFlow].map(skill => <button key={skill} type="button" onClick={() => {
