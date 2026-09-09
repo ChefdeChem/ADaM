@@ -1,6 +1,16 @@
 import type { EncounterState } from "../domain/combat";
 
-export type ResolutionReceiptKind = "attack" | "movement" | "breath-weapon" | "lay-on-hands" | "defense";
+export type ResolutionReceiptKind =
+  | "attack"
+  | "movement"
+  | "breath-weapon"
+  | "lay-on-hands"
+  | "defense"
+  | "initiative"
+  | "enemy-turn"
+  | "end-turn"
+  | "recovery"
+  | "new-encounter";
 
 export interface ResolutionReceipt {
   kind: ResolutionReceiptKind;
@@ -16,6 +26,11 @@ const receiptCopy: Record<ResolutionReceiptKind, { eyebrow: string; title: strin
   "breath-weapon": { eyebrow: "Breath Weapon result", title: "The breath resolves across its area" },
   "lay-on-hands": { eyebrow: "Lay on Hands result", title: "Healing and cleansing are applied" },
   defense: { eyebrow: "Defense result", title: "The required response is resolved" },
+  initiative: { eyebrow: "Initiative result", title: "Turn order is ready" },
+  "enemy-turn": { eyebrow: "Enemy turn result", title: "ADaM finished the enemy action" },
+  "end-turn": { eyebrow: "Turn result", title: "Surina's turn is complete" },
+  recovery: { eyebrow: "Recovery result", title: "Rest changes are applied" },
+  "new-encounter": { eyebrow: "Encounter ready", title: "A fresh training encounter is prepared" },
 };
 
 function signed(value: number): string {
@@ -34,6 +49,22 @@ export function buildResolutionReceipt(input: {
   const changes: string[] = [];
   const beforeActor = input.before.combatants.find((combatant) => combatant.id === input.actorId);
   const afterActor = input.after.combatants.find((combatant) => combatant.id === input.actorId);
+
+  if (input.kind === "initiative") {
+    changes.push(`Turn order: ${input.after.combatants.map((combatant) => `${combatant.name} ${combatant.initiative}`).join(" · ")}`);
+    changes.push(`${input.after.combatants[input.after.activeIndex]?.name ?? "The first combatant"} acts first`);
+  }
+
+  if (input.kind === "new-encounter") {
+    changes.push(`${input.after.combatants.length - 1} hostile ${input.after.combatants.length - 1 === 1 ? "creature" : "creatures"} ready`);
+    changes.push("Choose held weapons before initiative");
+    changes.push("Roll initiative to begin");
+  }
+
+  if (input.kind === "end-turn") {
+    changes.push(`Next turn: ${input.after.combatants[input.after.activeIndex]?.name ?? "unknown"}`);
+    changes.push(`Round ${input.after.round}`);
+  }
 
   for (const afterCombatant of input.after.combatants) {
     const beforeCombatant = input.before.combatants.find((combatant) => combatant.id === afterCombatant.id);
@@ -62,6 +93,15 @@ export function buildResolutionReceipt(input: {
 
     if (beforeActor.reactionAvailable !== afterActor.reactionAvailable) {
       changes.push(`Reaction ${afterActor.reactionAvailable ? "restored" : "used"}`);
+    }
+
+    if (input.kind === "recovery") {
+      const beforeDice = input.before.recoveryState?.hitDiceRemaining;
+      const afterDice = input.after.recoveryState?.hitDiceRemaining;
+      if (beforeDice !== undefined && afterDice !== undefined && beforeDice !== afterDice) changes.push(`Hit Dice ${beforeDice} → ${afterDice}`);
+      const beforeMinutes = input.before.recoveryState?.elapsedMinutes ?? 0;
+      const afterMinutes = input.after.recoveryState?.elapsedMinutes ?? 0;
+      if (beforeMinutes !== afterMinutes) changes.push(`Downtime +${afterMinutes - beforeMinutes} minutes`);
     }
   }
 

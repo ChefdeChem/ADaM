@@ -282,7 +282,9 @@ export default function Home() {
         const result = resolveEnemyTurn(encounter, experienceMode);
         setEncounter(result.encounter);
         setLastRoll(result.damageRoll ?? result.attackRoll);
-        setFeedback(result.steps.map((step) => step.summary).join(" "));
+        const summary = result.steps.map((step) => step.summary).join(" ");
+        setFeedback(summary);
+        setResolutionReceipt(buildResolutionReceipt({ kind: "enemy-turn", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary, concealEnemyHitPoints: experienceMode === "advanced" }));
         setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "showing");
         return;
       }
@@ -291,7 +293,7 @@ export default function Home() {
       setFeedback("Enemy turn complete. Initiative advances to the next living combatant.");
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [activeCombatant?.id, activeCombatant?.name, activeCombatant?.side, encounter, enemyTurnPhase, experienceMode, initiativeReady, outcome]);
+  }, [activeCombatant?.id, activeCombatant?.name, activeCombatant?.side, encounter, enemyTurnPhase, experienceMode, initiativeReady, outcome, playerCombatant.id]);
 
   function finishPlayerResponse(nextEncounter: typeof encounter, summary: string, playerRoll: ReturnType<typeof rollD20> | null) {
     nextEncounter = resumePointHazards(nextEncounter);
@@ -466,6 +468,7 @@ export default function Home() {
       persistCharacterRoster(storedCharacters.map((candidate) => candidate.id === nextCharacter.id ? nextCharacter : candidate));
     }
     setFeedback(`${result.summary} The recovered totals will carry into the next encounter.`);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "recovery", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: `${result.summary} The recovered totals carry into the next encounter.`, concealEnemyHitPoints: experienceMode === "advanced" }));
   }
 
   function updateReviewNumber(field: "level" | "armorClass" | "proficiencyBonus" | "speedFeet", value: string) {
@@ -562,7 +565,7 @@ export default function Home() {
     if (activeCombatant.side !== "player") { setFeedback("ADaM is resolving the enemy turn."); return; }
     if (deathSaveRequired && encounter.turn.action) { setFeedback("Roll the required death saving throw before ending this turn."); return; }
     if (activeCombatant.hitPoints.current <= 0 && action.id !== "end-turn") { setFeedback("An unconscious character cannot take actions."); return; }
-    if (action.id === "end-turn") { setEncounter((state) => endTurn(state)); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setBreathFlow(null); setToolFlow(null); setInteractionFlow(null); setFeedback("Turn ended. Initiative advanced."); return; }
+    if (action.id === "end-turn") { const nextEncounter = endTurn(encounter); setEncounter(nextEncounter); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setBreathFlow(null); setToolFlow(null); setInteractionFlow(null); setFeedback("Turn ended. Initiative advanced."); setResolutionReceipt(buildResolutionReceipt({ kind: "end-turn", before: encounter, after: nextEncounter, actorId: playerCombatant.id, summary: "Surina's turn ended and initiative advanced to the next living combatant." })); return; }
     if (action.id === "attack") {
       setChoiceMode("attack");
       setAttackFlow(null);
@@ -710,7 +713,9 @@ export default function Home() {
     setEncounter(result.encounter);
     setLastRoll(result.playerRoll);
     setScenarioBuilderOpen(false);
-    setFeedback(`You rolled ${result.playerRoll.total}. ADaM rolled initiative for ${result.enemyRolls.length} ${result.enemyRolls.length === 1 ? "enemy" : "enemies"}. ${result.encounter.combatants[0].name} acts first.`);
+    const summary = `You rolled ${result.playerRoll.total}. ADaM rolled initiative for ${result.enemyRolls.length} ${result.enemyRolls.length === 1 ? "enemy" : "enemies"}. ${result.encounter.combatants[0].name} acts first.`;
+    setFeedback(summary);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "initiative", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary, concealEnemyHitPoints: experienceMode === "advanced" }));
   }
 
   function castRitualBeforeInitiative(spell: CharacterSpell) {
@@ -842,7 +847,8 @@ export default function Home() {
     const setup: ScenarioSetup = { prompt: setupMode === "guided" ? "" : scenarioPrompt, environment, objective, difficulty };
     const next = generateScriptedScenario(setupMode === "describe" ? scenarioPrompt : setup);
     if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
-    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(createPlayableEncounter(sourceCharacter, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`);
+    const nextEncounter = createPlayableEncounter(sourceCharacter, next);
+    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${next.opening} Roll your initiative to begin.`); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${next.opening} The encounter is reset and ready for initiative.` }));
     setScenarioBuilderOpen(false);
   }
 
@@ -853,7 +859,8 @@ export default function Home() {
     setDifficulty(template.setup.difficulty);
     const next = generateScriptedScenario(template.setup);
     if (doorPractice) next.grid = { ...next.grid, terrain: [...next.grid.terrain.filter(c => c.x !== 2 || c.y < 5), { x: 2, y: 5, kind: "wall", label: "Door frame" }, { x: 2, y: 7, kind: "wall", label: "Door frame" }, { x: 2, y: 6, kind: "wall", label: "Squeaky practice door", door: { locked: false, noisy: true } }] };
-    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(createPlayableEncounter(sourceCharacter, next)); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`);
+    const nextEncounter = createPlayableEncounter(sourceCharacter, next);
+    setInteractionFlow(null); setSkillFlow(null); setBreathFlow(null); setScenario(next); setEncounter(nextEncounter); setAttackFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setChoiceMode(null); setEnemyTurnPhase("idle"); setFeedback(`${template.name} loaded. ${next.opening} Roll your initiative to begin.`); setResolutionReceipt(buildResolutionReceipt({ kind: "new-encounter", before: encounter, after: nextEncounter, actorId: sourceCharacter.id, summary: `${template.name} loaded. The encounter is reset and ready for initiative.` }));
     setScenarioBuilderOpen(false);
   }
 

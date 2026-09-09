@@ -209,6 +209,9 @@ button{cursor:pointer}
 .resolution-receipt.receipt-attack{border-left-color:#8c332a}.resolution-receipt.receipt-attack .receipt-heading span{color:#8c332a}
 .resolution-receipt.receipt-breath-weapon{border-left-color:#b45a2a}.resolution-receipt.receipt-breath-weapon .receipt-heading span{color:#8d421e}
 .resolution-receipt.receipt-defense{border-left-color:#594269}.resolution-receipt.receipt-defense .receipt-heading span{color:#594269}
+.resolution-receipt.receipt-initiative,.resolution-receipt.receipt-new-encounter{border-left-color:#8d6b34}.resolution-receipt.receipt-initiative .receipt-heading span,.resolution-receipt.receipt-new-encounter .receipt-heading span{color:#755a2d}
+.resolution-receipt.receipt-enemy-turn{border-left-color:#59615b;background:#f1f2ee}.resolution-receipt.receipt-enemy-turn .receipt-heading span{color:#414843}
+.resolution-receipt.receipt-recovery{border-left-color:#3f6253;background:#edf5ef}.resolution-receipt.receipt-recovery .receipt-heading span{color:#3f6253}
 @media(max-width:560px){.receipt-heading{display:block}.receipt-heading button{margin-top:10px}.receipt-changes{display:grid}.receipt-changes span{font-size:14px}}
 
 .roll-coach{display:grid;grid-template-columns:1fr auto;align-items:center;gap:20px;margin:18px 0;padding:18px 20px;border:1px solid #b99a5a;border-left:5px solid var(--gold);background:#fff7e5;box-shadow:0 8px 24px #5a45221a}
