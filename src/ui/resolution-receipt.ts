@@ -15,7 +15,12 @@ export type ResolutionReceiptKind =
   | "object"
   | "stand-up"
   | "grapple-escape"
-  | "death-save";
+  | "death-save"
+  | "grapple"
+  | "shove"
+  | "help"
+  | "ready"
+  | "hide";
 
 export interface ResolutionReceipt {
   kind: ResolutionReceiptKind;
@@ -41,6 +46,11 @@ const receiptCopy: Record<ResolutionReceiptKind, { eyebrow: string; title: strin
   "stand-up": { eyebrow: "Movement result", title: "Surina stood up" },
   "grapple-escape": { eyebrow: "Grapple result", title: "The escape attempt is resolved" },
   "death-save": { eyebrow: "Death save result", title: "Surina's survival track is updated" },
+  grapple: { eyebrow: "Grapple result", title: "The Grapple attempt is resolved" },
+  shove: { eyebrow: "Shove result", title: "The Shove attempt is resolved" },
+  help: { eyebrow: "Help result", title: "Surina's assistance is prepared" },
+  ready: { eyebrow: "Ready result", title: "The prepared attack is tracked" },
+  hide: { eyebrow: "Hide result", title: "Surina's Stealth attempt is resolved" },
 };
 
 function signed(value: number): string {
@@ -83,6 +93,34 @@ export function buildResolutionReceipt(input: {
     }
   }
 
+  const addedEffects = input.after.effects.filter((effect) => !input.before.effects.some((beforeEffect) => beforeEffect.id === effect.id));
+  if (input.kind === "help") {
+    for (const effect of addedEffects) {
+      const target = input.after.combatants.find((combatant) => combatant.id === effect.targetCombatantId);
+      if (effect.helpAttack) changes.push(`Next ally attack against ${target?.name ?? "the target"}: Advantage`);
+      if (effect.helpCheck) changes.push(`${target?.name ?? "Ally"}'s next ${effect.helpCheck} check: Advantage`);
+    }
+  }
+  if (input.kind === "ready") {
+    const prepared = addedEffects.find((effect) => effect.readiedAttack)?.readiedAttack;
+    if (prepared) {
+      const attack = afterActor?.attacks.find((candidate) => candidate.id === prepared.attackId);
+      const target = input.after.combatants.find((combatant) => combatant.id === prepared.targetId);
+      changes.push(`Prepared: ${attack?.name ?? "weapon attack"} against ${target?.name ?? "the target"}`);
+      changes.push(`Trigger: ${prepared.trigger === "becomes-attackable" ? "target first becomes attackable" : "target finishes moving"}`);
+      changes.push("Reaction remains ready");
+    } else if (input.before.pendingResponse?.type === "readied-attack") {
+      if (input.after.pendingResponse?.type === "readied-attack" && input.after.pendingResponse.phase === "attack-roll") changes.push("Trigger accepted · roll the attack next");
+      else if (input.after.pendingResponse?.type === "readied-attack" && input.after.pendingResponse.phase === "damage-roll") changes.push("Attack hit · roll damage next");
+      else if (input.before.pendingResponse.phase === "choice" && beforeActor?.reactionAvailable === afterActor?.reactionAvailable) changes.push("Trigger ignored · Reaction preserved");
+      else changes.push("Readied attack resolved");
+    }
+  }
+  if (input.kind === "hide") {
+    const hidden = addedEffects.find((effect) => effect.hidden)?.hidden;
+    changes.push(hidden ? `Hidden · Perception DC ${hidden.dc}` : "Hide failed · Surina remains detectable");
+  }
+
   for (const afterCombatant of input.after.combatants) {
     const beforeCombatant = input.before.combatants.find((combatant) => combatant.id === afterCombatant.id);
     if (!beforeCombatant) continue;
@@ -94,6 +132,10 @@ export function buildResolutionReceipt(input: {
     const removedConditions = beforeCombatant.conditions.filter((condition) => !afterCombatant.conditions.includes(condition));
     for (const condition of gainedConditions) changes.push(`${afterCombatant.name} gained ${condition}`);
     for (const condition of removedConditions) changes.push(`${afterCombatant.name} removed ${condition}`);
+    if (input.kind === "help" && !beforeCombatant.stabilized && afterCombatant.stabilized) changes.push(`${afterCombatant.name} stabilized at 0 HP`);
+    if (input.kind === "shove" && (beforeCombatant.position.x !== afterCombatant.position.x || beforeCombatant.position.y !== afterCombatant.position.y) && afterCombatant.id !== input.actorId) {
+      changes.push(`${afterCombatant.name} moved ${String.fromCharCode(65 + beforeCombatant.position.x)}${beforeCombatant.position.y + 1} → ${String.fromCharCode(65 + afterCombatant.position.x)}${afterCombatant.position.y + 1}`);
+    }
   }
 
   if (beforeActor && afterActor) {

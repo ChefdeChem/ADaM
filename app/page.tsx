@@ -551,7 +551,10 @@ export default function Home() {
     if (!result.legal) { setFeedback(result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
+    const target = encounter.combatants.find((combatant) => combatant.id === targetId);
+    if (result.roll) setRollExplanation(explainD20Roll({ kind: "saving-throw", title: `${target?.name ?? "Target"}: ${result.saveAbility} save`, roll: result.roll, target: { label: "DC", value: result.dc }, outcome: result.saved ? "Shove resisted" : mode === "prone" ? "Knocked Prone" : "Pushed if space permits", nextStep: "Surina's Action is spent. She may use remaining movement or end her turn." }));
     setFeedback(result.summary);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "shove", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary, concealEnemyHitPoints: experienceMode === "advanced" }));
     setChoiceMode(null); setAttackFlow(null); setUnarmedFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
   }
 
@@ -561,7 +564,10 @@ export default function Home() {
     if (!result.legal) { setFeedback(result.reason); return; }
     setEncounter(result.encounter);
     setLastRoll(result.roll);
+    const target = encounter.combatants.find((combatant) => combatant.id === targetId);
+    if (result.roll) setRollExplanation(explainD20Roll({ kind: "saving-throw", title: `${target?.name ?? "Target"}: ${result.saveAbility} save`, roll: result.roll, target: { label: "DC", value: result.dc }, outcome: result.saved ? "Grapple avoided" : "Grappled if not immune", nextStep: result.saved ? "Surina's Action is spent. Choose movement or end the turn." : "The target's Speed is 0. Surina needs one hand to maintain the Grapple." }));
     setFeedback(result.summary);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "grapple", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
     setChoiceMode(null); setAttackFlow(null); setUnarmedFlow(null); setSpellFlow(null); setFeatureFlow(null); setToolFlow(null); setInteractionFlow(null);
   }
 
@@ -591,6 +597,48 @@ export default function Home() {
     setFeedback(result.summary);
     setInteractionFlow(null);
     setResolutionReceipt(buildResolutionReceipt({ kind: "object", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
+  }
+
+  function performHelp(mode: "attack" | "stabilize", targetId: string) {
+    const result = help(encounter, mode, targetId);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    if ("roll" in result && result.roll) {
+      const target = result.encounter.combatants.find((combatant) => combatant.id === targetId);
+      setLastRoll(result.roll);
+      setRollExplanation(explainD20Roll({ kind: "ability-check", title: "Help: Medicine check", roll: result.roll, target: { label: "DC", value: 10 }, outcome: target?.stabilized ? "Ally stabilized" : "Ally remains unstable", nextStep: "Surina's Action is spent. The ally remains at 0 HP." }));
+    }
+    setFeedback(result.summary);
+    setInteractionFlow(null);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "help", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
+  }
+
+  function performSkillHelp(targetId: string, skill: string) {
+    const result = helpAbility(encounter, targetId, skill, assistanceConfirmed);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
+    setInteractionFlow(null);
+    setAssistanceConfirmed(false);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "help", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
+  }
+
+  function prepareReadiedAttack(attackId: string, targetId: string, trigger: ReadyAttackTrigger) {
+    const result = readyAttack(encounter, attackId, targetId, trigger);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setFeedback(result.summary);
+    setInteractionFlow(null);
+    setResolutionReceipt(buildResolutionReceipt({ kind: "ready", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
+  }
+
+  function resolvePendingReadiedAttack(choice: "accept" | "decline" | "roll") {
+    const result = resolveReadiedAttack(encounter, choice);
+    setEncounter(result.encounter);
+    if ("roll" in result && result.roll) setLastRoll(result.roll);
+    setFeedback(result.summary);
+    setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
+    setResolutionReceipt(buildResolutionReceipt({ kind: "ready", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary, concealEnemyHitPoints: experienceMode === "advanced" }));
   }
 
   function voluntarilyReleaseGrapple(effectId: string) {
@@ -701,7 +749,7 @@ export default function Home() {
     if (action.id === "hide") {
       const result = hide(encounter); if (!result.legal) { setFeedback(result.reason); return; }
       const hidden = result.encounter.effects.some((effect) => effect.hidden && effect.targetCombatantId === playerCombatant.id);
-      setEncounter(result.encounter); setLastRoll(result.roll); setRollExplanation(explainD20Roll({ kind: "ability-check", title: "Hide: Stealth check", roll: result.roll, target: { label: "DC", value: 15 }, outcome: hidden ? "Hidden" : "Still detectable", nextStep: hidden ? "Move carefully, stay out of unobstructed enemy view, or choose another action on a later turn." : "The Action is spent. Reposition behind Total Cover before trying again on a later turn." })); setFeedback(result.summary); return;
+      setEncounter(result.encounter); setLastRoll(result.roll); setRollExplanation(explainD20Roll({ kind: "ability-check", title: "Hide: Stealth check", roll: result.roll, target: { label: "DC", value: 15 }, outcome: hidden ? "Hidden" : "Still detectable", nextStep: hidden ? "Move carefully, stay out of unobstructed enemy view, or choose another action on a later turn." : "The Action is spent. Reposition behind Total Cover before trying again on a later turn." })); setFeedback(result.summary); setResolutionReceipt(buildResolutionReceipt({ kind: "hide", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary })); return;
     }
     if (["help", "ready", "utilize", "use-object"].includes(action.id)) {
       setInteractionFlow(action.id === "use-object" ? "utilize" : action.id as "help" | "ready" | "utilize"); setChoiceMode(null); setAttackFlow(null); setSpellFlow(null); setBreathFlow(null); return;
@@ -1213,11 +1261,7 @@ export default function Home() {
           <div><span>DM-controlled turn · {modeCopy[experienceMode].label} tactics · {enemyTurnPhase}</span><h3>{activeCombatant.name}</h3><p>ADaM controls this creature&apos;s movement, targeting, action selection, attack roll, and damage roll. Tactical decision quality scales with the selected experience mode.</p></div>
           <div className="dm-turn-badge"><strong>ADaM</strong><small>resolving enemy</small></div>
         </section>}
-        {encounter.pendingResponse?.type === "readied-attack" && <div className="response-panel"><h3>Readied attack</h3><p>{encounter.pendingResponse.trigger === "finishes-moving" ? "The selected enemy finished moving." : "The selected enemy became a legal target for your prepared weapon."} Release your prepared attack or ignore this trigger.</p>{[...(encounter.pendingResponse.phase === "choice" ? ["accept", "decline"] : ["roll"])].map(choice => <button type="button" key={choice} onClick={() => {
-          const result = resolveReadiedAttack(encounter, choice as "accept" | "decline" | "roll");
-          setEncounter(result.encounter); if ("roll" in result && result.roll) setLastRoll(result.roll); setFeedback(result.summary);
-          setEnemyTurnPhase(result.encounter.pendingResponse ? "awaiting-player" : "resolving");
-        }}>{choice === "accept" ? "Use Reaction" : choice === "decline" ? "Ignore trigger" : encounter.pendingResponse?.type === "readied-attack" && encounter.pendingResponse.phase === "damage-roll" ? "Roll damage" : "Roll attack"}</button>)}</div>}
+        {encounter.pendingResponse?.type === "readied-attack" && <div className="response-panel"><h3>Readied attack</h3><p>{encounter.pendingResponse.trigger === "finishes-moving" ? "The selected enemy finished moving." : "The selected enemy became a legal target for your prepared weapon."} Release your prepared attack or ignore this trigger.</p>{[...(encounter.pendingResponse.phase === "choice" ? ["accept", "decline"] : ["roll"])].map(choice => <button type="button" key={choice} onClick={() => resolvePendingReadiedAttack(choice as "accept" | "decline" | "roll")}>{choice === "accept" ? "Use Reaction" : choice === "decline" ? "Ignore trigger" : encounter.pendingResponse?.type === "readied-attack" && encounter.pendingResponse.phase === "damage-roll" ? "Roll damage" : "Roll attack"}</button>)}</div>}
         {encounter.pendingResponse?.type === "saving-throw" && (() => {
           const pending = encounter.pendingResponse;
           const modifier = effectiveSavingThrowModifier(encounter, pending.targetCombatantId, pending.ability.saveAbility);
@@ -1446,9 +1490,9 @@ export default function Home() {
           {choiceMode === "spell" && <div className="choice-panel"><div className="choice-heading"><div><span>Step 1 · Choose spell</span><strong>Spellbook and slot costs</strong></div><button type="button" onClick={() => { setChoiceMode(null); setSpellFlow(null); }}>Cancel</button></div><div className="choice-grid">{(character.spells ?? []).length ? (character.spells ?? []).map((spell) => { const validation = validateSpellAvailability(encounter, spell); const selected = spellFlow?.spell.id === spell.id; return <button type="button" key={spell.id} className={`${!validation.legal ? "illegal" : ""} ${selected ? "selected" : ""}`} onClick={() => chooseSpell(spell)}><span>{spell.level === 0 ? "Cantrip · free" : spell.freeCastResourceName ? `Level ${spell.level} · free use or slot` : `Level ${spell.level} · 1 slot`}{spell.ritual ? " · ritual" : ""}</span><strong>{spell.name}</strong><small>{spell.target === "self" ? "Self" : spell.target === "self-or-single" ? `Self or creature · ${spell.rangeFeet} ft.` : spell.target === "area" && spell.area ? `${spell.area.sizeFeet} ft. ${spell.area.shape}` : `${spell.rangeFeet} ft.`}{spell.concentration ? " · concentration" : ""}</small><p>{selected && spellFlow?.phase === "target" ? `${legalSpellTargetIds.size} legal target${legalSpellTargetIds.size === 1 ? "" : "s"} highlighted on the map.` : validation.legal ? spell.damage ?? spell.healing ?? spell.effect?.description ?? spell.description ?? "Spell ready." : validation.reason}</p></button>; }) : <div className="category-empty"><strong>No spells imported</strong><p>This character sheet does not contain spell choices yet.</p></div>}</div></div>}
           {encounter.effects.some(e => e.hidden && e.targetCombatantId === playerCombatant.id) && <button type="button" onClick={() => { setEncounter(endHiding(encounter, playerCombatant.id, "player speaks loudly")); setFeedback("You speak above a whisper and stop hiding."); }}>Speak loudly / end Hide</button>}
           {interactionFlow && <div className="choice-panel"><h3>{interactionFlow === "ready" ? "Ready a weapon attack" : interactionFlow === "help" ? "Help" : "Object interaction"}</h3>
-            {interactionFlow === "ready" && <><p>Select an enemy on the map, then a weapon and a supported perceivable trigger. Range, visibility, held equipment, and the Reaction are checked when the trigger occurs.</p>{playerCombatant.attacks.flatMap(attack => ([{ id: "finishes-moving", label: "after movement" }, { id: "becomes-attackable", label: "when first attackable" }] as Array<{ id: ReadyAttackTrigger; label: string }>).map(trigger => <button key={`${attack.id}:${trigger.id}`} type="button" onClick={() => { const r = readyAttack(encounter, attack.id, encounter.selectedTargetId ?? "", trigger.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); }}>{attack.name} · {trigger.label}</button>))}</>}
-            {interactionFlow === "help" && <><p>Distract an adjacent enemy for an ally’s next attack, or roll Medicine to stabilize an adjacent ally at 0 HP. Helping yourself is not allowed.</p>{encounter.combatants.filter(c => c.id !== playerCombatant.id).map(target => <button key={target.id} type="button" onClick={() => { const r = help(encounter, target.side === playerCombatant.side ? "stabilize" : "attack", target.id); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); if ("roll" in r && r.roll) setLastRoll(r.roll); setFeedback(r.summary); setInteractionFlow(null); }}>{target.side === playerCombatant.side ? "Stabilize" : "Distract"} {target.name}</button>)}</>}
-            {interactionFlow === "help" && <><label><input type="checkbox" checked={assistanceConfirmed} onChange={e => setAssistanceConfirmed(e.target.checked)} /> The adjacent ally can understand and use my assistance</label>{encounter.combatants.filter(c => c.side === playerCombatant.side && c.id !== playerCombatant.id && c.hitPoints.current > 0).flatMap(ally => playerCombatant.skillProficiencies.map(skill => <button type="button" key={`${ally.id}:${skill}`} onClick={() => { const r = helpAbility(encounter, ally.id, skill, assistanceConfirmed); if (!r.legal) { setFeedback(r.reason); return; } setEncounter(r.encounter); setFeedback(r.summary); setInteractionFlow(null); setAssistanceConfirmed(false); }}>Help {ally.name}: {skill}</button>))}</>}
+            {interactionFlow === "ready" && <><p>Select an enemy on the map, then a weapon and a supported perceivable trigger. Range, visibility, held equipment, and the Reaction are checked when the trigger occurs.</p>{playerCombatant.attacks.flatMap(attack => ([{ id: "finishes-moving", label: "after movement" }, { id: "becomes-attackable", label: "when first attackable" }] as Array<{ id: ReadyAttackTrigger; label: string }>).map(trigger => <button key={`${attack.id}:${trigger.id}`} type="button" onClick={() => prepareReadiedAttack(attack.id, encounter.selectedTargetId ?? "", trigger.id)}>{attack.name} · {trigger.label}</button>))}</>}
+            {interactionFlow === "help" && <><p>Distract an adjacent enemy for an ally’s next attack, or roll Medicine to stabilize an adjacent ally at 0 HP. Helping yourself is not allowed.</p>{encounter.combatants.filter(c => c.id !== playerCombatant.id).map(target => <button key={target.id} type="button" onClick={() => performHelp(target.side === playerCombatant.side ? "stabilize" : "attack", target.id)}>{target.side === playerCombatant.side ? "Stabilize" : "Distract"} {target.name}</button>)}</>}
+            {interactionFlow === "help" && <><label><input type="checkbox" checked={assistanceConfirmed} onChange={e => setAssistanceConfirmed(e.target.checked)} /> The adjacent ally can understand and use my assistance</label>{encounter.combatants.filter(c => c.side === playerCombatant.side && c.id !== playerCombatant.id && c.hitPoints.current > 0).flatMap(ally => playerCombatant.skillProficiencies.map(skill => <button type="button" key={`${ally.id}:${skill}`} onClick={() => performSkillHelp(ally.id, skill)}>Help {ally.name}: {skill}</button>))}</>}
             {interactionFlow === "utilize" && <><p>The first simple door interaction on your turn is free. Another uses the Utilize Action. The squeaky practice door ends Hide. Locked doors need a supported unlocking method.</p>{nearbyDoors(encounter).map(door => <button type="button" key={`${door.x}:${door.y}`} onClick={() => interactWithNearbyDoor(door.x, door.y)}>{door.kind === "wall" ? "Open" : "Close"} {door.label}</button>)}</>}
             <button type="button" onClick={() => setInteractionFlow(null)}>Cancel</button>
           </div>}
