@@ -25,7 +25,12 @@ export type ResolutionReceiptKind =
   | "disengage"
   | "search"
   | "study"
-  | "influence";
+  | "influence"
+  | "divine-sense"
+  | "dodge"
+  | "release-grapple"
+  | "reveal-self"
+  | "opportunity-attack";
 
 export interface ResolutionReceipt {
   kind: ResolutionReceiptKind;
@@ -61,6 +66,11 @@ const receiptCopy: Record<ResolutionReceiptKind, { eyebrow: string; title: strin
   search: { eyebrow: "Search result", title: "Surina's observation check is ready" },
   study: { eyebrow: "Study result", title: "Surina's knowledge check is ready" },
   influence: { eyebrow: "Influence result", title: "Surina's social check is ready" },
+  "divine-sense": { eyebrow: "Divine Sense result", title: "Surina's supernatural awareness is active" },
+  dodge: { eyebrow: "Dodge result", title: "Surina is focused on defense" },
+  "release-grapple": { eyebrow: "Grapple result", title: "Surina released the creature" },
+  "reveal-self": { eyebrow: "Hide result", title: "Surina is no longer hidden" },
+  "opportunity-attack": { eyebrow: "Opportunity Attack result", title: "Surina's reaction is resolved" },
 };
 
 function signed(value: number): string {
@@ -104,6 +114,7 @@ export function buildResolutionReceipt(input: {
   }
 
   const addedEffects = input.after.effects.filter((effect) => !input.before.effects.some((beforeEffect) => beforeEffect.id === effect.id));
+  const removedEffects = input.before.effects.filter((effect) => !input.after.effects.some((afterEffect) => afterEffect.id === effect.id));
   if (input.kind === "help") {
     for (const effect of addedEffects) {
       const target = input.after.combatants.find((combatant) => combatant.id === effect.targetCombatantId);
@@ -132,6 +143,39 @@ export function buildResolutionReceipt(input: {
   }
   if (input.kind === "dash") changes.push(`Movement ${input.before.turn.movementRemaining} → ${input.after.turn.movementRemaining} ft.`);
   if (input.kind === "disengage" && !input.before.turn.disengaged && input.after.turn.disengaged) changes.push("Movement this turn does not provoke Opportunity Attacks");
+  if (input.kind === "divine-sense") {
+    const sense = addedEffects.find((effect) => effect.sense);
+    if (sense?.sense) {
+      const tenMinutes = Boolean(sense.expiresAt && sense.expiresAt.round - input.after.round >= 100);
+      changes.push(`Active within ${sense.sense.rangeFeet} ft. · ${tenMinutes ? "10 minutes" : "until the end of Surina's next turn"}`);
+      changes.push("Qualifying creature locations and sacred auras update as the encounter changes");
+      if (sense.modifiers.endsOnIncapacitated) changes.push("Ends if Surina is Incapacitated");
+    }
+  }
+  if (input.kind === "dodge" && addedEffects.some((effect) => effect.modifiers.dodge)) {
+    changes.push("Visible attackers have Disadvantage against Surina");
+    changes.push("Surina has Advantage on Dexterity saving throws");
+    changes.push("Ends at Surina's next turn, if Incapacitated, or if Speed becomes 0");
+  }
+  if (input.kind === "release-grapple") {
+    const released = removedEffects.find((effect) => effect.grapple);
+    const target = released ? input.after.combatants.find((combatant) => combatant.id === released.targetCombatantId) : undefined;
+    if (released) changes.push(`${target?.name ?? "Target"} released · Speed is no longer set to 0 by this Grapple`);
+    changes.push("No Action spent");
+  }
+  if (input.kind === "reveal-self") {
+    const stoppedHiding = removedEffects.some((effect) => effect.hidden && effect.targetCombatantId === input.actorId);
+    if (stoppedHiding) changes.push("Hidden ended · enemies can detect Surina normally");
+    changes.push("No Action spent");
+  }
+  if (input.kind === "opportunity-attack" && input.before.pendingResponse?.type === "opportunity-attack") {
+    const beforePending = input.before.pendingResponse;
+    const afterPending = input.after.pendingResponse?.type === "opportunity-attack" ? input.after.pendingResponse : null;
+    if (beforePending.phase === "choice" && afterPending?.phase === "attack-roll") changes.push("Melee weapon selected · roll the attack next");
+    else if (beforePending.phase === "choice" && !afterPending) changes.push("Opportunity Attack declined · Reaction preserved");
+    else if (beforePending.phase === "attack-roll" && afterPending?.phase === "damage-roll") changes.push("Attack hit · roll damage next");
+    else if (!afterPending) changes.push("Opportunity Attack resolved · interrupted movement continued if the target survived");
+  }
   if (["search", "study", "influence"].includes(input.kind)) {
     if (input.kind === "influence") {
       const target = input.after.combatants.find((combatant) => combatant.id === input.after.selectedTargetId);
@@ -154,6 +198,9 @@ export function buildResolutionReceipt(input: {
     for (const condition of removedConditions) changes.push(`${afterCombatant.name} removed ${condition}`);
     if (input.kind === "help" && !beforeCombatant.stabilized && afterCombatant.stabilized) changes.push(`${afterCombatant.name} stabilized at 0 HP`);
     if (input.kind === "shove" && (beforeCombatant.position.x !== afterCombatant.position.x || beforeCombatant.position.y !== afterCombatant.position.y) && afterCombatant.id !== input.actorId) {
+      changes.push(`${afterCombatant.name} moved ${String.fromCharCode(65 + beforeCombatant.position.x)}${beforeCombatant.position.y + 1} → ${String.fromCharCode(65 + afterCombatant.position.x)}${afterCombatant.position.y + 1}`);
+    }
+    if (input.kind === "opportunity-attack" && (beforeCombatant.position.x !== afterCombatant.position.x || beforeCombatant.position.y !== afterCombatant.position.y) && afterCombatant.id !== input.actorId) {
       changes.push(`${afterCombatant.name} moved ${String.fromCharCode(65 + beforeCombatant.position.x)}${beforeCombatant.position.y + 1} → ${String.fromCharCode(65 + afterCombatant.position.x)}${afterCombatant.position.y + 1}`);
     }
   }
@@ -199,6 +246,7 @@ export function buildResolutionReceipt(input: {
 
   if (input.after.pendingResponse && !input.before.pendingResponse) changes.push("Player response required before play continues");
   if (!input.after.turn.action && input.before.turn.action) changes.push("Action used");
+  if (!input.after.turn.bonusAction && input.before.turn.bonusAction) changes.push("Bonus Action used");
   if (!changes.length) changes.push(input.after.pendingResponse ? "Continue with the highlighted response" : "No hit points, conditions, position, or tracked resources changed");
 
   return { kind: input.kind, eyebrow: copy.eyebrow, title: copy.title, summary: input.summary, changes };
