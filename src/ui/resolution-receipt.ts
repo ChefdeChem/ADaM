@@ -20,7 +20,12 @@ export type ResolutionReceiptKind =
   | "shove"
   | "help"
   | "ready"
-  | "hide";
+  | "hide"
+  | "dash"
+  | "disengage"
+  | "search"
+  | "study"
+  | "influence";
 
 export interface ResolutionReceipt {
   kind: ResolutionReceiptKind;
@@ -51,6 +56,11 @@ const receiptCopy: Record<ResolutionReceiptKind, { eyebrow: string; title: strin
   help: { eyebrow: "Help result", title: "Surina's assistance is prepared" },
   ready: { eyebrow: "Ready result", title: "The prepared attack is tracked" },
   hide: { eyebrow: "Hide result", title: "Surina's Stealth attempt is resolved" },
+  dash: { eyebrow: "Dash result", title: "Surina gained movement for this turn" },
+  disengage: { eyebrow: "Disengage result", title: "Surina can reposition safely" },
+  search: { eyebrow: "Search result", title: "Surina's observation check is ready" },
+  study: { eyebrow: "Study result", title: "Surina's knowledge check is ready" },
+  influence: { eyebrow: "Influence result", title: "Surina's social check is ready" },
 };
 
 function signed(value: number): string {
@@ -119,6 +129,16 @@ export function buildResolutionReceipt(input: {
   if (input.kind === "hide") {
     const hidden = addedEffects.find((effect) => effect.hidden)?.hidden;
     changes.push(hidden ? `Hidden · Perception DC ${hidden.dc}` : "Hide failed · Surina remains detectable");
+  }
+  if (input.kind === "dash") changes.push(`Movement ${input.before.turn.movementRemaining} → ${input.after.turn.movementRemaining} ft.`);
+  if (input.kind === "disengage" && !input.before.turn.disengaged && input.after.turn.disengaged) changes.push("Movement this turn does not provoke Opportunity Attacks");
+  if (["search", "study", "influence"].includes(input.kind)) {
+    if (input.kind === "influence") {
+      const target = input.after.combatants.find((combatant) => combatant.id === input.after.selectedTargetId);
+      if (target) changes.push(`Approach: ${target.name}`);
+    }
+    changes.push("The scenario or DM interprets this total");
+    changes.push("No automatic narrative outcome applied");
   }
 
   for (const afterCombatant of input.after.combatants) {

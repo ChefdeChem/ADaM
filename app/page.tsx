@@ -641,6 +641,17 @@ export default function Home() {
     setResolutionReceipt(buildResolutionReceipt({ kind: "ready", before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary, concealEnemyHitPoints: experienceMode === "advanced" }));
   }
 
+  function performSkillAction(actionId: "search" | "study" | "influence", skill: string) {
+    const result = executeSkillAction(encounter, actionId, skill);
+    if (!result.legal) { setFeedback(result.reason); return; }
+    setEncounter(result.encounter);
+    setLastRoll(result.roll);
+    setRollExplanation(explainD20Roll({ kind: "ability-check", title: `${actionId}: ${skill} check`, roll: result.roll, nextStep: "Use this total with the scenario or DM to determine what is learned or how the creature responds." }));
+    setFeedback(result.summary);
+    setSkillFlow(null);
+    setResolutionReceipt(buildResolutionReceipt({ kind: actionId, before: encounter, after: result.encounter, actorId: playerCombatant.id, summary: result.summary }));
+  }
+
   function voluntarilyReleaseGrapple(effectId: string) {
     const result = releaseGrapple(encounter, effectId, playerCombatant.id);
     if (!result.legal) { setFeedback(result.reason); return; }
@@ -800,6 +811,7 @@ export default function Home() {
         ? " Your movement will not provoke opportunity attacks for the rest of this turn."
         : "";
     if (action.id === "stand-up") setResolutionReceipt(buildResolutionReceipt({ kind: "stand-up", before: encounter, after: next, actorId: playerCombatant.id, summary: `${playerCombatant.name} stands and is no longer Prone.` }));
+    if (action.id === "dash" || action.id === "disengage") setResolutionReceipt(buildResolutionReceipt({ kind: action.id, before: encounter, after: next, actorId: playerCombatant.id, summary: `${action.name}${targetCopy} accepted.${tacticalCopy}` }));
     setFeedback(`${action.name}${targetCopy} accepted. This action does not require a dice roll.${tacticalCopy}`);
     if (action.id === "dash" || action.id === "disengage") focusSurface("map");
   }
@@ -1496,11 +1508,7 @@ export default function Home() {
             {interactionFlow === "utilize" && <><p>The first simple door interaction on your turn is free. Another uses the Utilize Action. The squeaky practice door ends Hide. Locked doors need a supported unlocking method.</p>{nearbyDoors(encounter).map(door => <button type="button" key={`${door.x}:${door.y}`} onClick={() => interactWithNearbyDoor(door.x, door.y)}>{door.kind === "wall" ? "Open" : "Close"} {door.label}</button>)}</>}
             <button type="button" onClick={() => setInteractionFlow(null)}>Cancel</button>
           </div>}
-          {skillFlow && <div className="choice-panel"><h3>{skillFlow} check</h3><p>Roll using the character’s sheet modifiers and applicable conditions. The result does not automatically reveal information or change an enemy’s behavior.</p>{skillActionChoices[skillFlow].map(skill => <button key={skill} type="button" onClick={() => {
-            const result = executeSkillAction(encounter, skillFlow, skill);
-            if (!result.legal) { setFeedback(result.reason); return; }
-            setEncounter(result.encounter); setLastRoll(result.roll); setRollExplanation(explainD20Roll({ kind: "ability-check", title: `${skillFlow}: ${skill} check`, roll: result.roll, nextStep: "Use this total with the scenario or DM to determine what is learned or how the creature responds." })); setFeedback(result.summary); setSkillFlow(null);
-          }}>Roll {skill}</button>)}<button type="button" onClick={() => setSkillFlow(null)}>Cancel</button></div>}
+          {skillFlow && <div className="choice-panel"><h3>{skillFlow} check</h3><p>Roll using the character’s sheet modifiers and applicable conditions. The result does not automatically reveal information or change an enemy’s behavior.</p>{skillActionChoices[skillFlow].map(skill => <button key={skill} type="button" onClick={() => performSkillAction(skillFlow as "search" | "study" | "influence", skill)}>Roll {skill}</button>)}<button type="button" onClick={() => setSkillFlow(null)}>Cancel</button></div>}
           {breathFlow && breathFlow.resolution.type === "area-saving-throw" && (() => {
             const feature = { ...breathFlow, resolution: { ...breathFlow.resolution, area: { ...breathFlow.resolution.area, shape: breathShape, sizeFeet: breathShape === "line" ? 30 : 15 } } };
             const candidates = encounter.combatants.filter((combatant) => combatant.id !== playerCombatant.id && combatant.hitPoints.current > 0).map((combatant) => {
