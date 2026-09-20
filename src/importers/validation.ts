@@ -16,6 +16,8 @@ function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+const normalize = (value: string) => value.trim().toLowerCase();
+
 export function expectedProficiencyBonus(level: number): number {
   return 2 + Math.floor((Math.max(1, Math.min(20, level)) - 1) / 4);
 }
@@ -106,12 +108,130 @@ export function validateSpells(spells: CharacterSpell[] | undefined): ImportIssu
   return issues;
 }
 
+export function validateEquipmentInventory(character: Character): ImportIssue[] {
+  const issues: ImportIssue[] = [];
+  const names = new Set<string>();
+  for (const [index, item] of (character.profile?.equipment ?? []).entries()) {
+    const label = item.name?.trim() || `Equipment item ${index + 1}`;
+    const name = normalize(item.name ?? "");
+    if (!name) issues.push(issue("error", "equipment", "missing-equipment-name", `Equipment item ${index + 1} needs a name.`));
+    else if (names.has(name)) issues.push(issue("error", "equipment", "duplicate-equipment-name", `${label} appears more than once; combine it into one quantity so equipment rules have one unambiguous match.`));
+    else names.add(name);
+    if (!Number.isInteger(item.quantity) || item.quantity < 0) issues.push(issue("error", "equipment", "invalid-equipment-quantity", `${label} needs a nonnegative whole-number quantity.`));
+    if (item.weightPounds !== undefined && (!finite(item.weightPounds) || item.weightPounds < 0)) issues.push(issue("error", "equipment", "invalid-equipment-weight", `${label} needs a nonnegative numeric weight when supplied.`));
+  }
+  return issues;
+}
+
+export function validateEquipmentRuleLinks(character: Character): ImportIssue[] {
+  const issues: ImportIssue[] = [];
+  const ids = new Set<string>();
+  const equipmentNames = new Set((character.profile?.equipment ?? []).map((item) => normalize(item.name)));
+  for (const [index, rule] of (character.equipmentRules ?? []).entries()) {
+    const label = rule.name?.trim() || `Equipment rule ${index + 1}`;
+    if (!rule.id?.trim()) issues.push(issue("error", "equipment", "missing-equipment-rule-id", `${label} needs an equipment rule ID.`));
+    else if (ids.has(rule.id)) issues.push(issue("error", "equipment", "duplicate-equipment-rule-id", `${label} repeats equipment rule ID “${rule.id}”.`));
+    else ids.add(rule.id);
+    if (!rule.name?.trim()) issues.push(issue("error", "equipment", "missing-equipment-rule-name", `Equipment rule ${index + 1} needs a name.`));
+    else if (!equipmentNames.has(normalize(rule.name))) issues.push(issue("error", "equipment", "missing-equipment-item", `${label} has an executable equipment rule but no matching imported inventory item.`));
+  }
+  return issues;
+}
+
+export function validateWeaponEquipmentLinks(character: Character): ImportIssue[] {
+  const issues: ImportIssue[] = [];
+  const attackIds = new Set((character.attacks ?? []).map((attack) => attack.id));
+  for (const rule of character.equipmentRules ?? []) {
+    if (rule.resolution.type !== "weapon" && rule.resolution.type !== "ammunition") continue;
+    if (!rule.resolution.attackIds.length) issues.push(issue("error", "equipment", "missing-equipment-attack-link", `${rule.name} must link to at least one imported attack.`));
+    for (const attackId of rule.resolution.attackIds) {
+      if (!attackIds.has(attackId)) issues.push(issue("error", "equipment", "unknown-equipment-attack", `${rule.name} links to unknown attack ID “${attackId}”.`));
+    }
+    for (const attackId of rule.resolution.expendOnAttackIds ?? []) {
+      if (!rule.resolution.attackIds.includes(attackId)) issues.push(issue("error", "equipment", "invalid-expend-attack-link", `${rule.name} expends on attack ID “${attackId}” without governing that attack.`));
+    }
+    if (rule.resolution.type === "ammunition" && !(rule.resolution.expendOnAttackIds?.length)) {
+      issues.push(issue("error", "equipment", "missing-ammunition-expenditure", `${rule.name} must identify which linked attacks expend one unit.`));
+    }
+  }
+  return issues;
+}
+
+export function validateFeatureOwnershipLinks(character: Character): ImportIssue[] {
+  const issues: ImportIssue[] = [];
+  const mechanics = [
+    ["action", character.featureActions ?? []],
+    ["passive", character.passiveFeatures ?? []],
+    ["trigger", character.triggeredFeatures ?? []],
+  ] as const;
+  for (const [kind, entries] of mechanics) {
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      if (!entry.id?.trim()) issues.push(issue("error", "features", `missing-${kind}-feature-id`, `${entry.name || "Feature"} needs an executable ${kind} ID.`));
+      else if (ids.has(entry.id)) issues.push(issue("error", "features", `duplicate-${kind}-feature-id`, `${entry.name} repeats executable ${kind} ID “${entry.id}”.`));
+      else ids.add(entry.id);
+    }
+  }
+  const actionIds = new Set((character.featureActions ?? []).map((entry) => entry.id));
+  const passiveIds = new Set((character.passiveFeatures ?? []).map((entry) => entry.id));
+  const triggerIds = new Set((character.triggeredFeatures ?? []).map((entry) => entry.id));
+  const attackIds = new Set((character.attacks ?? []).map((entry) => entry.id));
+  const linkedActions = new Set<string>();
+  const linkedPassives = new Set<string>();
+  const linkedTriggers = new Set<string>();
+  for (const feature of character.profile?.features ?? []) {
+    if (feature.executableActionId) {
+      linkedActions.add(feature.executableActionId);
+      if (!actionIds.has(feature.executableActionId)) issues.push(issue("error", "features", "unknown-feature-action-link", `${feature.name} links to unknown feature action ID “${feature.executableActionId}”.`));
+    }
+    if (feature.executablePassiveId) {
+      linkedPassives.add(feature.executablePassiveId);
+      if (!passiveIds.has(feature.executablePassiveId)) issues.push(issue("error", "features", "unknown-passive-feature-link", `${feature.name} links to unknown passive feature ID “${feature.executablePassiveId}”.`));
+    }
+    if (feature.executableTriggerId) {
+      linkedTriggers.add(feature.executableTriggerId);
+      if (!triggerIds.has(feature.executableTriggerId)) issues.push(issue("error", "features", "unknown-triggered-feature-link", `${feature.name} links to unknown triggered feature ID “${feature.executableTriggerId}”.`));
+    }
+    for (const attackId of feature.executableAttackIds ?? []) {
+      if (!attackIds.has(attackId)) issues.push(issue("error", "features", "unknown-feature-attack-link", `${feature.name} links to unknown attack ID “${attackId}”.`));
+    }
+  }
+  for (const feature of character.featureActions ?? []) if (!linkedActions.has(feature.id)) issues.push(issue("warning", "features", "unowned-feature-action", `${feature.name} is executable but is not linked from an imported source feature; confirm that the character owns it.`));
+  for (const feature of character.passiveFeatures ?? []) if (!linkedPassives.has(feature.id)) issues.push(issue("warning", "features", "unowned-passive-feature", `${feature.name} is executable but is not linked from an imported source feature; confirm that the character owns it.`));
+  for (const feature of character.triggeredFeatures ?? []) if (!linkedTriggers.has(feature.id)) issues.push(issue("warning", "features", "unowned-triggered-feature", `${feature.name} is executable but is not linked from an imported source feature; confirm that the character owns it.`));
+  return issues;
+}
+
+export function validateFeatureDependencies(character: Character): ImportIssue[] {
+  const issues: ImportIssue[] = [];
+  const resourceNames = new Set(character.resources.map((resource) => normalize(resource.name)));
+  const spellIds = new Set((character.spells ?? []).map((spell) => spell.id));
+  const requireResource = (featureName: string, resourceName: string | undefined) => {
+    if (resourceName && !resourceNames.has(normalize(resourceName))) issues.push(issue("error", "features", "missing-feature-resource", `${featureName} uses resource “${resourceName}”, but that resource was not imported.`));
+  };
+  for (const feature of character.featureActions ?? []) requireResource(feature.name, feature.resourceName);
+  for (const feature of character.triggeredFeatures ?? []) requireResource(feature.name, feature.resourceName);
+  for (const feature of character.passiveFeatures ?? []) {
+    if (feature.resolution.type === "ability-check-reroll") requireResource(feature.name, feature.resolution.resourceName);
+    if (feature.resolution.type === "free-spell-cast") {
+      requireResource(feature.name, feature.resolution.resourceName);
+      if (!spellIds.has(feature.resolution.spellId)) issues.push(issue("error", "features", "missing-feature-spell", `${feature.name} links to unknown spell ID “${feature.resolution.spellId}”.`));
+    }
+  }
+  return issues;
+}
+
 export function validateImportedCharacter(character: Character): ImportValidationReport {
   const issues = [
     ...validateCoreStatistics(character),
     ...validateAttacks(character.attacks),
     ...validateResources(character.resources),
     ...validateSpells(character.spells),
+    ...validateEquipmentInventory(character),
+    ...validateEquipmentRuleLinks(character),
+    ...validateWeaponEquipmentLinks(character),
+    ...validateFeatureOwnershipLinks(character),
+    ...validateFeatureDependencies(character),
   ];
   for (const spell of character.spells ?? []) {
     if (spell.level === 0 || spell.unsupportedReason) continue;

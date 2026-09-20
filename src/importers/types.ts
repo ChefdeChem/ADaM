@@ -1,7 +1,7 @@
 import type { Character } from "../domain/character";
 
 export type ImportFormat = "json" | "fillable-pdf" | "flattened-pdf";
-export type ImportIssueSection = "core" | "attacks" | "resources" | "spells" | "source";
+export type ImportIssueSection = "core" | "attacks" | "resources" | "spells" | "equipment" | "features" | "source";
 export type ImportIssue = {
   severity: "error" | "warning";
   section: ImportIssueSection;

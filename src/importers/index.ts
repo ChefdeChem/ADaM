@@ -13,4 +13,6 @@ export async function importCharacterFile(file: File): Promise<ImportResult> {
 export { validateImportedCharacter } from "./validation";
 export { importPlayabilityChecks } from "./playability";
 export type { ImportPlayabilityCheck } from "./playability";
+export { importCrossReferenceChecks } from "./cross-references";
+export type { ImportCrossReferenceCheck } from "./cross-references";
 export type { ImportFormat, ImportIssue, ImportValidationReport, ImportResult } from "./types";

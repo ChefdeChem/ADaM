@@ -23,7 +23,7 @@ import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions"
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { areaTargets } from "../src/engine/areas";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
-import { importCharacterFile, importPlayabilityChecks, validateImportedCharacter, type ImportResult } from "../src/importers";
+import { importCharacterFile, importCrossReferenceChecks, importPlayabilityChecks, validateImportedCharacter, type ImportResult } from "../src/importers";
 import { rulesets } from "../src/rulesets";
 import { createPlayableEncounter, DEFAULT_COMBAT_RULESET, detectCharacterEdition, editionLabel, playableCharacter } from "../src/rulesets/edition-policy";
 import { handleWeapon } from "../src/engine/weapon-hands";
@@ -231,6 +231,7 @@ export default function Home() {
   const importMechanicCoverage = useMemo(() => reviewCharacter ? buildCharacterMechanicCoverage(reviewCharacter) : null, [reviewCharacter]);
   const importValidation = useMemo(() => reviewCharacter ? validateImportedCharacter(reviewCharacter) : null, [reviewCharacter]);
   const importPlayability = useMemo(() => reviewCharacter ? importPlayabilityChecks(reviewCharacter) : [], [reviewCharacter]);
+  const importCrossReferences = useMemo(() => reviewCharacter ? importCrossReferenceChecks(reviewCharacter) : [], [reviewCharacter]);
   const surinaGuide = buildTurnGuidance({
     initiativeReady,
     outcome,
@@ -1249,6 +1250,10 @@ export default function Home() {
         <section className="import-playability" aria-label="Import to play checks">
           <div className="import-playability-heading"><span>Import to play</span><strong>Five combat handoffs</strong></div>
           <div className="import-playability-grid">{importPlayability.map((check) => <div key={check.id} className={check.status}><span>{check.label}</span><strong>{check.status === "ready" ? "Ready" : "Review"}</strong><p>{check.detail}</p></div>)}</div>
+        </section>
+        <section className="import-playability import-cross-references" aria-label="Equipment and feature cross-reference checks">
+          <div className="import-playability-heading"><span>Import fidelity</span><strong>Five equipment and feature gates</strong></div>
+          <div className="import-playability-grid">{importCrossReferences.map((check) => <div key={check.id} className={check.status}><span>{check.label}</span><strong>{check.status === "ready" ? "Ready" : check.status === "blocked" ? "Blocked" : "Review"}</strong><p>{check.detail}</p></div>)}</div>
         </section>
         {importMechanicCoverage && <div className="mechanic-coverage import-coverage"><div><span>Mechanic coverage</span><strong>{importMechanicCoverage.supportSummary.fullySupported}/{importMechanicCoverage.total} fully supported</strong></div><p><b>{importMechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{importMechanicCoverage.supportSummary.partial}</b> partial · <b>{importMechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>Detected edition: {editionLabel(detectCharacterEdition(reviewCharacter).edition)} · Source: {reviewCharacter.source.fileName ?? "ADaM sample"} · {editionLabel(detectCharacterEdition(reviewCharacter).edition)} source assessment</small></div>}
         <div className="import-review-actions"><button type="button" onClick={() => { setPendingImport(null); setReviewCharacter(null); setMessage("Import canceled; the previous character remains active."); }}>Cancel</button><button type="submit" disabled={!importValidation?.ready}>{importValidation?.ready ? "Use this character" : "Resolve blockers"}</button></div>
