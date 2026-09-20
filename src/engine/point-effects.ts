@@ -20,7 +20,12 @@ function touchesHazardPoints(e: EncounterState, id: string, points?: { x: number
 
 type UtilityChoice = NonNullable<CharacterSpell["utilityChoices"]>[number];
 
-function validateUtilityPoint(encounter: EncounterState, choice: UtilityChoice, point: { x: number; y: number }): string | null {
+function validateUtilityPoint(encounter: EncounterState, choice: UtilityChoice, point: { x: number; y: number }, utilityDetail?: string): string | null {
+  if ((choice.resolution.type === "weather-sensor" || choice.resolution.type === "sensory-effect") && !utilityDetail?.trim()) {
+    return choice.resolution.type === "weather-sensor"
+      ? "Record the scenario or DM weather outlook before placing the weather sign."
+      : "Describe the harmless sensory effect before choosing its location.";
+  }
   if (choice.resolution.type !== "flame") return null;
   const flame = encounter.map.terrain.find((cell) => cell.x === point.x && cell.y === point.y)?.flame;
   if (!flame) return "Choose a registered candle, torch, campfire, or other nonmagical flame.";
@@ -34,6 +39,7 @@ function resolveUtilityChoice(
   spell: CharacterSpell,
   choice: UtilityChoice,
   point: { x: number; y: number },
+  utilityDetail?: string,
 ): { encounter: EncounterState; summary: string } {
   const caster = encounter.combatants[encounter.activeIndex];
   const coordinate = `${String.fromCharCode(65 + point.x)}${point.y + 1}`;
@@ -58,10 +64,11 @@ function resolveUtilityChoice(
     return { encounter: next, summary: `${caster.name} casts ${spell.name}, creating a ${choice.resolution.mode} at ${coordinate}.` };
   }
   if (choice.resolution.type === "weather-sensor") {
+    const forecast = utilityDetail!.trim();
     const next = applyEffect(encounter, {
       magical: true,
       name: `${spell.name}: Weather Sign`,
-      description: `A tiny sign at ${coordinate} represents the local weather outlook for the next 24 hours.`,
+      description: `A tiny sign at ${coordinate} represents this local weather outlook for the next 24 hours: ${forecast}`,
       sourceCombatantId: caster.id,
       targetCombatantId: caster.id,
       durationRounds: choice.resolution.durationRounds,
@@ -69,7 +76,7 @@ function resolveUtilityChoice(
       pointEffect: { type: "utility-marker", kind: "weather-sensor", sizeFeet: 5 },
       replaceExisting: true,
     });
-    return { encounter: next, summary: `${caster.name} casts ${spell.name}, creating a one-round weather sign at ${coordinate}.` };
+    return { encounter: next, summary: `${caster.name} casts ${spell.name}, creating a one-round weather sign at ${coordinate}: ${forecast}` };
   }
   if (choice.resolution.type === "bloom") {
     const next = applyEffect(encounter, {
@@ -83,7 +90,7 @@ function resolveUtilityChoice(
     return { encounter: next, summary: `${caster.name} casts ${spell.name}, causing a plant to bloom at ${coordinate}.` };
   }
   if (choice.resolution.type === "sensory-effect") {
-    return { encounter, summary: `${caster.name} casts ${spell.name}, creating a momentary harmless nature sensation in the 5-foot cube at ${coordinate}.` };
+    return { encounter, summary: `${caster.name} casts ${spell.name}, creating this momentary harmless nature sensation in the 5-foot cube at ${coordinate}: ${utilityDetail!.trim()}` };
   }
 
   const operation = choice.resolution.operation;
@@ -124,7 +131,7 @@ function resolveHazardAtPoint(encounter: EncounterState, effectId: string, comba
   return { legal: true, summary, damageRoll, saveRoll: roll, encounter: { ...next, log: [summary, ...next.log] } };
 }
 
-export function executePointSpell(encounter: EncounterState, spell: CharacterSpell, points: Array<{ x: number; y: number }>, random = Math.random, utilityChoiceId?: string): PointSpellResolution {
+export function executePointSpell(encounter: EncounterState, spell: CharacterSpell, points: Array<{ x: number; y: number }>, random = Math.random, utilityChoiceId?: string, utilityDetail?: string): PointSpellResolution {
   const availability = validateSpellAvailability(encounter, spell);
   if (!availability.legal) return { legal: false, reason: availability.reason ?? "That spell is not available.", encounter };
   const utilityChoice = spell.utilityChoices?.find((choice) => choice.id === utilityChoiceId);
@@ -140,13 +147,13 @@ export function executePointSpell(encounter: EncounterState, spell: CharacterSpe
     if (spell.requiresLineOfSight && !hasLineOfSightToPoint(encounter, caster.id, point.x, point.y)) return { legal: false, reason: "A chosen point is outside the caster's line of sight.", encounter };
   }
   if (utilityChoice) {
-    const utilityError = validateUtilityPoint(encounter, utilityChoice, points[0]);
+    const utilityError = validateUtilityPoint(encounter, utilityChoice, points[0], utilityDetail);
     if (utilityError) return { legal: false, reason: utilityError, encounter };
   }
   let next = spendSpellSlot(encounter, caster.id, spell.level);
   next = { ...next, turn: { ...next.turn, action: spell.castingTime === "action" ? false : next.turn.action, bonusAction: spell.castingTime === "bonus-action" ? false : next.turn.bonusAction } };
   if (utilityChoice) {
-    const utility = resolveUtilityChoice(next, spell, utilityChoice, points[0]);
+    const utility = resolveUtilityChoice(next, spell, utilityChoice, points[0], utilityDetail);
     return { legal: true, summary: utility.summary, encounter: { ...utility.encounter, log: [utility.summary, ...utility.encounter.log] } };
   }
   if (!spell.pointEffect) return { legal: false, reason: `${spell.name} is missing its point-effect definition.`, encounter };

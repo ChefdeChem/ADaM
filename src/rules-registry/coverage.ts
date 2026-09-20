@@ -90,6 +90,8 @@ function spellComponents(spell: CharacterSpell): MechanicComponent[] {
   if (spell.effect?.modifiers?.conditionImmunities) components.push("condition-immunity", "duration");
   if (spell.effect?.conditionGranted) components.push("condition", "duration");
   if (spell.effect?.endsWhenSourceHarmsTarget) components.push("trigger", "duration");
+  if (spell.effect?.socialInteractionAdvantageForSource) components.push("ability-check", "advantage");
+  if (spell.effect?.targetFriendlyToSource) components.push("condition");
   if (spell.effect?.turnStartTemporaryHitPoints) components.push("trigger", "recurring-effect", "temporary-hit-points");
   if (spell.effect?.turnStartDamage) components.push("trigger", "recurring-effect", "damage-roll");
   if (spell.effect?.turnStartSave) components.push("saving-throw", "duration");

@@ -18,6 +18,11 @@ export type DndBeyondCharacterData = {
   };
   savingThrowModifiers: Record<AbilityName, number>;
   attacks: CharacterAttack[];
+  editionAssessment: {
+    edition: "dnd-2014" | "dnd-2024" | "uncertain" | "mixed";
+    confidence: "high" | "medium" | "low";
+    evidence: string[];
+  };
 };
 
 const integer = (value: string | undefined) => {
@@ -48,6 +53,21 @@ const classNames = new Set([
 ]);
 
 const idFor = (name: string, index: number) => `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "attack"}-${index + 1}`;
+
+export function detectDndBeyondEdition(tokens: string[], className: string, level: number): DndBeyondCharacterData["editionAssessment"] {
+  const text = tokens.join(" ");
+  const clues: Array<{ edition: "dnd-2014" | "dnd-2024"; reason: string }> = [];
+  if (/\bweapon mastery\b|\bmastery properties\b/i.test(text)) clues.push({ edition: "dnd-2024", reason: "The sheet includes the 2024 Weapon Mastery feature." });
+  if (/\borigin feat\b|\bepic boon\b/i.test(text)) clues.push({ edition: "dnd-2024", reason: "The sheet includes a 2024 character-progression label." });
+  if (/paladin/i.test(className) && level === 1 && /\bdivine sense\b/i.test(text)) clues.push({ edition: "dnd-2014", reason: "A level-one Paladin sheet includes Divine Sense, which identifies the 2014 class progression." });
+  if (/\blay on hands\b/i.test(text) && /\bcure\b.{0,50}\bdisease\b|\bneutralize\b.{0,50}\bpoison\b/i.test(text)) clues.push({ edition: "dnd-2014", reason: "Lay on Hands includes the 2014 disease or poison option." });
+  if (/\blay on hands\b/i.test(text) && /\bbonus action\b/i.test(text)) clues.push({ edition: "dnd-2024", reason: "Lay on Hands includes the 2024 Bonus Action cost." });
+  const editions = new Set(clues.map((clue) => clue.edition));
+  const evidence = [...new Set(clues.map((clue) => clue.reason))];
+  if (!editions.size) return { edition: "uncertain", confidence: "low", evidence: ["No edition-specific feature clue was found in the extracted sheet text."] };
+  if (editions.size > 1) return { edition: "mixed", confidence: "low", evidence };
+  return { edition: clues[0].edition, confidence: clues.length > 1 ? "high" : "medium", evidence };
+}
 
 function extractAttacks(tokens: string[], start: number): CharacterAttack[] {
   const attacks: CharacterAttack[] = [];
@@ -129,10 +149,12 @@ export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterDat
   const saveValues = rawSaveTokens.map(integer).filter((item): item is number => item !== null).slice(0, 6);
   const savingThrowModifiers = Object.fromEntries(saveOrder.map((ability, index) => [ability, saveValues[index] ?? abilityModifier(abilityValues[abilityOrder.indexOf(ability)]!)])) as Record<AbilityName, number>;
 
+  const className = tokens[classIndex] || "Adventurer";
+  const level = integer(tokens[levelIndex]) ?? 1;
   return {
     name: tokens.slice(start, classIndex).join(" ") || "Unnamed Adventurer",
-    className: tokens[classIndex] || "Adventurer",
-    level: integer(tokens[levelIndex]) ?? 1,
+    className,
+    level,
     armorClass,
     speedFeet: integer(tokens[speedIndex]) ?? 30,
     hitPoints: { current: currentHitPoints, maximum: maximumHitPoints },
@@ -147,6 +169,7 @@ export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterDat
     },
     savingThrowModifiers,
     attacks,
+    editionAssessment: detectDndBeyondEdition(tokens, className, level),
   };
 }
 

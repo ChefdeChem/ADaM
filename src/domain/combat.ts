@@ -239,6 +239,8 @@ export type ActiveEffect = {
   conditionGranted?: string;
   endsWhenSourceHarmsTarget?: boolean;
   revealsSourceOnEnd?: boolean;
+  socialInteractionAdvantageForSource?: boolean;
+  targetFriendlyToSource?: boolean;
   sense?: { creatureTypes: string[]; rangeFeet: number; blockedByTotalCover: boolean };
   senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
   magicSchool?: import("./character").CharacterSpell["school"];

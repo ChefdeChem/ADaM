@@ -27,6 +27,8 @@ export type EffectInput = {
   conditionGranted?: string;
   endsWhenSourceHarmsTarget?: boolean;
   revealsSourceOnEnd?: boolean;
+  socialInteractionAdvantageForSource?: boolean;
+  targetFriendlyToSource?: boolean;
   sense?: ActiveEffect["sense"];
   senseMagic?: ActiveEffect["senseMagic"];
   magicSchool?: ActiveEffect["magicSchool"];
@@ -101,6 +103,8 @@ export function applyEffect(encounter: EncounterState, input: EffectInput): Enco
     conditionGranted: input.conditionGranted,
     endsWhenSourceHarmsTarget: input.endsWhenSourceHarmsTarget,
     revealsSourceOnEnd: input.revealsSourceOnEnd,
+    socialInteractionAdvantageForSource: input.socialInteractionAdvantageForSource,
+    targetFriendlyToSource: input.targetFriendlyToSource,
     sense: input.sense,
     senseMagic: input.senseMagic,
     magicSchool: input.magicSchool,
@@ -334,6 +338,20 @@ export function canHarmTarget(encounter: EncounterState, sourceCombatantId: stri
     effectHasStarted(encounter, effect)
     && effect.modifiers.preventsHarmingSource
     && effect.sourceCombatantId === targetCombatantId);
+}
+
+export function charmSocialInteractionAdvantage(encounter: EncounterState, sourceCombatantId: string, targetCombatantId: string): boolean {
+  return encounter.effects.some((effect) => effectHasStarted(encounter, effect)
+    && effect.sourceCombatantId === sourceCombatantId
+    && effect.targetCombatantId === targetCombatantId
+    && effect.socialInteractionAdvantageForSource);
+}
+
+export function targetRegardsSourceAsFriendly(encounter: EncounterState, sourceCombatantId: string, targetCombatantId: string): boolean {
+  return encounter.effects.some((effect) => effectHasStarted(encounter, effect)
+    && effect.sourceCombatantId === sourceCombatantId
+    && effect.targetCombatantId === targetCombatantId
+    && effect.targetFriendlyToSource);
 }
 
 export function endEffectsBrokenByHarm(encounter: EncounterState, sourceCombatantId: string, targetCombatantId: string): EncounterState {

@@ -14,6 +14,11 @@ export type EditionAssessment = {
 /** Examine build evidence, not a weapon property or the generic label '5e'. */
 export function detectCharacterEdition(character: Character): EditionAssessment {
   const clues: Array<{ edition: RulesetId; reason: string }> = [];
+  const importedAssessment = character.source.editionAssessment;
+  const importedMixed = importedAssessment?.edition === "mixed";
+  if (importedAssessment?.edition === "dnd-2014" || importedAssessment?.edition === "dnd-2024") {
+    clues.push({ edition: importedAssessment.edition, reason: `Imported sheet assessment: ${importedAssessment.edition === "dnd-2014" ? "2014" : "2024"}.` });
+  }
   if (character.rulesetId) clues.push({ edition: character.rulesetId, reason: `Declared character edition: ${character.rulesetId === "dnd-2014" ? "2014" : "2024"}.` });
   const features = character.featureActions ?? [];
   const descriptions = [...features, ...(character.profile?.features ?? [])];
@@ -26,11 +31,11 @@ export function detectCharacterEdition(character: Character): EditionAssessment 
       if (/bonus action/i.test(feature.description)) clues.push({ edition: "dnd-2024", reason: "Lay on Hands specifies a Bonus Action." });
     }
   }
-  const evidence = [...new Set(clues.map((clue) => clue.reason))];
+  const evidence = [...new Set([...(importedAssessment?.evidence ?? []), ...clues.map((clue) => clue.reason)])];
   const editions = new Set(clues.map((clue) => clue.edition));
   return {
-    edition: editions.size > 1 ? "mixed" : clues[0]?.edition ?? "uncertain",
-    confidence: editions.size !== 1 ? "low" : character.rulesetId || evidence.length > 1 ? "high" : "medium",
+    edition: importedMixed || editions.size > 1 ? "mixed" : clues[0]?.edition ?? "uncertain",
+    confidence: importedMixed || editions.size !== 1 ? "low" : character.rulesetId || importedAssessment?.confidence === "high" || evidence.length > 1 ? "high" : importedAssessment?.confidence ?? "medium",
     evidence,
   };
 }
@@ -68,22 +73,45 @@ export function playableCharacter(source: Character): { character: Character; as
   const longsword = source.attacks?.find((attack) => attack.id === "longsword" && attack.kind === "melee" && /^1d8\b/.test(attack.damage));
   const swordRule = source.equipmentRules?.find((rule) => rule.id === "longsword" && rule.resolution.type === "weapon" && rule.resolution.attackIds.includes("longsword"));
   const addVersatile = Boolean(longsword && swordRule && !source.attacks?.some((attack) => attack.id === "longsword-two-handed"));
-  const sourceAttacks = source.attacks?.map(attack => source.id === "surina-daardendrian" && attack.id === "glaive" ? {
+  const transformedAttacks = (source.attacks ?? []).map(attack => source.id === "surina-daardendrian" && attack.id === "glaive" ? {
     ...attack,
     requiresTwoHands: true,
     description: "Martial Heavy Reach Two-Handed weapon. The imported mastery label is not an owned character feature, so no mastery rider applies.",
   } : attack);
-  const attacks = addVersatile ? [...(sourceAttacks ?? []), {
+  const attacks = addVersatile ? [...transformedAttacks, {
     ...longsword!, id: "longsword-two-handed", name: "Longsword (two hands)",
     damage: longsword!.damage.replace(/^1d8\b/, "1d10"), requiresTwoHands: true,
     description: "Versatile: use 1d10 weapon damage with two hands. This does not grant Weapon Mastery. SRD 5.2.1, pp. 89-91.",
-  }] : sourceAttacks;
+  }] : transformedAttacks;
+  const fallbackStrengthModifier = Math.floor(((source.abilities?.strength ?? 10) - 10) / 2);
+  const playableAttacks = attacks.length ? attacks : [{
+    id: "derived-unarmed-strike",
+    name: "Unarmed Strike",
+    kind: "melee" as const,
+    attackBonus: fallbackStrengthModifier + (source.proficiencyBonus ?? 2),
+    damage: `${Math.max(0, 1 + fallbackStrengthModifier)} bludgeoning`,
+    normalRangeFeet: 5,
+    ability: "strength" as const,
+    description: "Derived current-resolution baseline for an imported sheet without parsed attacks. The uploaded source record remains unchanged.",
+  }];
   const equipmentRules = addVersatile ? source.equipmentRules?.map((rule) => rule === swordRule && rule.resolution.type === "weapon"
     ? { ...rule, resolution: { ...rule.resolution, attackIds: [...rule.resolution.attackIds, "longsword-two-handed"] } } : rule) : source.equipmentRules;
   if (source.id === "surina-daardendrian") notes.push("Surina's bounded trainer loop is ready for player testing. It includes explicit Breath Weapon aiming, live Divine Sense, touch-targeted Lay on Hands, visible Fire Resistance, all three Unarmed Strike options, held weapons, movement, reactions, conditions, combat recovery, and a second encounter. Narrative outcomes, custom Ready triggers, undefined objects, and unmodeled lighting still require adjudication.");
   notes.push("Approved trainer Hide ruling: entering an enemy's unobstructed view ends hiding automatically. Concealed detection uses Perception. Magical invisibility is separate. Current maps assume visible lighting and do not simulate special senses.");
   if (source.id === "surina-daardendrian") notes.push("Choose held weapons before initiative. Drawing or stowing on your turn shares the free object interaction with doors; further interactions use an Action. An Attack can draw one weapon if your hands allow it. Opportunity attacks require an already-held weapon. Glaive and two-handed Longsword attacks require both hands.");
-  return { assessment, notes, character: { ...source, actions: source.id === "surina-daardendrian" ? ["Attack", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Study", "Influence", "Utilize"] : source.actions, featureActions, attacks, equipmentRules } };
+  if (!source.attacks?.length) notes.push("Import profile: the uploaded source contained no parsed attacks. ADaM derived a current-resolution Unarmed Strike for the trainer without modifying the source record.");
+  return { assessment, notes, character: {
+    ...source,
+    speedFeet: source.speedFeet ?? 30,
+    resources: source.resources ?? [],
+    spells: source.spells,
+    actions: source.id === "surina-daardendrian"
+      ? ["Attack", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Study", "Influence", "Utilize"]
+      : source.actions ?? ["Attack", "Magic", "Dash", "Disengage", "Dodge", "Help", "Hide", "Ready", "Search", "Study", "Influence", "Utilize"],
+    featureActions,
+    attacks: playableAttacks,
+    equipmentRules,
+  } };
 }
 
 export function createPlayableEncounter(source: Character, scenario: Scenario): EncounterState {

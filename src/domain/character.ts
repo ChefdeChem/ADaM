@@ -94,6 +94,8 @@ export type CharacterSpell = {
     preventsHarmingSource?: boolean;
     endsWhenSourceHarmsTarget?: boolean;
     revealsSourceOnEnd?: boolean;
+    socialInteractionAdvantageForSource?: boolean;
+    targetFriendlyToSource?: boolean;
     senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
     rollBonus?: { die: "1d4" | "1d6"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
     consumeOnRollBonus?: boolean;
@@ -306,7 +308,16 @@ export type Character = {
   spells?: CharacterSpell[];
   actions?: string[];
   profile?: CharacterProfile;
-  source: { format: "json" | "fillable-pdf" | "flattened-pdf" | "sample"; fileName?: string; importedAt: string };
+  source: {
+    format: "json" | "fillable-pdf" | "flattened-pdf" | "sample";
+    fileName?: string;
+    importedAt: string;
+    editionAssessment?: {
+      edition: "dnd-2014" | "dnd-2024" | "uncertain" | "mixed";
+      confidence: "high" | "medium" | "low";
+      evidence: string[];
+    };
+  };
 };
 
 export const abilityModifier = (score: number) => Math.floor((score - 10) / 2);

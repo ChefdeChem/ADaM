@@ -18,7 +18,7 @@ export interface TurnGuidanceInput {
   hasRequiredResponse: boolean;
   choiceMode: "attack" | "spell" | null;
   attackPhase: "target" | "attack-roll" | "damage-roll" | null;
-  spellPhase: "resource" | "option" | "target" | "point" | "attack-roll" | "damage-roll" | null;
+  spellPhase: "resource" | "option" | "detail" | "target" | "point" | "attack-roll" | "damage-roll" | null;
   breathActive: boolean;
   healingPhase: "target" | "amount" | null;
   interactionActive: boolean;
@@ -107,7 +107,7 @@ export function buildTurnGuidance(input: TurnGuidanceInput): TurnGuidance {
     };
   }
 
-  if (input.breathActive || input.healingPhase || input.interactionActive || input.skillActive || input.spellPhase === "resource" || input.spellPhase === "option") {
+  if (input.breathActive || input.healingPhase || input.interactionActive || input.skillActive || input.spellPhase === "resource" || input.spellPhase === "option" || input.spellPhase === "detail") {
     return {
       phase: "choose-option",
       step: 2,

@@ -93,16 +93,28 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
     if (parsed) {
       const character: Character = {
         id: createId(),
-        ...parsed,
+        name: parsed.name,
+        className: parsed.className,
+        level: parsed.level,
+        armorClass: parsed.armorClass,
+        speedFeet: parsed.speedFeet,
+        hitPoints: parsed.hitPoints,
+        proficiencyBonus: parsed.proficiencyBonus,
+        abilities: parsed.abilities,
+        savingThrowModifiers: parsed.savingThrowModifiers,
+        attacks: parsed.attacks,
         resources: [],
         spells: [],
-        source: { format: "flattened-pdf", fileName: file.name, importedAt: new Date().toISOString() },
+        source: { format: "flattened-pdf", fileName: file.name, importedAt: new Date().toISOString(), editionAssessment: parsed.editionAssessment },
       };
+      const editionWarning = parsed.editionAssessment.edition === "uncertain" || parsed.editionAssessment.edition === "mixed"
+        ? "The source edition is not conclusive; ADaM preserved the extracted build and flagged it for review."
+        : `${parsed.editionAssessment.edition === "dnd-2014" ? "2014" : "2024"} source rules detected with ${parsed.editionAssessment.confidence} confidence.`;
       return {
         character,
         format: "flattened-pdf",
         requiresReview: true,
-        warnings: [`Flattened D&D Beyond sheet detected. ${parsed.attacks.length} weapon attacks and saving throw modifiers extracted; review the values before combat.`],
+        warnings: [`Flattened D&D Beyond sheet detected. ${parsed.attacks.length} weapon attacks and saving throw modifiers extracted; review the values before combat. ${editionWarning}`],
       };
     }
   } catch {

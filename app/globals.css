@@ -244,6 +244,11 @@ button{cursor:pointer}
 .roll-coach .response-actions button{min-width:180px;padding:11px 13px;background:#594269;box-shadow:none}
 .roll-coach .response-actions button.decline-response{background:#696a66}
 .response-actions em{display:block;margin-top:4px;color:#e3dce8;font-size:8px;font-style:normal;line-height:1.35}
+.utility-detail-coach{grid-template-columns:1fr}
+.utility-detail-coach form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:14px;width:100%}
+.utility-detail-coach form>span,.utility-detail-coach form>h3,.utility-detail-coach form>p{grid-column:1/-1}
+.utility-detail-coach label{display:grid;gap:6px;color:var(--muted);font-size:10px;font-weight:800}
+.utility-detail-coach input{min-height:44px;padding:10px 12px;border:1px solid #bd7d3a;background:#fff;color:var(--ink);font:inherit}
 .death-save-track{display:flex;gap:8px;margin-top:11px}.death-save-track span{padding:7px 9px;background:#fff8;color:#5c514d}.death-save-track strong{display:inline;margin-left:5px;font-family:Georgia,serif;font-size:14px}
 .dm-turn-badge{min-width:132px;padding:12px 15px;background:#252826;color:#fff;text-align:center}
 .dm-turn-badge strong,.dm-turn-badge small{display:block}.dm-turn-badge strong{color:var(--gold);font:500 20px Georgia,serif}.dm-turn-badge small{margin-top:3px;color:#c4c7c1;font-size:8px;text-transform:uppercase;letter-spacing:.09em}
@@ -253,7 +258,7 @@ button{cursor:pointer}
 .target-count strong,.target-count small{display:block}
 .target-count strong{font:500 27px Georgia,serif;color:var(--red)}
 .target-count small{margin-top:2px;color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.09em}
-@media(max-width:700px){.roll-coach{grid-template-columns:1fr}.roll-coach button{width:100%}.target-count{width:100%}}
+@media(max-width:700px){.roll-coach{grid-template-columns:1fr}.roll-coach button{width:100%}.target-count{width:100%}.utility-detail-coach form{grid-template-columns:1fr}}
 
 .tactical-map-panel{margin:18px 0;border:1px solid var(--line);background:#252826;box-shadow:0 12px 35px #4e463518}
 .map-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:16px 18px;border-bottom:1px solid #ffffff18;color:#fff}

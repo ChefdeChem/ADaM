@@ -29,7 +29,7 @@ function encounterFor(character) {
 
 const spell = (character, id) => character.spells.find((candidate) => candidate.id === id);
 
-test("the final slice raises executable coverage from 95 to all 99 mechanics", () => {
+test("all 99 entries have a runnable path while Control Flames remains descriptive", () => {
   const reports = BUILT_IN_CHARACTERS.map(buildCharacterMechanicCoverage);
   assert.equal(reports.reduce((sum, report) => sum + report.total, 0), 99);
   assert.equal(reports.reduce((sum, report) => sum + report.executable, 0), 99);
@@ -46,7 +46,7 @@ test("the final slice raises executable coverage from 95 to all 99 mechanics", (
     assert.equal(entry?.sourceId, sourceId, name);
   }
   assert.equal(entries.find((entry) => entry.name === "Control Flames")?.status, "partial");
-  assert.equal(entries.find((entry) => entry.name === "Druidcraft")?.status, "partial");
+  assert.equal(entries.find((entry) => entry.name === "Druidcraft")?.status, "supported");
 });
 
 test("Minor Illusion places the selected mode, replaces a previous casting, and enforces range", () => {
@@ -129,7 +129,10 @@ test("Druidcraft executes weather, bloom, sensory, light, and snuff choices", ()
   assert.equal(relit.legal, true);
   assert.equal(relit.encounter.map.terrain.find((cell) => cell.x === 2 && cell.y === 5).flame.lit, true);
 
-  const weather = executePointSpell({ ...relit.encounter, turn: { ...relit.encounter.turn, action: true } }, druidcraft, [{ x: 2, y: 4 }], () => 0, "weather");
+  const missingWeather = executePointSpell({ ...relit.encounter, turn: { ...relit.encounter.turn, action: true } }, druidcraft, [{ x: 2, y: 4 }], () => 0, "weather");
+  assert.equal(missingWeather.legal, false);
+  assert.match(missingWeather.reason, /weather outlook/i);
+  const weather = executePointSpell({ ...relit.encounter, turn: { ...relit.encounter.turn, action: true } }, druidcraft, [{ x: 2, y: 4 }], () => 0, "weather", "Cold rain before dawn");
   assert.equal(weather.legal, true);
   assert.equal(weather.encounter.effects.find((effect) => effect.pointEffect?.type === "utility-marker" && effect.pointEffect.kind === "weather-sensor").expiresAt.round, state.round + 1);
 
@@ -137,7 +140,7 @@ test("Druidcraft executes weather, bloom, sensory, light, and snuff choices", ()
   assert.equal(bloom.legal, true);
   assert.equal(bloom.encounter.effects.some((effect) => effect.pointEffect?.type === "utility-marker" && effect.pointEffect.kind === "bloom"), true);
 
-  const sensory = executePointSpell({ ...bloom.encounter, turn: { ...bloom.encounter.turn, action: true } }, druidcraft, [{ x: 4, y: 4 }], () => 0, "sensory");
+  const sensory = executePointSpell({ ...bloom.encounter, turn: { ...bloom.encounter.turn, action: true } }, druidcraft, [{ x: 4, y: 4 }], () => 0, "sensory", "The scent of pine needles");
   assert.equal(sensory.legal, true);
-  assert.match(sensory.summary, /momentary harmless nature sensation/i);
+  assert.match(sensory.summary, /scent of pine needles/i);
 });

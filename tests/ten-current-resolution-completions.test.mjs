@@ -119,8 +119,8 @@ test("Searing Smite upcasts immediate and recurring damage from the chosen slot"
 test("the ten-mechanic slice leaves only verified social and descriptive gaps", () => {
   const reports = BUILT_IN_CHARACTERS.map(buildCharacterMechanicCoverage);
   const sum = (key) => reports.reduce((total, report) => total + report.supportSummary[key], 0);
-  assert.equal(sum("fullySupported"), 95);
-  assert.equal(sum("partial"), 3);
+  assert.equal(sum("fullySupported"), 98);
+  assert.equal(sum("partial"), 0);
   assert.equal(sum("descriptive"), 1);
   assert.equal(reports.reduce((total, report) => total + report.total, 0), 99);
 });

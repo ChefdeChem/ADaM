@@ -49,11 +49,12 @@ type AttackFlow = null | {
 };
 type SpellFlow = null | {
   spell: CharacterSpell;
-  phase: "resource" | "option" | "target" | "point" | "attack-roll" | "damage-roll";
+  phase: "resource" | "option" | "detail" | "target" | "point" | "attack-roll" | "damage-roll";
   targetId?: string;
   critical?: boolean;
   castingResource?: SpellCastingResourceChoice;
   utilityChoiceId?: string;
+  utilityDetail?: string;
 };
 type FeatureFlow = null | {
   feature: CharacterFeatureAction;
@@ -143,15 +144,7 @@ function withCombatDefaults(character: Character): Character {
       shortRestRecovery: resource.shortRestRecovery,
       longRestRecovery: resource.longRestRecovery,
     })),
-    attacks: character.attacks?.length ? character.attacks : [{
-      id: "unarmed-strike",
-      name: "Unarmed Strike",
-      kind: "melee",
-      attackBonus: character.proficiencyBonus,
-      damage: "1 + Strength modifier bludgeoning",
-      normalRangeFeet: 5,
-      description: "Fallback attack added because the imported sheet did not include attack data.",
-    }],
+    attacks: character.attacks ?? [],
     spells: character.spells ?? [],
   };
 }
@@ -1058,8 +1051,24 @@ export default function Home() {
     if (!spellFlow || spellFlow.phase !== "option") return;
     const choice = spellFlow.spell.utilityChoices?.find((candidate) => candidate.id === utilityChoiceId);
     if (!choice) return;
-    setSpellFlow({ ...spellFlow, phase: "point", utilityChoiceId });
+    const needsDetail = choice.resolution.type === "weather-sensor" || choice.resolution.type === "sensory-effect";
+    setSpellFlow({ ...spellFlow, phase: needsDetail ? "detail" : "point", utilityChoiceId, utilityDetail: "" });
+    if (needsDetail) {
+      setFeedback(choice.resolution.type === "weather-sensor" ? "Record the scenario or DM weather outlook, then choose where the sign appears." : "Describe the harmless sensory effect, then choose its location.");
+      focusSurface("response");
+      return;
+    }
     setFeedback(`${choice.name} selected. Choose a point within ${spellFlow.spell.rangeFeet} feet on the tactical map.`);
+    focusSurface("map");
+  }
+
+  function continueUtilitySpellDetail(event: FormEvent) {
+    event.preventDefault();
+    if (!spellFlow || spellFlow.phase !== "detail" || !spellFlow.utilityChoiceId) return;
+    const detail = spellFlow.utilityDetail?.trim();
+    if (!detail) { setFeedback("Enter the effect detail before choosing a map location."); return; }
+    setSpellFlow({ ...spellFlow, phase: "point", utilityDetail: detail });
+    setFeedback(`Effect recorded. Choose a point within ${spellFlow.spell.rangeFeet} feet on the tactical map.`);
     focusSurface("map");
   }
 
@@ -1151,7 +1160,7 @@ export default function Home() {
       return;
     }
     if (spellFlow?.phase === "point") {
-      const result = executePointSpell(encounter, spellFlow.spell, [{ x, y }], Math.random, spellFlow.utilityChoiceId);
+      const result = executePointSpell(encounter, spellFlow.spell, [{ x, y }], Math.random, spellFlow.utilityChoiceId, spellFlow.utilityDetail);
       if (!result.legal) { setFeedback(experienceMode === "advanced" ? "Point disallowed." : result.reason); return; }
       setEncounter(result.encounter);
       if (result.damageRoll) setLastRoll(result.damageRoll);
@@ -1408,6 +1417,9 @@ export default function Home() {
         </section>}
         {initiativeReady && spellFlow?.phase === "option" && <section className="roll-coach response-coach utility-choice-coach" aria-live="polite">
           <div><span>Spell selected · Choose effect</span><h3>{spellFlow.spell.name}</h3><p>Select the effect first, then choose its location on the tactical map.</p><div className="response-actions">{spellFlow.spell.utilityChoices?.map((choice) => <button type="button" key={choice.id} onClick={() => chooseUtilitySpellChoice(choice.id)}><small>Spell effect</small><strong>{choice.name}</strong><em>{choice.description}</em></button>)}</div></div>
+        </section>}
+        {initiativeReady && spellFlow?.phase === "detail" && <section className="roll-coach response-coach utility-detail-coach" aria-live="polite">
+          <form onSubmit={continueUtilitySpellDetail}><span>Druidcraft · Record effect</span><h3>{spellFlow.spell.utilityChoices?.find((choice) => choice.id === spellFlow.utilityChoiceId)?.name}</h3><p>{spellFlow.spell.utilityChoices?.find((choice) => choice.id === spellFlow.utilityChoiceId)?.resolution.type === "weather-sensor" ? "Enter the local 24-hour weather outlook supplied by the scenario or DM. ADaM records it without inventing the forecast." : "Describe the harmless sound, smell, or other momentary nature sensation."}</p><label>Effect detail<input required value={spellFlow.utilityDetail ?? ""} onChange={(event) => setSpellFlow({ ...spellFlow, utilityDetail: event.target.value })} /></label><button type="submit"><small>Next</small><strong>Choose map location</strong></button></form>
         </section>}
         {initiativeReady && spellFlow?.phase === "resource" && <section className="roll-coach target-coach" aria-live="polite">
           <div><span>Spell selected · Choose resource</span><h3>{spellFlow.spell.name}</h3><p>Use the once-per-Long-Rest Magic Initiate cast or preserve it and spend a level 1 spell slot.</p></div>
