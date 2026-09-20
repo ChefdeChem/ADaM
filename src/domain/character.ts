@@ -293,6 +293,12 @@ export type CharacterSourceSnapshot = {
     confidence: "high" | "medium" | "low";
     evidence: string[];
   };
+  extractionAssessment?: {
+    pageCount: number;
+    core: { confidence: "high" | "medium" | "low"; recordCount: number; evidence: string };
+    equipment: { confidence: "high" | "medium" | "low"; recordCount: number; evidence: string };
+    features: { confidence: "high" | "medium" | "low"; recordCount: number; evidence: string };
+  };
 };
 
 export type CharacterSource = CharacterSourceSnapshot & {

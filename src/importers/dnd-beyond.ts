@@ -1,4 +1,4 @@
-import type { AbilityName, CharacterAttack } from "../domain/character";
+import type { AbilityName, CharacterAttack, CharacterProfile, CharacterSourceSnapshot } from "../domain/character";
 
 export type DndBeyondCharacterData = {
   name: string;
@@ -18,12 +18,100 @@ export type DndBeyondCharacterData = {
   };
   savingThrowModifiers: Record<AbilityName, number>;
   attacks: CharacterAttack[];
+  profile: Pick<CharacterProfile, "equipment" | "features">;
+  extractionAssessment: NonNullable<CharacterSourceSnapshot["extractionAssessment"]>;
   editionAssessment: {
     edition: "dnd-2014" | "dnd-2024" | "uncertain" | "mixed";
     confidence: "high" | "medium" | "low";
     evidence: string[];
   };
 };
+
+const pageBreak = "__ADAM_PAGE_BREAK__";
+const sectionHeadings = new Set([
+  "ACTIONS", "ATTACKS", "BACKSTORY", "CLASS FEATURES", "EQUIPMENT", "FEATURES", "FEATURES & TRAITS",
+  "FEATURES AND TRAITS", "INVENTORY", "NOTES", "PROFICIENCIES", "SPELLS", "TRAITS",
+]);
+
+const normalizedHeading = (value: string) => value.trim().replace(/\s+/g, " ").toUpperCase();
+
+function sectionTokens(tokens: string[], headings: string[]): { found: boolean; tokens: string[] } {
+  const wanted = new Set(headings.map(normalizedHeading));
+  const start = tokens.findIndex((token) => wanted.has(normalizedHeading(token)));
+  if (start < 0) return { found: false, tokens: [] };
+  const output: string[] = [];
+  for (let index = start + 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === pageBreak) continue;
+    if (sectionHeadings.has(normalizedHeading(token)) && !wanted.has(normalizedHeading(token))) break;
+    output.push(token);
+  }
+  return { found: true, tokens: output };
+}
+
+const tidyRecordName = (value: string) => value.replace(/^[•·\-]\s*/, "").replace(/\s+/g, " ").trim();
+
+function extractEquipment(tokens: string[]): { found: boolean; records: NonNullable<CharacterProfile["equipment"]> } {
+  const section = sectionTokens(tokens, ["EQUIPMENT", "INVENTORY"]);
+  const records: NonNullable<CharacterProfile["equipment"]> = [];
+  for (let index = 0; index < section.tokens.length; index += 1) {
+    const token = tidyRecordName(section.tokens[index]);
+    if (!token || /^(?:CP|SP|EP|GP|PP|WEIGHT|CARRIED|ATTUNED)$/i.test(token)) continue;
+    const inline = token.match(/^(\d+)\s*(?:×|x)\s*(.{2,80})$/i);
+    const nextQuantity = /^\d+$/.test(section.tokens[index + 1] ?? "") ? Number(section.tokens[index + 1]) : null;
+    const previousQuantity = /^\d+$/.test(token) && section.tokens[index + 1] ? Number(token) : null;
+    let name = inline?.[2] ? tidyRecordName(inline[2]) : token;
+    let quantity = inline ? Number(inline[1]) : nextQuantity ?? 1;
+    if (previousQuantity !== null) {
+      name = tidyRecordName(section.tokens[index + 1]);
+      quantity = previousQuantity;
+      index += 1;
+    } else if (nextQuantity !== null) {
+      index += 1;
+    }
+    if (!name || /^\d+(?:\.\d+)?\s*(?:lb\.?|lbs\.?)$/i.test(name) || name.length > 80) continue;
+    if (!records.some((record) => record.name.toLowerCase() === name.toLowerCase())) records.push({ name, quantity: Math.max(1, quantity) });
+  }
+  return { found: section.found, records };
+}
+
+const looksLikeFeatureName = (value: string) => {
+  const name = tidyRecordName(value);
+  if (!name || name.length > 60 || name.split(/\s+/).length > 8 || /[.!?]$/.test(name)) return false;
+  const words = name.split(/\s+/).filter((word) => /[A-Za-z]/.test(word));
+  return words.length > 0 && words.every((word) => /^[A-Z0-9][A-Za-z0-9'’()/-]*$/.test(word) || /^(?:of|the|and|or|a|an)$/i.test(word));
+};
+
+function extractFeatures(tokens: string[]): { found: boolean; records: NonNullable<CharacterProfile["features"]> } {
+  const section = sectionTokens(tokens, ["FEATURES & TRAITS", "FEATURES AND TRAITS", "CLASS FEATURES", "FEATURES", "TRAITS"]);
+  const records: NonNullable<CharacterProfile["features"]> = [];
+  let current: { name: string; description: string[] } | null = null;
+  const finish = () => {
+    if (!current) return;
+    records.push({ name: current.name, description: current.description.join(" ").replace(/\s+/g, " ").trim() || "Imported descriptive feature; confirm its text against the source sheet." });
+  };
+  section.tokens.forEach((rawToken) => {
+    const token = tidyRecordName(rawToken);
+    const colon = token.match(/^([^:]{2,60}):\s*(.+)$/);
+    if (colon && looksLikeFeatureName(colon[1])) {
+      finish();
+      current = { name: colon[1].trim(), description: [colon[2].trim()] };
+      return;
+    }
+    if (looksLikeFeatureName(token)) {
+      finish();
+      current = { name: token, description: [] };
+      return;
+    }
+    if (current && token) current.description.push(token);
+  });
+  finish();
+  return { found: section.found, records };
+}
+
+export function joinDndBeyondPdfPages(pages: string[][]): string[] {
+  return pages.flatMap((tokens, index) => index ? [pageBreak, ...tokens] : tokens);
+}
 
 const integer = (value: string | undefined) => {
   const normalized = String(value ?? "").replace(/[^0-9-]/g, "");
@@ -108,7 +196,7 @@ function extractAttacks(tokens: string[], start: number): CharacterAttack[] {
   return attacks;
 }
 
-export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterData | null {
+export function parseDndBeyondTokens(rawTokens: string[], pageCount = 1): DndBeyondCharacterData | null {
   const tokens = rawTokens.map((token) => token.replace(/\s+/g, " ").trim()).filter(Boolean);
   const marker = tokens.lastIndexOf("ABILITY SAVE DC");
   if (marker < 0) return null;
@@ -141,6 +229,8 @@ export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterDat
   const maximumHitPoints = hpValues[0] ?? 1;
   const currentHitPoints = hpValues[1] ?? maximumHitPoints;
   const attacks = extractAttacks(tokens, hitDiceIndex + 1);
+  const equipment = extractEquipment(tokens);
+  const features = extractFeatures(tokens);
   const abilityOrder: AbilityName[] = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"];
   const legacySaveOrder: AbilityName[] = ["charisma", "dexterity", "intelligence", "strength", "wisdom", "constitution"];
   const rawSaveTokens = tokens.slice(abilityStart + 12, abilityStart + 30);
@@ -169,6 +259,17 @@ export function parseDndBeyondTokens(rawTokens: string[]): DndBeyondCharacterDat
     },
     savingThrowModifiers,
     attacks,
+    profile: { equipment: equipment.records, features: features.records },
+    extractionAssessment: {
+      pageCount: Math.max(1, pageCount),
+      core: { confidence: "high", recordCount: 1, evidence: `Core combat values matched the supported D&D Beyond layout across ${Math.max(1, pageCount)} page${pageCount === 1 ? "" : "s"}.` },
+      equipment: equipment.found
+        ? { confidence: equipment.records.length ? "high" : "medium", recordCount: equipment.records.length, evidence: equipment.records.length ? "An equipment heading and structured item records were found." : "An equipment heading was found, but no structured item records were reliable." }
+        : { confidence: "low", recordCount: 0, evidence: "No supported equipment heading was found in the extracted text." },
+      features: features.found
+        ? { confidence: features.records.length ? "medium" : "low", recordCount: features.records.length, evidence: features.records.length ? "Feature names and adjacent descriptions were preserved as non-executable user content." : "A feature heading was found, but no feature records were reliable." }
+        : { confidence: "low", recordCount: 0, evidence: "No supported feature heading was found in the extracted text." },
+    },
     editionAssessment: detectDndBeyondEdition(tokens, className, level),
   };
 }

@@ -24,5 +24,6 @@ export function sourceSnapshot(value: unknown): CharacterSourceSnapshot | undefi
     importedAt: source.importedAt,
     ...(typeof source.fileName === "string" ? { fileName: source.fileName } : {}),
     ...(source.editionAssessment ? { editionAssessment: source.editionAssessment } : {}),
+    ...(source.extractionAssessment ? { extractionAssessment: source.extractionAssessment } : {}),
   };
 }

@@ -1,7 +1,7 @@
 import { PDFDocument, PDFField, PDFTextField } from "pdf-lib";
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import type { Character } from "../domain/character";
-import { parseDndBeyondTokens } from "./dnd-beyond";
+import { joinDndBeyondPdfPages, parseDndBeyondTokens } from "./dnd-beyond";
 import type { CharacterImporter, ImportResult } from "./types";
 import { createId } from "../shared/id";
 import { importKeyFor } from "./source-identity";
@@ -53,22 +53,26 @@ async function extractOperatorTokens(bytes: ArrayBuffer): Promise<string[]> {
   pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   const loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes) });
   const document = await loadingTask.promise;
-  const page = await document.getPage(1);
-  const operators = await page.getOperatorList();
   const textOperators = new Set([
     pdfjs.OPS.showText,
     pdfjs.OPS.showSpacedText,
     pdfjs.OPS.nextLineShowText,
     pdfjs.OPS.nextLineSetSpacingShowText,
   ]);
-  const tokens: string[] = [];
-  operators.fnArray.forEach((operator, index) => {
-    if (!textOperators.has(operator)) return;
-    const token = glyphText(operators.argsArray[index]);
-    if (token) tokens.push(token);
-  });
+  const pages: string[][] = [];
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const operators = await page.getOperatorList();
+    const tokens: string[] = [];
+    operators.fnArray.forEach((operator, index) => {
+      if (!textOperators.has(operator)) return;
+      const token = glyphText(operators.argsArray[index]);
+      if (token) tokens.push(token);
+    });
+    pages.push(tokens);
+  }
   await loadingTask.destroy();
-  return tokens;
+  return joinDndBeyondPdfPages(pages);
 }
 
 function manualReviewCharacter(file: File): Character {
@@ -109,7 +113,8 @@ function importResult(character: Character, format: ImportResult["format"], warn
 async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<ImportResult> {
   try {
     const tokens = await extractOperatorTokens(bytes);
-    const parsed = parseDndBeyondTokens(tokens);
+    const pageCount = tokens.filter((token) => token === "__ADAM_PAGE_BREAK__").length + 1;
+    const parsed = parseDndBeyondTokens(tokens, pageCount);
     if (parsed) {
       const character: Character = {
         id: createId(),
@@ -123,6 +128,7 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
         abilities: parsed.abilities,
         savingThrowModifiers: parsed.savingThrowModifiers,
         attacks: parsed.attacks,
+        profile: parsed.profile,
         resources: [],
         spells: [],
         source: {
@@ -131,12 +137,13 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
           importedAt: new Date().toISOString(),
           importKey: importKeyFor("flattened-pdf", file.name),
           editionAssessment: parsed.editionAssessment,
+          extractionAssessment: parsed.extractionAssessment,
         },
       };
       const editionWarning = parsed.editionAssessment.edition === "uncertain" || parsed.editionAssessment.edition === "mixed"
         ? "The source edition is not conclusive; ADaM preserved the extracted build and flagged it for review."
         : `${parsed.editionAssessment.edition === "dnd-2014" ? "2014" : "2024"} source rules detected with ${parsed.editionAssessment.confidence} confidence.`;
-      return importResult(character, "flattened-pdf", [`Flattened D&D Beyond sheet detected. ${parsed.attacks.length} weapon attacks and saving throw modifiers extracted; review the values before combat. ${editionWarning}`]);
+      return importResult(character, "flattened-pdf", [`Flattened D&D Beyond sheet detected across ${parsed.extractionAssessment.pageCount} page${parsed.extractionAssessment.pageCount === 1 ? "" : "s"}. ${parsed.attacks.length} weapon attacks, ${parsed.profile.equipment?.length ?? 0} equipment records, ${parsed.profile.features?.length ?? 0} descriptive features, and saving throw modifiers were extracted; review them before combat. ${editionWarning}`]);
     }
   } catch {
     // The editable review below is the safe fallback for image-only or unfamiliar PDFs.

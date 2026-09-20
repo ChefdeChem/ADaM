@@ -1247,6 +1247,12 @@ export default function Home() {
           {importValidation.warnings.length > 0 && <div className="import-issues warning"><strong>Confirm against the sheet</strong><ul>{importValidation.warnings.map((candidate) => <li key={`${candidate.section}-${candidate.code}`}>{candidate.message}</li>)}</ul></div>}
         </section>}
         {(reviewCharacter.attacks?.length ?? 0) > 0 && <div className="import-attacks"><span>Imported attacks</span><p>{reviewCharacter.attacks?.map((attack) => `${attack.name} (${attack.attackBonus >= 0 ? "+" : ""}${attack.attackBonus}, ${attack.damage}, ${attack.normalRangeFeet}${attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.)`).join(" · ")}</p></div>}
+        {reviewCharacter.source.extractionAssessment && <section className="import-playability" aria-label="PDF extraction confidence">
+          <div className="import-playability-heading"><span>PDF extraction</span><strong>{reviewCharacter.source.extractionAssessment.pageCount} page{reviewCharacter.source.extractionAssessment.pageCount === 1 ? "" : "s"} inspected</strong></div>
+          <div className="import-playability-grid">{(["core", "equipment", "features"] as const).map((section) => { const assessment = reviewCharacter.source.extractionAssessment![section]; return <div key={section} className={assessment.confidence === "low" ? "review" : "ready"}><span>{section}</span><strong>{assessment.confidence} confidence · {assessment.recordCount} record{assessment.recordCount === 1 ? "" : "s"}</strong><p>{assessment.evidence}</p></div>; })}</div>
+          {(reviewCharacter.profile?.equipment?.length ?? 0) > 0 && <p><b>Equipment:</b> {reviewCharacter.profile?.equipment?.map((item) => `${item.quantity}× ${item.name}`).join(" · ")}</p>}
+          {(reviewCharacter.profile?.features?.length ?? 0) > 0 && <p><b>Descriptive features:</b> {reviewCharacter.profile?.features?.map((feature) => feature.name).join(" · ")}. These records do not become executable until linked to a verified trainer mechanic.</p>}
+        </section>}
         <section className="import-playability" aria-label="Import to play checks">
           <div className="import-playability-heading"><span>Import to play</span><strong>Five combat handoffs</strong></div>
           <div className="import-playability-grid">{importPlayability.map((check) => <div key={check.id} className={check.status}><span>{check.label}</span><strong>{check.status === "ready" ? "Ready" : "Review"}</strong><p>{check.detail}</p></div>)}</div>
