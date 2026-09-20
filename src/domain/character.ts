@@ -284,6 +284,24 @@ export type CharacterProfile = {
   }>;
 };
 
+export type CharacterSourceSnapshot = {
+  format: "json" | "fillable-pdf" | "flattened-pdf" | "sample";
+  fileName?: string;
+  importedAt: string;
+  editionAssessment?: {
+    edition: "dnd-2014" | "dnd-2024" | "uncertain" | "mixed";
+    confidence: "high" | "medium" | "low";
+    evidence: string[];
+  };
+};
+
+export type CharacterSource = CharacterSourceSnapshot & {
+  /** Stable local identity used to replace a re-import instead of consuming another roster slot. */
+  importKey?: string;
+  /** Source metadata declared by an ADaM JSON export, preserved before this import records its own file provenance. */
+  declaredSource?: CharacterSourceSnapshot;
+};
+
 export type Character = {
   inventoryRemaining?: Record<string, number>;
   recoveryState?: { hitDiceRemaining: number; elapsedMinutes: number; lastLongRestEnd?: number };
@@ -308,16 +326,7 @@ export type Character = {
   spells?: CharacterSpell[];
   actions?: string[];
   profile?: CharacterProfile;
-  source: {
-    format: "json" | "fillable-pdf" | "flattened-pdf" | "sample";
-    fileName?: string;
-    importedAt: string;
-    editionAssessment?: {
-      edition: "dnd-2014" | "dnd-2024" | "uncertain" | "mixed";
-      confidence: "high" | "medium" | "low";
-      evidence: string[];
-    };
-  };
+  source: CharacterSource;
 };
 
 export const abilityModifier = (score: number) => Math.floor((score - 10) / 2);

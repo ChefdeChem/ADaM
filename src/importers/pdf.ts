@@ -4,6 +4,8 @@ import type { Character } from "../domain/character";
 import { parseDndBeyondTokens } from "./dnd-beyond";
 import type { CharacterImporter, ImportResult } from "./types";
 import { createId } from "../shared/id";
+import { importKeyFor } from "./source-identity";
+import { validateImportedCharacter } from "./validation";
 
 const aliases: Record<string, string[]> = {
   name: ["CharacterName", "Character Name"],
@@ -18,6 +20,7 @@ const aliases: Record<string, string[]> = {
   intelligence: ["INT", "Intelligence"],
   wisdom: ["WIS", "Wisdom"],
   charisma: ["CHA", "Charisma"],
+  speed: ["SPEED", "Speed", "Walking Speed"],
 };
 
 const numberValue = (value: string | undefined, fallback: number) => {
@@ -82,7 +85,24 @@ function manualReviewCharacter(file: File): Character {
     resources: [],
     attacks: [],
     spells: [],
-    source: { format: "flattened-pdf", fileName: file.name, importedAt: new Date().toISOString() },
+    source: {
+      format: "flattened-pdf",
+      fileName: file.name,
+      importedAt: new Date().toISOString(),
+      importKey: importKeyFor("flattened-pdf", file.name),
+      editionAssessment: { edition: "uncertain", confidence: "low", evidence: ["The sheet layout could not provide a verified edition-specific feature clue."] },
+    },
+  };
+}
+
+function importResult(character: Character, format: ImportResult["format"], warnings: string[], requiresReview = true): ImportResult {
+  const validation = validateImportedCharacter(character);
+  return {
+    character,
+    format,
+    validation,
+    requiresReview: requiresReview || !validation.ready || validation.warnings.length > 0,
+    warnings,
   };
 }
 
@@ -105,28 +125,24 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
         attacks: parsed.attacks,
         resources: [],
         spells: [],
-        source: { format: "flattened-pdf", fileName: file.name, importedAt: new Date().toISOString(), editionAssessment: parsed.editionAssessment },
+        source: {
+          format: "flattened-pdf",
+          fileName: file.name,
+          importedAt: new Date().toISOString(),
+          importKey: importKeyFor("flattened-pdf", file.name),
+          editionAssessment: parsed.editionAssessment,
+        },
       };
       const editionWarning = parsed.editionAssessment.edition === "uncertain" || parsed.editionAssessment.edition === "mixed"
         ? "The source edition is not conclusive; ADaM preserved the extracted build and flagged it for review."
         : `${parsed.editionAssessment.edition === "dnd-2014" ? "2014" : "2024"} source rules detected with ${parsed.editionAssessment.confidence} confidence.`;
-      return {
-        character,
-        format: "flattened-pdf",
-        requiresReview: true,
-        warnings: [`Flattened D&D Beyond sheet detected. ${parsed.attacks.length} weapon attacks and saving throw modifiers extracted; review the values before combat. ${editionWarning}`],
-      };
+      return importResult(character, "flattened-pdf", [`Flattened D&D Beyond sheet detected. ${parsed.attacks.length} weapon attacks and saving throw modifiers extracted; review the values before combat. ${editionWarning}`]);
     }
   } catch {
     // The editable review below is the safe fallback for image-only or unfamiliar PDFs.
   }
 
-  return {
-    character: manualReviewCharacter(file),
-    format: "flattened-pdf",
-    requiresReview: true,
-    warnings: ["This flattened PDF uses an unfamiliar layout. Enter or correct the highlighted values before combat."],
-  };
+  return importResult(manualReviewCharacter(file), "flattened-pdf", ["This flattened PDF uses an unfamiliar layout. Enter or correct the highlighted values before combat."]);
 }
 
 export const pdfImporter: CharacterImporter = {
@@ -147,6 +163,7 @@ export const pdfImporter: CharacterImporter = {
       className: match?.[1]?.trim() || classLevel,
       level: numberValue(match?.[2], 1),
       armorClass: numberValue(value(fields, aliases.armorClass), 10),
+      speedFeet: numberValue(value(fields, aliases.speed), 30),
       hitPoints: { current: hp, maximum: numberValue(value(fields, aliases.hpMax), hp) },
       proficiencyBonus: numberValue(value(fields, aliases.proficiency), 2),
       abilities: {
@@ -158,8 +175,14 @@ export const pdfImporter: CharacterImporter = {
         charisma: numberValue(value(fields, aliases.charisma), 10),
       },
       resources: [],
-      source: { format: "fillable-pdf", fileName: file.name, importedAt: new Date().toISOString() },
+      source: {
+        format: "fillable-pdf",
+        fileName: file.name,
+        importedAt: new Date().toISOString(),
+        importKey: importKeyFor("fillable-pdf", file.name),
+        editionAssessment: { edition: "uncertain", confidence: "low", evidence: ["Standard form fields do not establish the character's rules edition by themselves."] },
+      },
     };
-    return { character, format: "fillable-pdf", warnings: ["Standard form fields mapped; review custom sheet values."] };
+    return importResult(character, "fillable-pdf", ["Standard form fields mapped; review custom sheet values."]);
   },
 };

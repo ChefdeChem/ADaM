@@ -23,7 +23,7 @@ import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions"
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { areaTargets } from "../src/engine/areas";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
-import { importCharacterFile, type ImportResult } from "../src/importers";
+import { importCharacterFile, validateImportedCharacter, type ImportResult } from "../src/importers";
 import { rulesets } from "../src/rulesets";
 import { createPlayableEncounter, DEFAULT_COMBAT_RULESET, detectCharacterEdition, editionLabel, playableCharacter } from "../src/rulesets/edition-policy";
 import { handleWeapon } from "../src/engine/weapon-hands";
@@ -229,6 +229,7 @@ export default function Home() {
   const mechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(sourceCharacter), [sourceCharacter]);
   const playableMechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(character), [character]);
   const importMechanicCoverage = useMemo(() => reviewCharacter ? buildCharacterMechanicCoverage(reviewCharacter) : null, [reviewCharacter]);
+  const importValidation = useMemo(() => reviewCharacter ? validateImportedCharacter(reviewCharacter) : null, [reviewCharacter]);
   const surinaGuide = buildTurnGuidance({
     initiativeReady,
     outcome,
@@ -489,14 +490,20 @@ export default function Home() {
   }
 
   function applyImportedCharacter(importedCharacter: Character, warnings: string[]): boolean {
-    const normalized = withCombatDefaults(importedCharacter);
-    const update = upsertRosterCharacter(storedCharacters, normalized);
+    const validation = validateImportedCharacter(importedCharacter);
+    if (!validation.ready) {
+      setMessage(`Import blocked: ${validation.errors.map((candidate) => candidate.message).join(" ")}`);
+      return false;
+    }
+    const update = upsertRosterCharacter(storedCharacters, importedCharacter);
     if (!update.stored) {
       setMessage(update.reason ?? "The character could not be stored.");
       return false;
     }
+    const storedCharacter = update.characters.find((candidate) => candidate.id === importedCharacter.id
+      || Boolean(importedCharacter.source.importKey && candidate.source.importKey === importedCharacter.source.importKey)) ?? importedCharacter;
     persistCharacterRoster(update.characters);
-    activateCharacter(normalized, `${normalized.name} imported and saved. ${warnings.join(" ") || "Ready for combat."} Roll your initiative to begin.`);
+    activateCharacter(storedCharacter, `${storedCharacter.name} ${update.replaced ? "re-imported and updated" : "imported and saved"}. ${warnings.join(" ") || "Validated and ready for combat."} Roll your initiative to begin.`);
     return true;
   }
 
@@ -1220,8 +1227,8 @@ export default function Home() {
     <header className="topbar"><div><span className="eyebrow">ADaM · Automated Dungeon & Mechanics</span><h1>Combat Trainer</h1></div><div className="status"><span />Rules engine active</div></header>
     {pendingImport && reviewCharacter && <div className="import-review-backdrop">
       <form className="import-review" onSubmit={confirmReviewedImport} role="dialog" aria-modal="true" aria-labelledby="import-review-title">
-        <div className="import-review-heading"><div><span className="eyebrow">Flattened PDF detected</span><h2 id="import-review-title">Review imported character</h2></div><span className="import-count">{reviewCharacter.attacks?.length ?? 0} attacks found</span></div>
-        <p className="import-review-note">{pendingImport.warnings.join(" ")} Correct anything that does not match the PDF, then load the character into combat.</p>
+        <div className="import-review-heading"><div><span className="eyebrow">{pendingImport.format === "json" ? "ADaM JSON detected" : pendingImport.format === "fillable-pdf" ? "Fillable PDF detected" : "Flattened PDF detected"}</span><h2 id="import-review-title">Review imported character</h2></div><span className={`import-count ${importValidation?.ready ? "ready" : "blocked"}`}>{importValidation?.ready ? "Ready after review" : `${importValidation?.errors.length ?? 0} blockers`}</span></div>
+        <p className="import-review-note">{pendingImport.warnings.join(" ")} Confirm the extracted values against the source file, then load the character into combat.</p>
         <div className="import-core-grid">
           <label>Character name<input required value={reviewCharacter.name} onChange={(event) => setReviewCharacter({ ...reviewCharacter, name: event.target.value })} /></label>
           <label>Class<input required value={reviewCharacter.className} onChange={(event) => setReviewCharacter({ ...reviewCharacter, className: event.target.value })} /></label>
@@ -1230,12 +1237,16 @@ export default function Home() {
           <label>Current HP<input required min="0" type="number" value={reviewCharacter.hitPoints.current} onChange={(event) => updateReviewHitPoints("current", event.target.value)} /></label>
           <label>Maximum HP<input required min="1" type="number" value={reviewCharacter.hitPoints.maximum} onChange={(event) => updateReviewHitPoints("maximum", event.target.value)} /></label>
           <label>Proficiency bonus<input required min="0" type="number" value={reviewCharacter.proficiencyBonus} onChange={(event) => updateReviewNumber("proficiencyBonus", event.target.value)} /></label>
-          <label>Walking speed<input required min="0" step="5" type="number" value={reviewCharacter.speedFeet ?? 30} onChange={(event) => updateReviewNumber("speedFeet", event.target.value)} /></label>
+          <label>Walking speed<input required min="0" step="5" type="number" value={reviewCharacter.speedFeet ?? ""} placeholder="30" onChange={(event) => updateReviewNumber("speedFeet", event.target.value)} /></label>
         </div>
         <div className="import-ability-grid">{abilityLabels.map((ability) => <label key={ability.id}>{ability.label}<input required min="1" max="30" type="number" value={reviewCharacter.abilities[ability.id]} onChange={(event) => updateReviewAbility(ability.id, event.target.value)} /></label>)}</div>
+        {importValidation && (importValidation.errors.length > 0 || importValidation.warnings.length > 0) && <section className="import-validation" aria-live="polite">
+          {importValidation.errors.length > 0 && <div className="import-issues blocked"><strong>Fix before combat</strong><ul>{importValidation.errors.map((candidate) => <li key={`${candidate.section}-${candidate.code}`}>{candidate.message}</li>)}</ul></div>}
+          {importValidation.warnings.length > 0 && <div className="import-issues warning"><strong>Confirm against the sheet</strong><ul>{importValidation.warnings.map((candidate) => <li key={`${candidate.section}-${candidate.code}`}>{candidate.message}</li>)}</ul></div>}
+        </section>}
         {(reviewCharacter.attacks?.length ?? 0) > 0 && <div className="import-attacks"><span>Imported attacks</span><p>{reviewCharacter.attacks?.map((attack) => `${attack.name} (${attack.attackBonus >= 0 ? "+" : ""}${attack.attackBonus}, ${attack.damage}, ${attack.normalRangeFeet}${attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.)`).join(" · ")}</p></div>}
         {importMechanicCoverage && <div className="mechanic-coverage import-coverage"><div><span>Mechanic coverage</span><strong>{importMechanicCoverage.supportSummary.fullySupported}/{importMechanicCoverage.total} fully supported</strong></div><p><b>{importMechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{importMechanicCoverage.supportSummary.partial}</b> partial · <b>{importMechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>Detected edition: {editionLabel(detectCharacterEdition(reviewCharacter).edition)} · Source: {reviewCharacter.source.fileName ?? "ADaM sample"} · {editionLabel(detectCharacterEdition(reviewCharacter).edition)} source assessment</small></div>}
-        <div className="import-review-actions"><button type="button" onClick={() => { setPendingImport(null); setReviewCharacter(null); setMessage("Import canceled; the previous character remains active."); }}>Cancel</button><button type="submit">Use this character</button></div>
+        <div className="import-review-actions"><button type="button" onClick={() => { setPendingImport(null); setReviewCharacter(null); setMessage("Import canceled; the previous character remains active."); }}>Cancel</button><button type="submit" disabled={!importValidation?.ready}>{importValidation?.ready ? "Use this character" : "Resolve blockers"}</button></div>
       </form>
     </div>}
     <section className="workspace">

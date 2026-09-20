@@ -12,10 +12,13 @@ export type RosterUpdate = {
 };
 
 export function upsertRosterCharacter(characters: Character[], character: Character): RosterUpdate {
-  const existingIndex = characters.findIndex((candidate) => candidate.id === character.id);
+  const existingIndex = characters.findIndex((candidate) => candidate.id === character.id
+    || Boolean(character.source.importKey && candidate.source.importKey === character.source.importKey));
   if (existingIndex >= 0) {
+    const existing = characters[existingIndex];
+    const replacement = existing.id === character.id ? character : { ...character, id: existing.id };
     return {
-      characters: characters.map((candidate, index) => index === existingIndex ? character : candidate),
+      characters: characters.map((candidate, index) => index === existingIndex ? replacement : candidate),
       stored: true,
       replaced: true,
     };
