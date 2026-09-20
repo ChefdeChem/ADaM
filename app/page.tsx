@@ -23,7 +23,7 @@ import { executeToolCheck, toolRuleForAction } from "../src/engine/tool-actions"
 import { analyzeTarget, selectTarget } from "../src/engine/targeting";
 import { areaTargets } from "../src/engine/areas";
 import { rollD20, type DamageRoll } from "../src/engine/dice";
-import { importCharacterFile, validateImportedCharacter, type ImportResult } from "../src/importers";
+import { importCharacterFile, importPlayabilityChecks, validateImportedCharacter, type ImportResult } from "../src/importers";
 import { rulesets } from "../src/rulesets";
 import { createPlayableEncounter, DEFAULT_COMBAT_RULESET, detectCharacterEdition, editionLabel, playableCharacter } from "../src/rulesets/edition-policy";
 import { handleWeapon } from "../src/engine/weapon-hands";
@@ -230,6 +230,7 @@ export default function Home() {
   const playableMechanicCoverage = useMemo(() => buildCharacterMechanicCoverage(character), [character]);
   const importMechanicCoverage = useMemo(() => reviewCharacter ? buildCharacterMechanicCoverage(reviewCharacter) : null, [reviewCharacter]);
   const importValidation = useMemo(() => reviewCharacter ? validateImportedCharacter(reviewCharacter) : null, [reviewCharacter]);
+  const importPlayability = useMemo(() => reviewCharacter ? importPlayabilityChecks(reviewCharacter) : [], [reviewCharacter]);
   const surinaGuide = buildTurnGuidance({
     initiativeReady,
     outcome,
@@ -1245,6 +1246,10 @@ export default function Home() {
           {importValidation.warnings.length > 0 && <div className="import-issues warning"><strong>Confirm against the sheet</strong><ul>{importValidation.warnings.map((candidate) => <li key={`${candidate.section}-${candidate.code}`}>{candidate.message}</li>)}</ul></div>}
         </section>}
         {(reviewCharacter.attacks?.length ?? 0) > 0 && <div className="import-attacks"><span>Imported attacks</span><p>{reviewCharacter.attacks?.map((attack) => `${attack.name} (${attack.attackBonus >= 0 ? "+" : ""}${attack.attackBonus}, ${attack.damage}, ${attack.normalRangeFeet}${attack.longRangeFeet ? `/${attack.longRangeFeet}` : ""} ft.)`).join(" · ")}</p></div>}
+        <section className="import-playability" aria-label="Import to play checks">
+          <div className="import-playability-heading"><span>Import to play</span><strong>Five combat handoffs</strong></div>
+          <div className="import-playability-grid">{importPlayability.map((check) => <div key={check.id} className={check.status}><span>{check.label}</span><strong>{check.status === "ready" ? "Ready" : "Review"}</strong><p>{check.detail}</p></div>)}</div>
+        </section>
         {importMechanicCoverage && <div className="mechanic-coverage import-coverage"><div><span>Mechanic coverage</span><strong>{importMechanicCoverage.supportSummary.fullySupported}/{importMechanicCoverage.total} fully supported</strong></div><p><b>{importMechanicCoverage.supportSummary.fullySupported}</b> supported · <b>{importMechanicCoverage.supportSummary.partial}</b> partial · <b>{importMechanicCoverage.supportSummary.descriptive}</b> descriptive</p><small>Detected edition: {editionLabel(detectCharacterEdition(reviewCharacter).edition)} · Source: {reviewCharacter.source.fileName ?? "ADaM sample"} · {editionLabel(detectCharacterEdition(reviewCharacter).edition)} source assessment</small></div>}
         <div className="import-review-actions"><button type="button" onClick={() => { setPendingImport(null); setReviewCharacter(null); setMessage("Import canceled; the previous character remains active."); }}>Cancel</button><button type="submit" disabled={!importValidation?.ready}>{importValidation?.ready ? "Use this character" : "Resolve blockers"}</button></div>
       </form>

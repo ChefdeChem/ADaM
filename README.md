@@ -74,4 +74,4 @@ src/data/            Sample import data
 - Keep the complete initiative order and values visible throughout combat, including enemy initiative.
 - Give every non-initiative roll a prominent teaching display so new players can see which dice and modifiers are being used.
 
-Next: reliable character import normalization, cover refinements, broader conditions, additional class-specific reaction triggers, and separate tested 2014/2024 encounter-resolution settings.
+Next: imported equipment and feature cross-reference auditing, cover refinements, broader conditions, additional class-specific reaction triggers, and separate tested 2014/2024 encounter-resolution settings.

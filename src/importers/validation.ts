@@ -38,6 +38,15 @@ export function validateCoreStatistics(character: Character): ImportIssue[] {
     const score = character.abilities?.[ability];
     if (!Number.isInteger(score) || score < 1 || score > 30) issues.push(issue("error", "core", `invalid-${ability}`, `${ability[0].toUpperCase()}${ability.slice(1)} must be a whole number from 1 through 30.`));
   }
+  if (character.profile?.initiativeModifier !== undefined && !finite(character.profile.initiativeModifier)) {
+    issues.push(issue("error", "core", "invalid-initiative-modifier", "Initiative modifier must be a number when supplied."));
+  }
+  for (const [ability, modifier] of Object.entries(character.savingThrowModifiers ?? {})) {
+    if (!abilities.includes(ability as AbilityName) || !finite(modifier)) issues.push(issue("error", "core", "invalid-saving-throw-modifier", `${ability} saving throw modifier must be numeric.`));
+  }
+  for (const [skill, modifier] of Object.entries(character.profile?.skills ?? {})) {
+    if (!finite(modifier)) issues.push(issue("error", "core", "invalid-skill-modifier", `${skill} skill modifier must be numeric.`));
+  }
   return issues;
 }
 
@@ -104,6 +113,12 @@ export function validateImportedCharacter(character: Character): ImportValidatio
     ...validateResources(character.resources),
     ...validateSpells(character.spells),
   ];
+  for (const spell of character.spells ?? []) {
+    if (spell.level === 0 || spell.unsupportedReason) continue;
+    const hasSlot = character.resources.some((resource) => resource.kind === "spell-slot" && resource.level === spell.level);
+    const hasFreeCast = Boolean(spell.freeCastResourceName && character.resources.some((resource) => resource.name.toLowerCase() === spell.freeCastResourceName!.toLowerCase()));
+    if (!hasSlot && !hasFreeCast) issues.push(issue("warning", "resources", "missing-spell-casting-pool", `${spell.name} has no imported level ${spell.level} spell-slot pool or named free-cast resource, so it will remain unavailable in combat.`));
+  }
   const errors = issues.filter((candidate) => candidate.severity === "error");
   const warnings = issues.filter((candidate) => candidate.severity === "warning");
   return { errors, warnings, ready: errors.length === 0 };

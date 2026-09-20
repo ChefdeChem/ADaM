@@ -220,7 +220,7 @@ test("Stone's Endurance resumes movement after reducing opportunity-attack damag
   const used = resolveDamageReductionReaction(withContinuation, true, () => 0);
   const player = used.encounter.combatants.find((combatant) => combatant.id === goliathBarbarian.id);
   assert.deepEqual(player.position, { x: 2, y: 6 });
-  assert.equal(used.encounter.turn.movementRemaining, 25);
+  assert.equal(used.encounter.turn.movementRemaining, 30);
 });
 
 test("Stone's Endurance is not offered without a Reaction or a remaining use", () => {

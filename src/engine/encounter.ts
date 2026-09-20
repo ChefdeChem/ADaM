@@ -7,6 +7,7 @@ import { effectiveSpeed, expireEffectsAtTurnEnd, expireEffectsAtTurnStart, recon
 import { availableCharacterAttacks, combatInventoryForCharacter } from "./inventory";
 import { resolveTurnStartEffects } from "./turn-effects";
 import { resolvePointHazardsForCombatant } from "./point-effects";
+import { SKILL_ABILITIES } from "../rulesets/skills";
 
 const abilityModifier=(score:number)=>Math.floor((score-10)/2);
 const abilities:AbilityName[]=["strength","dexterity","constitution","intelligence","wisdom","charisma"];
@@ -16,7 +17,8 @@ function characterSavingThrows(character:Character):Record<AbilityName,number>{
 }
 
 function characterSkillModifiers(character: Character): Record<string, number> {
-  const modifiers = Object.fromEntries(Object.entries(character.profile?.skills ?? {}).map(([skill, modifier]) => [skill.toLowerCase(), modifier]));
+  const modifiers: Record<string, number> = Object.fromEntries(Object.entries(SKILL_ABILITIES).map(([skill, ability]) => [skill, abilityModifier(character.abilities[ability])]));
+  for (const [skill, modifier] of Object.entries(character.profile?.skills ?? {})) modifiers[skill.toLowerCase()] = modifier;
   for (const feature of character.passiveFeatures ?? []) {
     if (feature.resolution.type !== "skill-proficiency") continue;
     const skill = feature.resolution.skill.toLowerCase();
@@ -61,7 +63,7 @@ function characterBaseArmorClass(character: Character): number {
 function characterBaseSpeed(character: Character): number {
   const armor = equippedEquipmentRules(character).find((rule) => rule.resolution.type === "armor");
   const strengthRequirement = armor?.resolution.type === "armor" ? armor.resolution.strengthRequirement : undefined;
-  return (character.speedFeet ?? 30) - (strengthRequirement && character.abilities.strength < strengthRequirement ? 10 : 0);
+  return Math.max(0, (character.speedFeet ?? 30) - (strengthRequirement && character.abilities.strength < strengthRequirement ? 10 : 0));
 }
 
 function equipmentAbilityCheckDisadvantages(character: Character): string[] {
@@ -185,7 +187,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
             : undefined;
         })(),
         initiative: 0,
-        initiativeModifier: abilityModifier(character.abilities.dexterity),
+        initiativeModifier: character.profile?.initiativeModifier ?? abilityModifier(character.abilities.dexterity),
         initiativeRolled: false,
         position: { x: 1, y: 6 },
         attacks: availableCharacterAttacks(character, characterInventory),
@@ -202,7 +204,7 @@ export function createEncounter(character: Character, scenario: Scenario): Encou
     ],
     effects: [],
     map: scenario.grid,
-    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: 30, disengaged: false, usedFeatureIds: [] },
+    turn: { action: true, bonusAction: true, reaction: true, movementRemaining: characterBaseSpeed(character), disengaged: false, usedFeatureIds: [] },
     pendingResponse: null,
     log: ["Encounter started. The collapsed gate is thirty feet ahead."],
   };
