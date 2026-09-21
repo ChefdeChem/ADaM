@@ -325,6 +325,11 @@ button{cursor:pointer}
 .resource-pills>div,.effect-pills>div{min-width:120px;padding:9px 11px;border:1px solid #cfc5b2;background:var(--panel)}
 .resource-pills span,.effect-pills span,.effect-pills small{display:block;color:var(--muted);font-size:8px;line-height:1.4;text-transform:uppercase;letter-spacing:.08em}
 .resource-pills strong,.effect-pills strong{display:block;margin-top:3px;font:500 16px Georgia,serif}
+.resource-pills small{display:block;margin-top:4px;color:var(--muted);font-size:8px;line-height:1.4;text-transform:uppercase;letter-spacing:.08em}
+.light-source-controls>div{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.light-source-controls button{padding:5px 7px;border:1px solid var(--line);background:transparent;color:var(--ink);font-size:8px;font-weight:800;text-transform:uppercase}
+.light-source-controls button:hover:not(:disabled){border-color:var(--red);color:var(--red)}
+.light-source-controls button:disabled{opacity:.45}
 .effect-pills>div{min-width:180px;border-left:3px solid var(--gold)}
 .effect-pills small{margin-top:4px;text-transform:none;letter-spacing:0}
 .resource-pills p,.effect-pills p{margin:0;color:var(--muted);font-size:10px}

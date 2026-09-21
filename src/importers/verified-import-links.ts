@@ -69,10 +69,14 @@ function importedEquipmentRules(character: Character): CharacterEquipmentRule[] 
     const template = equipmentTemplate(item.name);
     if (!template) return [];
     const rule = clone(template.rule);
-    if (!["weapon", "ammunition", "armor", "shield"].includes(rule.resolution.type)) return [];
+    if (rule.resolution.type === "spellcasting-focus") {
+      const spellcastingClass = normalize(rule.resolution.spellcastingClass);
+      const classNames = character.className.split("/").map((entry) => normalize(entry).replace(/\s+\d+$/, ""));
+      if (!classNames.some((entry) => entry === spellcastingClass) || !character.profile?.spellcasting) return [];
+    }
     rule.id = `imported-${slug(item.name)}`;
     rule.name = item.name;
-    rule.equipped = rule.resolution.type === "weapon" || rule.resolution.type === "ammunition";
+    rule.equipped = rule.resolution.type !== "armor" && rule.resolution.type !== "shield";
     if (rule.resolution.type === "weapon" || rule.resolution.type === "ammunition") {
       const attackIds = linkedAttackIds(character, template);
       if (!attackIds.length) return [];

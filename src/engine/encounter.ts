@@ -8,6 +8,7 @@ import { availableCharacterAttacks, combatInventoryForCharacter } from "./invent
 import { resolveTurnStartEffects } from "./turn-effects";
 import { resolvePointHazardsForCombatant } from "./point-effects";
 import { SKILL_ABILITIES } from "../rulesets/skills";
+import { elapseLightFuel } from "./equipment-actions";
 
 const abilityModifier=(score:number)=>Math.floor((score-10)/2);
 const abilities:AbilityName[]=["strength","dexterity","constitution","intelligence","wisdom","charisma"];
@@ -269,7 +270,8 @@ export function endTurn(encounter: EncounterState, random = Math.random): Encoun
     turn: { action: true, bonusAction: true, reaction: true, movementRemaining: nextCombatant.hitPoints.current > 0 ? nextCombatant.baseSpeedFeet : 0, disengaged: false, usedFeatureIds: [] },
     log: [`Turn passed to ${nextCombatant.name}.`, ...afterEndEffects.log],
   };
-  const expired = expireEffectsAtTurnStart(advanced, round, nextCombatant.id);
+  const afterTime = round > encounter.round && round % 10 === 1 ? elapseLightFuel(advanced, 1) : advanced;
+  const expired = expireEffectsAtTurnStart(afterTime, round, nextCombatant.id);
   const started = resolveTurnStartEffects(expired, nextCombatant.id, random);
   return { ...started, turn: { ...started.turn, movementRemaining: effectiveSpeed(started, nextCombatant.id) } };
 }

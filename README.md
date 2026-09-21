@@ -24,6 +24,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Spell picker with spell-level costs, tracked slot pools, cantrips, and per-cast resource spending
 - Supported flattened PDFs preserve spell names by level, recover spell-slot pools, and link only official-source spell definitions already verified by ADaM; unmatched spells remain visible but unavailable
 - Exact imported equipment and feature names can inherit existing official-source weapon, ammunition, armor, shield, passive, and triggered mechanics; ambiguous or dependency-incomplete records remain descriptive
+- Exact imported spellcasting focuses, light sources, and tools can inherit existing official-source mechanics when their class and proficiency dependencies are explicit; encounter controls expose focus availability, tool checks, light modes, and elapsed fuel
 - Single-target enemy saving-throw resolution and friendly healing spell support; Cleira's Healing Word is fully playable
 - Base combat statistics separated from derived values and temporary modifiers
 - Round-based effect expiration, concentration replacement, and temporary hit-point ownership
