@@ -1,5 +1,5 @@
 import { BUILT_IN_CHARACTERS } from "../characters/built-ins";
-import type { Character, CharacterEquipmentRule, CharacterFeatureAction, CharacterPassiveFeature, CharacterTriggeredFeature, MechanicProvenance } from "../domain/character";
+import type { Character, CharacterEquipmentRule, CharacterFeatureAction, CharacterPassiveFeature, CharacterResource, CharacterTriggeredFeature, MechanicProvenance } from "../domain/character";
 
 const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
 const slug = (value: string) => normalize(value).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -95,6 +95,7 @@ function importedEquipmentRules(character: Character): CharacterEquipmentRule[] 
 
 type FeatureTemplate = {
   sourceFeature: NonNullable<NonNullable<Character["profile"]>["features"]>[number];
+  sourceCharacter: Character;
   action?: CharacterFeatureAction;
   passive?: CharacterPassiveFeature;
   trigger?: CharacterTriggeredFeature;
@@ -106,7 +107,7 @@ const featureTemplates: FeatureTemplate[] = BUILT_IN_CHARACTERS.flatMap((charact
   const passive = character.passiveFeatures?.find((feature) => feature.id === sourceFeature.executablePassiveId);
   const trigger = character.triggeredFeatures?.find((feature) => feature.id === sourceFeature.executableTriggerId);
   if (!action && !passive && !trigger) return [];
-  return [{ sourceFeature, action, passive, trigger }];
+  return [{ sourceFeature, sourceCharacter: character, action, passive, trigger }];
 }));
 
 function featureTemplate(character: Character, name: string): FeatureTemplate | undefined {
@@ -127,6 +128,75 @@ function dependenciesReady(character: Character, template: FeatureTemplate): boo
   if (template.passive?.resolution.type === "ability-check-reroll" && !resourceNames.has(normalize(template.passive.resolution.resourceName))) return false;
   if (template.passive?.resolution.type === "free-spell-cast") return resourceNames.has(normalize(template.passive.resolution.resourceName)) && spellIds.has(template.passive.resolution.spellId);
   return true;
+}
+
+const countWords: Record<string, number> = {
+  once: 1,
+  twice: 2,
+  thrice: 3,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+};
+
+function explicitRecovery(description: string): CharacterResource["recovery"] | null {
+  const hasShortRest = /\bshort(?:\s+or\s+long)?\s+rest\b/i.test(description);
+  const hasLongRest = /\blong\s+rest\b/i.test(description);
+  if (hasShortRest) return "short-rest";
+  if (hasLongRest) return "long-rest";
+  return null;
+}
+
+function explicitCounter(description: string): { current: number; maximum: number } | null {
+  const ratio = description.match(/\b(?:uses?\s*)?(\d+)\s*\/\s*(\d+)(?:\s*uses?)?\b/i);
+  if (ratio) {
+    const current = Number(ratio[1]);
+    const maximum = Number(ratio[2]);
+    return maximum > 0 && current >= 0 && current <= maximum ? { current, maximum } : null;
+  }
+  const pool = description.match(/\b(\d+|one|two|three|four|five|six)[-\s](?:point|use)[-\s](?:pool|s?)\b/i);
+  const cadence = description.match(/\b(once|twice|thrice|one|two|three|four|five|six|\d+)\b(?=.{0,24}\b(?:per|each)\b.{0,16}\b(?:short|long)\s+rest\b)/i);
+  const value = pool?.[1] ?? cadence?.[1];
+  if (!value) return null;
+  const maximum = /^\d+$/.test(value) ? Number(value) : countWords[value.toLowerCase()];
+  return maximum > 0 ? { current: maximum, maximum } : null;
+}
+
+function requiredResourceName(template: FeatureTemplate): string | null {
+  if (template.action) return template.action.resourceName;
+  if (template.trigger?.resourceName) return template.trigger.resourceName;
+  if (template.passive?.resolution.type === "ability-check-reroll" || template.passive?.resolution.type === "free-spell-cast") {
+    return template.passive.resolution.resourceName;
+  }
+  return null;
+}
+
+function importedFeatureResources(character: Character): CharacterResource[] {
+  const resources = character.resources.map(clone);
+  const knownNames = new Set(resources.map((resource) => normalize(resource.name)));
+  for (const feature of character.profile?.features ?? []) {
+    const template = featureTemplate(character, feature.name);
+    const resourceName = template ? requiredResourceName(template) : null;
+    if (!template || !resourceName || knownNames.has(normalize(resourceName))) continue;
+    const counter = explicitCounter(feature.description);
+    const recovery = explicitRecovery(feature.description);
+    const sourceResource = template.sourceCharacter.resources.find((resource) => normalize(resource.name) === normalize(resourceName));
+    if (!counter || !recovery || !sourceResource || sourceResource.kind !== "generic" || sourceResource.recovery !== recovery) continue;
+    resources.push({
+      id: `imported-${slug(resourceName)}`,
+      name: resourceName,
+      kind: "generic",
+      ...counter,
+      recovery,
+      sourceFeatureName: feature.name,
+      provenance: clone(template.sourceFeature.provenance!),
+    });
+    knownNames.add(normalize(resourceName));
+  }
+  return resources;
 }
 
 function importedFeatures(character: Character) {
@@ -152,10 +222,12 @@ function importedFeatures(character: Character) {
 }
 
 export function linkVerifiedImportedMechanics(character: Character): Character {
-  const equipmentRules = importedEquipmentRules(character);
-  const linkedFeatures = importedFeatures(character);
+  const resources = importedFeatureResources(character);
+  const resourceLinkedCharacter = { ...character, resources };
+  const equipmentRules = importedEquipmentRules(resourceLinkedCharacter);
+  const linkedFeatures = importedFeatures(resourceLinkedCharacter);
   return {
-    ...character,
+    ...resourceLinkedCharacter,
     equipmentRules,
     featureActions: linkedFeatures.actions,
     passiveFeatures: linkedFeatures.passives,

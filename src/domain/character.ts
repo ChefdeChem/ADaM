@@ -18,6 +18,9 @@ export type CharacterResource = {
   recovery: "short-rest" | "long-rest" | "special";
   shortRestRecovery?: number | "all";
   longRestRecovery?: number | "all";
+  /** The printed feature that supplied this imported counter. */
+  sourceFeatureName?: string;
+  provenance?: MechanicProvenance;
 };
 
 export type CharacterAttack = {
