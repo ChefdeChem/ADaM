@@ -18,7 +18,7 @@ export type DndBeyondCharacterData = {
   };
   savingThrowModifiers: Record<AbilityName, number>;
   attacks: CharacterAttack[];
-  profile: Pick<CharacterProfile, "equipment" | "features">;
+  profile: Pick<CharacterProfile, "playerName" | "species" | "background" | "senses" | "skills" | "spellcasting" | "equipment" | "features">;
   extractionAssessment: NonNullable<CharacterSourceSnapshot["extractionAssessment"]>;
   editionAssessment: {
     edition: "dnd-2014" | "dnd-2024" | "uncertain" | "mixed";
@@ -34,6 +34,97 @@ const sectionHeadings = new Set([
 ]);
 
 const normalizedHeading = (value: string) => value.trim().replace(/\s+/g, " ").toUpperCase();
+
+const abilitiesByName: Record<string, AbilityName> = {
+  strength: "strength", dexterity: "dexterity", constitution: "constitution",
+  intelligence: "intelligence", wisdom: "wisdom", charisma: "charisma",
+};
+
+const skillNames = [
+  "Acrobatics", "Animal Handling", "Arcana", "Athletics", "Deception", "History", "Insight", "Intimidation",
+  "Investigation", "Medicine", "Nature", "Perception", "Performance", "Persuasion", "Religion", "Sleight of Hand",
+  "Stealth", "Survival",
+];
+
+function adjacentInteger(tokens: string[], labelIndex: number, distance = 3): number | undefined {
+  for (let offset = 1; offset <= distance; offset += 1) {
+    const after = integer(tokens[labelIndex + offset]);
+    if (after !== null) return after;
+    const before = integer(tokens[labelIndex - offset]);
+    if (before !== null) return before;
+  }
+  return undefined;
+}
+
+function labeledIndex(tokens: string[], labels: string[]): number {
+  const wanted = new Set(labels.map(normalizedHeading));
+  return tokens.findIndex((token) => wanted.has(normalizedHeading(token)));
+}
+
+function labeledText(tokens: string[], labels: string[]): string | undefined {
+  const index = labeledIndex(tokens, labels);
+  const candidate = index >= 0 ? tidyRecordName(tokens[index + 1] ?? "") : "";
+  return candidate && !sectionHeadings.has(normalizedHeading(candidate)) ? candidate : undefined;
+}
+
+function extractIdentity(tokens: string[], classIndex: number, experienceIndex: number): Pick<CharacterProfile, "playerName" | "species" | "background"> {
+  const explicitSpecies = labeledText(tokens, ["SPECIES", "RACE"]);
+  const explicitBackground = labeledText(tokens, ["BACKGROUND"]);
+  const explicitPlayer = labeledText(tokens, ["PLAYER NAME"]);
+  if (explicitSpecies || explicitBackground || explicitPlayer) return {
+    ...(explicitPlayer ? { playerName: explicitPlayer } : {}),
+    ...(explicitSpecies ? { species: explicitSpecies } : {}),
+    ...(explicitBackground ? { background: explicitBackground } : {}),
+  };
+
+  const identity = tokens.slice(classIndex + 2, experienceIndex);
+  if (identity.length < 3) return {};
+  const compoundSpecies = /^(?:High|Wood|Dark|Hill|Mountain|Rock|Forest|Half)$/i.test(identity.at(-3) ?? "");
+  const speciesStart = compoundSpecies ? identity.length - 3 : identity.length - 2;
+  return {
+    playerName: identity.slice(0, speciesStart).join(" "),
+    species: identity.slice(speciesStart, identity.length - 1).join(" "),
+    background: identity.at(-1),
+  };
+}
+
+function extractSenses(tokens: string[]): CharacterProfile["senses"] | undefined {
+  const labels: Array<[keyof NonNullable<CharacterProfile["senses"]>, string[]]> = [
+    ["passivePerception", ["PASSIVE PERCEPTION", "PASSIVE WISDOM (PERCEPTION)"]],
+    ["passiveInsight", ["PASSIVE INSIGHT", "PASSIVE WISDOM (INSIGHT)"]],
+    ["passiveInvestigation", ["PASSIVE INVESTIGATION", "PASSIVE INTELLIGENCE (INVESTIGATION)"]],
+    ["darkvisionFeet", ["DARKVISION"]],
+  ];
+  const senses: NonNullable<CharacterProfile["senses"]> = {};
+  labels.forEach(([key, candidates]) => {
+    const index = labeledIndex(tokens, candidates);
+    const value = index >= 0 ? adjacentInteger(tokens, index) : undefined;
+    if (value !== undefined && value >= 0) senses[key] = value;
+  });
+  return Object.keys(senses).length ? senses : undefined;
+}
+
+function extractSkills(tokens: string[]): CharacterProfile["skills"] | undefined {
+  const skills: Record<string, number> = {};
+  skillNames.forEach((skill) => {
+    const index = labeledIndex(tokens, [skill]);
+    const value = index >= 0 ? adjacentInteger(tokens, index, 2) : undefined;
+    if (value !== undefined && value >= -10 && value <= 30) skills[skill] = value;
+  });
+  return Object.keys(skills).length ? skills : undefined;
+}
+
+function extractSpellcasting(tokens: string[]): CharacterProfile["spellcasting"] | undefined {
+  const abilityLabel = labeledIndex(tokens, ["SPELLCASTING ABILITY"]);
+  const abilityName = abilityLabel >= 0 ? normalizedHeading(tokens[abilityLabel + 1] ?? "").toLowerCase() : "";
+  const ability = abilitiesByName[abilityName];
+  const saveIndex = labeledIndex(tokens, ["SPELL SAVE DC", "SPELLCASTING SAVE DC"]);
+  const attackIndex = labeledIndex(tokens, ["SPELL ATTACK BONUS", "SPELL ATTACK MODIFIER"]);
+  const saveDc = saveIndex >= 0 ? adjacentInteger(tokens, saveIndex) : undefined;
+  const attackBonus = attackIndex >= 0 ? adjacentInteger(tokens, attackIndex) : undefined;
+  if (!ability || saveDc === undefined || attackBonus === undefined) return undefined;
+  return { ability, saveDc, attackBonus };
+}
 
 function sectionTokens(tokens: string[], headings: string[]): { found: boolean; tokens: string[] } {
   const wanted = new Set(headings.map(normalizedHeading));
@@ -231,6 +322,10 @@ export function parseDndBeyondTokens(rawTokens: string[], pageCount = 1): DndBey
   const attacks = extractAttacks(tokens, hitDiceIndex + 1);
   const equipment = extractEquipment(tokens);
   const features = extractFeatures(tokens);
+  const identity = extractIdentity(tokens, classIndex, experienceIndex);
+  const senses = extractSenses(tokens);
+  const skills = extractSkills(tokens);
+  const spellcasting = extractSpellcasting(tokens);
   const abilityOrder: AbilityName[] = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"];
   const legacySaveOrder: AbilityName[] = ["charisma", "dexterity", "intelligence", "strength", "wisdom", "constitution"];
   const rawSaveTokens = tokens.slice(abilityStart + 12, abilityStart + 30);
@@ -259,7 +354,14 @@ export function parseDndBeyondTokens(rawTokens: string[], pageCount = 1): DndBey
     },
     savingThrowModifiers,
     attacks,
-    profile: { equipment: equipment.records, features: features.records },
+    profile: {
+      ...identity,
+      ...(senses ? { senses } : {}),
+      ...(skills ? { skills } : {}),
+      ...(spellcasting ? { spellcasting } : {}),
+      equipment: equipment.records,
+      features: features.records,
+    },
     extractionAssessment: {
       pageCount: Math.max(1, pageCount),
       core: { confidence: "high", recordCount: 1, evidence: `Core combat values matched the supported D&D Beyond layout across ${Math.max(1, pageCount)} page${pageCount === 1 ? "" : "s"}.` },

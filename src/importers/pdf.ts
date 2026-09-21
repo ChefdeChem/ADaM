@@ -143,7 +143,8 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
       const editionWarning = parsed.editionAssessment.edition === "uncertain" || parsed.editionAssessment.edition === "mixed"
         ? "The source edition is not conclusive; ADaM preserved the extracted build and flagged it for review."
         : `${parsed.editionAssessment.edition === "dnd-2014" ? "2014" : "2024"} source rules detected with ${parsed.editionAssessment.confidence} confidence.`;
-      return importResult(character, "flattened-pdf", [`Flattened D&D Beyond sheet detected across ${parsed.extractionAssessment.pageCount} page${parsed.extractionAssessment.pageCount === 1 ? "" : "s"}. ${parsed.attacks.length} weapon attacks, ${parsed.profile.equipment?.length ?? 0} equipment records, ${parsed.profile.features?.length ?? 0} descriptive features, and saving throw modifiers were extracted; review them before combat. ${editionWarning}`]);
+      const profileRecordCount = [parsed.profile.species, parsed.profile.background, parsed.profile.senses, parsed.profile.skills, parsed.profile.spellcasting].filter(Boolean).length;
+      return importResult(character, "flattened-pdf", [`Flattened D&D Beyond sheet detected across ${parsed.extractionAssessment.pageCount} page${parsed.extractionAssessment.pageCount === 1 ? "" : "s"}. ${parsed.attacks.length} weapon attacks, ${parsed.profile.equipment?.length ?? 0} equipment records, ${parsed.profile.features?.length ?? 0} descriptive features, ${profileRecordCount} profile groups, and saving throw modifiers were extracted; review them before combat. ${editionWarning}`]);
     }
   } catch {
     // The editable review below is the safe fallback for image-only or unfamiliar PDFs.

@@ -74,4 +74,4 @@ src/data/            Sample import data
 - Keep the complete initiative order and values visible throughout combat, including enemy initiative.
 - Give every non-initiative roll a prominent teaching display so new players can see which dice and modifiers are being used.
 
-Next: cover refinements, broader conditions, additional class-specific reaction triggers, and separate tested 2014/2024 encounter-resolution settings.
+Next: spell and resource extraction from supported PDFs, cover refinements, broader conditions, additional class-specific reaction triggers, and separate tested 2014/2024 encounter-resolution settings.
