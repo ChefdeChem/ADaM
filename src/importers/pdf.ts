@@ -6,6 +6,7 @@ import type { CharacterImporter, ImportResult } from "./types";
 import { createId } from "../shared/id";
 import { importKeyFor } from "./source-identity";
 import { validateImportedCharacter } from "./validation";
+import { linkVerifiedImportedMechanics } from "./verified-import-links";
 
 const aliases: Record<string, string[]> = {
   name: ["CharacterName", "Character Name"],
@@ -116,7 +117,7 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
     const pageCount = tokens.filter((token) => token === "__ADAM_PAGE_BREAK__").length + 1;
     const parsed = parseDndBeyondTokens(tokens, pageCount);
     if (parsed) {
-      const character: Character = {
+      const character = linkVerifiedImportedMechanics({
         id: createId(),
         name: parsed.name,
         className: parsed.className,
@@ -139,11 +140,11 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
           editionAssessment: parsed.editionAssessment,
           extractionAssessment: parsed.extractionAssessment,
         },
-      };
+      });
       const editionWarning = parsed.editionAssessment.edition === "uncertain" || parsed.editionAssessment.edition === "mixed"
         ? "The source edition is not conclusive; ADaM preserved the extracted build and flagged it for review."
         : `${parsed.editionAssessment.edition === "dnd-2014" ? "2014" : "2024"} source rules detected with ${parsed.editionAssessment.confidence} confidence.`;
-      const profileRecordCount = [parsed.profile.species, parsed.profile.background, parsed.profile.senses, parsed.profile.skills, parsed.profile.spellcasting].filter(Boolean).length;
+      const profileRecordCount = [parsed.profile.species, parsed.profile.background, parsed.profile.senses, parsed.profile.skills, parsed.profile.spellcasting, parsed.profile.proficiencies].filter(Boolean).length;
       return importResult(character, "flattened-pdf", [`Flattened D&D Beyond sheet detected across ${parsed.extractionAssessment.pageCount} page${parsed.extractionAssessment.pageCount === 1 ? "" : "s"}. ${parsed.attacks.length} weapon attacks, ${parsed.spells.length} spells, ${parsed.resources.length} spell-slot pools, ${parsed.profile.equipment?.length ?? 0} equipment records, ${parsed.profile.features?.length ?? 0} descriptive features, ${profileRecordCount} profile groups, and saving throw modifiers were extracted; review them before combat. ${editionWarning}`]);
     }
   } catch {

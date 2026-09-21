@@ -21,7 +21,7 @@ export type DndBeyondCharacterData = {
   attacks: CharacterAttack[];
   resources: CharacterResource[];
   spells: CharacterSpell[];
-  profile: Pick<CharacterProfile, "playerName" | "species" | "background" | "senses" | "skills" | "spellcasting" | "equipment" | "features">;
+  profile: Pick<CharacterProfile, "playerName" | "species" | "background" | "senses" | "skills" | "spellcasting" | "proficiencies" | "equipment" | "features">;
   extractionAssessment: NonNullable<CharacterSourceSnapshot["extractionAssessment"]>;
   editionAssessment: {
     edition: "dnd-2014" | "dnd-2024" | "uncertain" | "mixed";
@@ -128,6 +128,35 @@ function extractSpellcasting(tokens: string[]): CharacterProfile["spellcasting"]
   if (!ability || saveDc === undefined || attackBonus === undefined) return undefined;
   return { ability, saveDc, attackBonus };
 }
+
+function extractProficiencies(tokens: string[]): CharacterProfile["proficiencies"] | undefined {
+  const section = sectionTokens(tokens, ["PROFICIENCIES"]);
+  if (!section.found) return undefined;
+  const categories: Array<[keyof NonNullable<CharacterProfile["proficiencies"]>, string[]]> = [
+    ["armor", ["ARMOR", "ARMOR TRAINING"]],
+    ["weapons", ["WEAPONS", "WEAPON PROFICIENCIES"]],
+    ["tools", ["TOOLS", "TOOL PROFICIENCIES"]],
+    ["languages", ["LANGUAGES"]],
+  ];
+  const labels = new Map(categories.flatMap(([key, values]) => values.map((value) => [value, key] as const)));
+  const result: NonNullable<CharacterProfile["proficiencies"]> = { armor: [], weapons: [], tools: [], languages: [] };
+  let category: keyof typeof result | null = null;
+  section.tokens.forEach((rawToken) => {
+    const heading = normalizedHeading(rawToken);
+    const nextCategory = labels.get(heading);
+    if (nextCategory) {
+      category = nextCategory;
+      return;
+    }
+    if (!category) return;
+    tidyRecordName(rawToken).split(/[,;•·]/).map((entry) => entry.trim()).filter(Boolean).forEach((entry) => {
+      if (!result[category!].some((existing) => normalizeProficiency(existing) === normalizeProficiency(entry))) result[category!].push(entry);
+    });
+  });
+  return Object.values(result).some((entries) => entries.length) ? result : undefined;
+}
+
+const normalizeProficiency = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
 
 function sectionTokens(tokens: string[], headings: string[]): { found: boolean; tokens: string[] } {
   const wanted = new Set(headings.map(normalizedHeading));
@@ -409,6 +438,7 @@ export function parseDndBeyondTokens(rawTokens: string[], pageCount = 1): DndBey
   const senses = extractSenses(tokens);
   const skills = extractSkills(tokens);
   const spellcasting = extractSpellcasting(tokens);
+  const proficiencies = extractProficiencies(tokens);
   const spellRecords = extractSpells(tokens, spellcasting, {
     strength: abilityValues[0]!, dexterity: abilityValues[1]!, constitution: abilityValues[2]!,
     intelligence: abilityValues[3]!, wisdom: abilityValues[4]!, charisma: abilityValues[5]!,
@@ -448,6 +478,7 @@ export function parseDndBeyondTokens(rawTokens: string[], pageCount = 1): DndBey
       ...(senses ? { senses } : {}),
       ...(skills ? { skills } : {}),
       ...(spellcasting ? { spellcasting } : {}),
+      ...(proficiencies ? { proficiencies } : {}),
       equipment: equipment.records,
       features: features.records,
     },
