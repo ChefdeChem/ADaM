@@ -100,7 +100,7 @@ export type CharacterSpell = {
     socialInteractionAdvantageForSource?: boolean;
     targetFriendlyToSource?: boolean;
     senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
-    rollBonus?: { die: "1d4" | "1d6"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
+    rollBonus?: { die: "1d4" | "1d6" | "1d8" | "1d10" | "1d12"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
     consumeOnRollBonus?: boolean;
   };
   pointEffect?:
@@ -232,7 +232,7 @@ export type CharacterFeatureAction = {
         rangeFeet: number;
         excludesSelf: boolean;
         requiresHearing: boolean;
-        die: "1d4" | "1d6";
+        die: "1d4" | "1d6" | "1d8" | "1d10" | "1d12";
         appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw">;
         durationRounds: number;
       }
@@ -283,6 +283,7 @@ export type CharacterProfile = {
     executableTriggerId?: string;
     executablePassiveId?: string;
     executableAttackIds?: string[];
+    executableValueEvidence?: string[];
     provenance?: MechanicProvenance;
   }>;
 };

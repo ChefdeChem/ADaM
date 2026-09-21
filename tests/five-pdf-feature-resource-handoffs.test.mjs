@@ -65,7 +65,7 @@ test("accepts written use counts only when the rest cadence matches the official
 
 test("a verified imported pool unlocks feature execution, spending, and registered recovery", () => {
   const linked = linkVerifiedImportedMechanics(importedCharacter([
-    { name: "Divine Sense", description: "Three uses per long rest." },
+    { name: "Divine Sense", description: "Three uses per long rest. Sense certain creatures within 60 feet until the end of the next turn." },
   ]));
   assert.equal(linked.featureActions?.[0]?.name, "Divine Sense");
   const encounter = createPlayableEncounter(linked, generateScriptedScenario("easy crypt fight"));

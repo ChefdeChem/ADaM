@@ -174,6 +174,63 @@ function requiredResourceName(template: FeatureTemplate): string | null {
   return null;
 }
 
+const abilityNames = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] as const;
+const damageTypes = ["acid", "bludgeoning", "cold", "fire", "force", "lightning", "necrotic", "piercing", "poison", "psychic", "radiant", "slashing", "thunder"] as const;
+
+function boundedFeet(value: string): number | null {
+  const feet = Number(value);
+  return Number.isInteger(feet) && feet >= 5 && feet <= 1000 && feet % 5 === 0 ? feet : null;
+}
+
+function adaptFeatureAction(feature: { name: string; description: string }, template: CharacterFeatureAction): { action: CharacterFeatureAction; evidence: string[] } | null {
+  const action = clone(template);
+  const evidence: string[] = [];
+  const description = feature.description;
+
+  if (action.resolution.type === "area-saving-throw") {
+    const save = description.match(/\bDC\s*(\d{1,2})\s+(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)\b/i);
+    const damage = description.match(new RegExp(`\\b(\\d+d\\d+(?:\\s*[+-]\\s*\\d+)?)\\s+(${damageTypes.join("|")})\\s+damage\\b`, "i"));
+    const area = description.match(/\b(\d{1,3})[-\s]foot\s+(cone|line|cube|sphere|cylinder)\b/i);
+    const saveAbility = abilityNames.find((ability) => ability === save?.[2].toLowerCase());
+    const damageType = damage?.[2].toLowerCase();
+    const templateDamageType = action.resolution.damage.trim().split(/\s+/).at(-1)?.toLowerCase();
+    const areaFeet = area ? boundedFeet(area[1]) : null;
+    if (!save || !saveAbility || saveAbility !== action.resolution.save.ability || !damage || damageType !== templateDamageType || !area || area[2].toLowerCase() !== action.resolution.area.shape || !areaFeet) return null;
+    const dc = Number(save[1]);
+    if (!Number.isInteger(dc) || dc < 1 || dc > 30) return null;
+    action.resolution.save.dc = dc;
+    action.resolution.damage = `${damage[1].replace(/\s+/g, " ")} ${damageType}`;
+    action.resolution.area.sizeFeet = areaFeet;
+    action.description = description;
+    evidence.push(`Printed save DC ${dc} (${saveAbility}).`);
+    evidence.push(`Printed damage ${action.resolution.damage}.`);
+    evidence.push(`Printed area ${areaFeet}-foot ${action.resolution.area.shape}.`);
+  }
+
+  if (action.resolution.type === "sense-creature-types") {
+    const range = description.match(/\bwithin\s+(\d{1,4})\s+feet\b/i) ?? description.match(/\b(\d{1,4})[-\s]foot\s+range\b/i);
+    const rangeFeet = range ? boundedFeet(range[1]) : null;
+    if (!rangeFeet) return null;
+    action.resolution.rangeFeet = rangeFeet;
+    action.description = description;
+    evidence.push(`Printed range ${rangeFeet} feet.`);
+  }
+
+  if (action.resolution.type === "grant-roll-bonus") {
+    const range = description.match(/\bwithin\s+(\d{1,4})\s+feet\b/i) ?? description.match(/\b(\d{1,4})[-\s]foot\s+range\b/i);
+    const die = description.match(/\b(?:a|one)\s+d(4|6|8|10|12)\b/i) ?? description.match(/\bd(4|6|8|10|12)\s+inspiration\s+die\b/i);
+    const rangeFeet = range ? boundedFeet(range[1]) : null;
+    if (!rangeFeet || !die) return null;
+    action.resolution.rangeFeet = rangeFeet;
+    action.resolution.die = `1d${die[1]}` as typeof action.resolution.die;
+    action.description = description;
+    evidence.push(`Printed range ${rangeFeet} feet.`);
+    evidence.push(`Printed bonus die ${action.resolution.die}.`);
+  }
+
+  return { action, evidence };
+}
+
 function importedFeatureResources(character: Character): CharacterResource[] {
   const resources = character.resources.map(clone);
   const knownNames = new Set(resources.map((resource) => normalize(resource.name)));
@@ -206,15 +263,18 @@ function importedFeatures(character: Character) {
   const features = (character.profile?.features ?? []).map((feature) => {
     const template = featureTemplate(character, feature.name);
     if (!template || !dependenciesReady(character, template)) return feature;
-    if (template.action && !actions.some((candidate) => candidate.id === template.action!.id)) actions.push(clone(template.action));
+    const adaptedAction = template.action ? adaptFeatureAction(feature, template.action) : null;
+    if (template.action && !adaptedAction) return feature;
+    if (adaptedAction && !actions.some((candidate) => candidate.id === adaptedAction.action.id)) actions.push(adaptedAction.action);
     if (template.passive && !passives.some((candidate) => candidate.id === template.passive!.id)) passives.push(clone(template.passive));
     if (template.trigger && !triggers.some((candidate) => candidate.id === template.trigger!.id)) triggers.push(clone(template.trigger));
     return {
       ...feature,
       id: feature.id ?? slug(feature.name),
-      executableActionId: template.action?.id,
+      executableActionId: adaptedAction?.action.id,
       executablePassiveId: template.passive?.id,
       executableTriggerId: template.trigger?.id,
+      executableValueEvidence: adaptedAction?.evidence.length ? adaptedAction.evidence : undefined,
       provenance: clone(template.sourceFeature.provenance!),
     };
   });

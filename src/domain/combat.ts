@@ -244,7 +244,7 @@ export type ActiveEffect = {
   sense?: { creatureTypes: string[]; rangeFeet: number; blockedByTotalCover: boolean };
   senseMagic?: { rangeFeet: number; blockedByTotalCover: boolean };
   magicSchool?: import("./character").CharacterSpell["school"];
-  rollBonus?: { die: "1d4" | "1d6"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
+  rollBonus?: { die: "1d4" | "1d6" | "1d8" | "1d10" | "1d12"; appliesTo: Array<"ability-check" | "attack-roll" | "saving-throw"> };
   consumeOnRollBonus?: boolean;
   points?: Array<{ x: number; y: number }>;
   pointEffect?:
