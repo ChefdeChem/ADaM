@@ -129,8 +129,8 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
         savingThrowModifiers: parsed.savingThrowModifiers,
         attacks: parsed.attacks,
         profile: parsed.profile,
-        resources: [],
-        spells: [],
+        resources: parsed.resources,
+        spells: parsed.spells,
         source: {
           format: "flattened-pdf",
           fileName: file.name,
@@ -144,7 +144,7 @@ async function importFlattenedPdf(file: File, bytes: ArrayBuffer): Promise<Impor
         ? "The source edition is not conclusive; ADaM preserved the extracted build and flagged it for review."
         : `${parsed.editionAssessment.edition === "dnd-2014" ? "2014" : "2024"} source rules detected with ${parsed.editionAssessment.confidence} confidence.`;
       const profileRecordCount = [parsed.profile.species, parsed.profile.background, parsed.profile.senses, parsed.profile.skills, parsed.profile.spellcasting].filter(Boolean).length;
-      return importResult(character, "flattened-pdf", [`Flattened D&D Beyond sheet detected across ${parsed.extractionAssessment.pageCount} page${parsed.extractionAssessment.pageCount === 1 ? "" : "s"}. ${parsed.attacks.length} weapon attacks, ${parsed.profile.equipment?.length ?? 0} equipment records, ${parsed.profile.features?.length ?? 0} descriptive features, ${profileRecordCount} profile groups, and saving throw modifiers were extracted; review them before combat. ${editionWarning}`]);
+      return importResult(character, "flattened-pdf", [`Flattened D&D Beyond sheet detected across ${parsed.extractionAssessment.pageCount} page${parsed.extractionAssessment.pageCount === 1 ? "" : "s"}. ${parsed.attacks.length} weapon attacks, ${parsed.spells.length} spells, ${parsed.resources.length} spell-slot pools, ${parsed.profile.equipment?.length ?? 0} equipment records, ${parsed.profile.features?.length ?? 0} descriptive features, ${profileRecordCount} profile groups, and saving throw modifiers were extracted; review them before combat. ${editionWarning}`]);
     }
   } catch {
     // The editable review below is the safe fallback for image-only or unfamiliar PDFs.

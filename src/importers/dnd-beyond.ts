@@ -1,4 +1,5 @@
-import type { AbilityName, CharacterAttack, CharacterProfile, CharacterSourceSnapshot } from "../domain/character";
+import type { AbilityName, CharacterAttack, CharacterProfile, CharacterResource, CharacterSourceSnapshot, CharacterSpell } from "../domain/character";
+import { verifiedSpellTemplate } from "./verified-spell-catalog";
 
 export type DndBeyondCharacterData = {
   name: string;
@@ -18,6 +19,8 @@ export type DndBeyondCharacterData = {
   };
   savingThrowModifiers: Record<AbilityName, number>;
   attacks: CharacterAttack[];
+  resources: CharacterResource[];
+  spells: CharacterSpell[];
   profile: Pick<CharacterProfile, "playerName" | "species" | "background" | "senses" | "skills" | "spellcasting" | "equipment" | "features">;
   extractionAssessment: NonNullable<CharacterSourceSnapshot["extractionAssessment"]>;
   editionAssessment: {
@@ -141,6 +144,86 @@ function sectionTokens(tokens: string[], headings: string[]): { found: boolean; 
 }
 
 const tidyRecordName = (value: string) => value.replace(/^[•·\-]\s*/, "").replace(/\s+/g, " ").trim();
+
+const spellLevelHeading = (value: string): number | null => {
+  const heading = normalizedHeading(value).replace(/\s*\(.*\)$/, "");
+  if (/^CANTRIPS?(?: KNOWN)?$/.test(heading)) return 0;
+  const numeric = heading.match(/^(?:SPELL )?LEVEL ([1-9])$/)?.[1];
+  if (numeric) return Number(numeric);
+  const ordinal = heading.match(/^([1-9])(?:ST|ND|RD|TH) LEVEL$/)?.[1];
+  return ordinal ? Number(ordinal) : null;
+};
+
+const spellSlotCount = (value: string): { current: number; maximum: number } | null => {
+  const normalized = normalizedHeading(value);
+  const ratio = normalized.match(/^(?:SLOTS?\s*)?(\d+)\s*\/\s*(\d+)(?:\s*SLOTS?)?$/);
+  if (ratio) return { current: Number(ratio[1]), maximum: Number(ratio[2]) };
+  const total = normalized.match(/^(\d+)\s*SLOTS?$/);
+  return total ? { current: Number(total[1]), maximum: Number(total[1]) } : null;
+};
+
+const looksLikeSpellName = (value: string) => {
+  const name = tidyRecordName(value).replace(/\s*\((?:RITUAL|C|CONCENTRATION)\)\s*$/i, "");
+  if (!name || name.length > 60 || name.split(/\s+/).length > 8 || /[.!?:]$/.test(name)) return false;
+  if (/^(?:AT WILL|CASTING TIME|DURATION|RANGE|SCHOOL|SPELL ATTACK BONUS|SPELL SAVE DC|SPELLCASTING ABILITY|SLOTS?|PREPARED|KNOWN)$/i.test(name)) return false;
+  const words = name.split(/\s+/).filter((word) => /[A-Za-z]/.test(word));
+  return words.length > 0 && words.every((word) => /^[A-Z0-9][A-Za-z0-9'’/-]*$/.test(word) || /^(?:of|the|and|or|a|an|from|with)$/i.test(word));
+};
+
+function adaptVerifiedSpell(template: CharacterSpell, level: number, profile: CharacterProfile["spellcasting"], abilities: DndBeyondCharacterData["abilities"]): CharacterSpell {
+  const spell = JSON.parse(JSON.stringify(template)) as CharacterSpell;
+  const saveDc = profile?.saveDc;
+  const attackBonus = profile?.attackBonus;
+  const castingModifier = profile ? Math.floor((abilities[profile.ability] - 10) / 2) : undefined;
+  spell.id = `imported-${spell.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  spell.level = level;
+  if (spell.attackBonus !== undefined && attackBonus !== undefined) spell.attackBonus = attackBonus;
+  if (spell.save && saveDc !== undefined) spell.save.dc = saveDc;
+  if (spell.effect?.turnStartSave && saveDc !== undefined) spell.effect.turnStartSave.dc = saveDc;
+  if (spell.pointEffect?.type === "damaging-hazard" && saveDc !== undefined) spell.pointEffect.save.dc = saveDc;
+  if (spell.healing && castingModifier !== undefined) spell.healing = spell.healing.replace(/([+-])\s*\d+(?=\s+healing$)/i, `${castingModifier < 0 ? "-" : "+"} ${Math.abs(castingModifier)}`);
+  if (spell.description && saveDc !== undefined) spell.description = spell.description.replace(/DC\s+\d+/gi, `DC ${saveDc}`);
+  return spell;
+}
+
+function extractSpells(tokens: string[], profile: CharacterProfile["spellcasting"], abilities: DndBeyondCharacterData["abilities"]): { resources: CharacterResource[]; spells: CharacterSpell[] } {
+  const section = sectionTokens(tokens, ["SPELLS"]);
+  const resources: CharacterResource[] = [];
+  const spells: CharacterSpell[] = [];
+  let level: number | null = null;
+  section.tokens.forEach((rawToken) => {
+    const nextLevel = spellLevelHeading(rawToken);
+    if (nextLevel !== null) {
+      level = nextLevel;
+      return;
+    }
+    if (level === null) return;
+    const slotCount = level > 0 ? spellSlotCount(rawToken) : null;
+    if (slotCount) {
+      const existing = resources.find((resource) => resource.level === level);
+      if (existing) Object.assign(existing, slotCount);
+      else resources.push({ id: `spell-slot-${level}`, name: `Level ${level} Spell Slots`, kind: "spell-slot", level, ...slotCount, recovery: "long-rest" });
+      return;
+    }
+    const name = tidyRecordName(rawToken).replace(/\s*\((?:RITUAL|C|CONCENTRATION)\)\s*$/i, "");
+    if (!looksLikeSpellName(name) || spells.some((spell) => spell.name.toLowerCase() === name.toLowerCase())) return;
+    const template = verifiedSpellTemplate(name);
+    spells.push(template
+      ? adaptVerifiedSpell(template, level, profile, abilities)
+      : {
+          id: `imported-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+          name,
+          level,
+          castingTime: "action",
+          rangeFeet: 0,
+          target: "self",
+          requiresLineOfSight: false,
+          description: "The spell name and level were preserved from the imported sheet for player review.",
+          unsupportedReason: "ADaM has no verified executable definition for this imported spell. Its mechanics remain unavailable until verified.",
+        });
+  });
+  return { resources, spells };
+}
 
 function extractEquipment(tokens: string[]): { found: boolean; records: NonNullable<CharacterProfile["equipment"]> } {
   const section = sectionTokens(tokens, ["EQUIPMENT", "INVENTORY"]);
@@ -326,6 +409,10 @@ export function parseDndBeyondTokens(rawTokens: string[], pageCount = 1): DndBey
   const senses = extractSenses(tokens);
   const skills = extractSkills(tokens);
   const spellcasting = extractSpellcasting(tokens);
+  const spellRecords = extractSpells(tokens, spellcasting, {
+    strength: abilityValues[0]!, dexterity: abilityValues[1]!, constitution: abilityValues[2]!,
+    intelligence: abilityValues[3]!, wisdom: abilityValues[4]!, charisma: abilityValues[5]!,
+  });
   const abilityOrder: AbilityName[] = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"];
   const legacySaveOrder: AbilityName[] = ["charisma", "dexterity", "intelligence", "strength", "wisdom", "constitution"];
   const rawSaveTokens = tokens.slice(abilityStart + 12, abilityStart + 30);
@@ -354,6 +441,8 @@ export function parseDndBeyondTokens(rawTokens: string[], pageCount = 1): DndBey
     },
     savingThrowModifiers,
     attacks,
+    resources: spellRecords.resources,
+    spells: spellRecords.spells,
     profile: {
       ...identity,
       ...(senses ? { senses } : {}),

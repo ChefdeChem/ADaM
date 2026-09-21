@@ -22,6 +22,7 @@ Initial local-first scaffold for a D&D combat training application.
 - Character-sheet attack picker with melee, normal-range, and long-range validation
 - Automatic disadvantage at long range and when making ranged attacks while threatened within 5 feet
 - Spell picker with spell-level costs, tracked slot pools, cantrips, and per-cast resource spending
+- Supported flattened PDFs preserve spell names by level, recover spell-slot pools, and link only official-source spell definitions already verified by ADaM; unmatched spells remain visible but unavailable
 - Single-target enemy saving-throw resolution and friendly healing spell support; Cleira's Healing Word is fully playable
 - Base combat statistics separated from derived values and temporary modifiers
 - Round-based effect expiration, concentration replacement, and temporary hit-point ownership
@@ -74,4 +75,4 @@ src/data/            Sample import data
 - Keep the complete initiative order and values visible throughout combat, including enemy initiative.
 - Give every non-initiative roll a prominent teaching display so new players can see which dice and modifiers are being used.
 
-Next: spell and resource extraction from supported PDFs, cover refinements, broader conditions, additional class-specific reaction triggers, and separate tested 2014/2024 encounter-resolution settings.
+Next: cover refinements, broader conditions, additional class-specific reaction triggers, and separate tested 2014/2024 encounter-resolution settings.
