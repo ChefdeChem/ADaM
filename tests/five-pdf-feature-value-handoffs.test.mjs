@@ -67,5 +67,5 @@ test("hands printed Bardic Inspiration range and die scaling to play and shows t
   assert.deepEqual(linked.profile?.features?.[0]?.executableValueEvidence, ["Printed range 30 feet.", "Printed bonus die 1d8."]);
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(page, /Sheet-backed executable values/);
-  assert.match(page, /Variable feature values execute only when the sheet states them explicitly/);
+  assert.match(page, /Feature values and passive effects execute only when the sheet states them explicitly/);
 });

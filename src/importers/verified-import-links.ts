@@ -290,6 +290,66 @@ function adaptTriggeredFeature(character: Character, feature: { name: string; de
   return { trigger, evidence };
 }
 
+function adaptPassiveFeature(character: Character, feature: { name: string; description: string }, template: CharacterPassiveFeature): { passive: CharacterPassiveFeature; evidence: string[] } | null {
+  const passive = clone(template);
+  const evidence: string[] = [];
+  const description = feature.description;
+  const normalizedDescription = normalize(description);
+
+  if (passive.resolution.type === "ancestry-defense") {
+    const hasCharmAdvantage = /\badvantage\b/.test(normalizedDescription)
+      && /\bsaving throws?\b|\bsaves?\b/.test(normalizedDescription)
+      && /\bcharm(?:ed)?\b/.test(normalizedDescription);
+    const hasMagicalSleepImmunity = /\bmagic(?:al)?\b/.test(normalizedDescription)
+      && /\bsleep\b/.test(normalizedDescription)
+      && /\b(?:can't|cannot|can not|immune)\b/.test(normalizedDescription);
+    if (!hasCharmAdvantage || !hasMagicalSleepImmunity) return null;
+    passive.description = description;
+    evidence.push("Printed Advantage on saves against Charmed.");
+    evidence.push("Printed immunity to magical sleep.");
+  }
+
+  if (passive.resolution.type === "skill-proficiency") {
+    const skill = normalize(passive.resolution.skill);
+    const namesProficiency = /\bproficien(?:t|cy)\b/.test(normalizedDescription);
+    const namesSkill = new RegExp(`\\b${skill.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\b`, "i").test(normalizedDescription);
+    if (!namesProficiency || !namesSkill) return null;
+    passive.description = description;
+    evidence.push(`Printed proficiency in ${passive.resolution.skill}.`);
+  }
+
+  if (passive.resolution.type === "rest-alternative") {
+    const hours = description.match(/\b(\d{1,2})\s+hours?\b/i);
+    const doesNotNeedSleep = /\b(?:does not|doesn't|doesn’t|do not|don't|don’t)\s+need\s+(?:to\s+)?sleep\b/i.test(description);
+    const meditates = /\bmeditat(?:e|es|ing|ion)\b/i.test(description);
+    const semiconscious = /\bsemi[-\s]?conscious(?:ly)?\b/i.test(description);
+    if (!doesNotNeedSleep || !meditates || !semiconscious || Number(hours?.[1]) !== passive.resolution.meditationHours) return null;
+    passive.description = description;
+    evidence.push("Printed sleep alternative.");
+    evidence.push(`Printed semiconscious meditation for ${passive.resolution.meditationHours} hours.`);
+  }
+
+  if (passive.resolution.type === "unarmored-defense") {
+    if (namedClassLevel(character, "Barbarian") === null) return null;
+    const dexterityModifier = Math.floor((character.abilities.dexterity - 10) / 2);
+    const constitutionModifier = Math.floor((character.abilities.constitution - 10) / 2);
+    const baseArmorClass = 10 + dexterityModifier + constitutionModifier;
+    const printedBase = description.match(/\bbase\s+(?:armor\s+class|ac)(?:\s+equals|\s+is)?\s+(\d{1,2})\b/i);
+    const namesFormula = /\b10\b/.test(description)
+      && /\bdexterity\s+(?:and|\+)\s+constitution\s+modifiers?\b/i.test(description);
+    const namesUnarmoredRequirement = /\b(?:not|aren't|are not|isn't|is not)\s+wearing\s+(?:any\s+)?armor\b/i.test(description)
+      || /\bwhile\s+unarmored\b/i.test(description);
+    const namesShield = /\bshield\b/i.test(description);
+    if (!namesUnarmoredRequirement || !namesShield || (!namesFormula && Number(printedBase?.[1]) !== baseArmorClass)) return null;
+    passive.description = description;
+    evidence.push(`Imported Dexterity modifier ${dexterityModifier >= 0 ? "+" : ""}${dexterityModifier}.`);
+    evidence.push(`Imported Constitution modifier ${constitutionModifier >= 0 ? "+" : ""}${constitutionModifier}.`);
+    evidence.push(`Verified unarmored base AC ${baseArmorClass} with Shield compatibility.`);
+  }
+
+  return { passive, evidence };
+}
+
 function importedFeatureResources(character: Character): CharacterResource[] {
   const resources = character.resources.map(clone);
   const knownNames = new Set(resources.map((resource) => normalize(resource.name)));
@@ -324,18 +384,21 @@ function importedFeatures(character: Character) {
     if (!template || !dependenciesReady(character, template)) return feature;
     const adaptedAction = template.action ? adaptFeatureAction(feature, template.action) : null;
     const adaptedTrigger = template.trigger ? adaptTriggeredFeature(character, feature, template.trigger) : null;
+    const adaptedPassive = template.passive ? adaptPassiveFeature(character, feature, template.passive) : null;
     if (template.action && !adaptedAction) return feature;
     if (template.trigger && !adaptedTrigger) return feature;
+    if (template.passive && !adaptedPassive) return feature;
     if (adaptedAction && !actions.some((candidate) => candidate.id === adaptedAction.action.id)) actions.push(adaptedAction.action);
-    if (template.passive && !passives.some((candidate) => candidate.id === template.passive!.id)) passives.push(clone(template.passive));
+    if (adaptedPassive && !passives.some((candidate) => candidate.id === adaptedPassive.passive.id)) passives.push(adaptedPassive.passive);
     if (adaptedTrigger && !triggers.some((candidate) => candidate.id === adaptedTrigger.trigger.id)) triggers.push(adaptedTrigger.trigger);
+    const valueEvidence = [...(adaptedAction?.evidence ?? []), ...(adaptedTrigger?.evidence ?? []), ...(adaptedPassive?.evidence ?? [])];
     return {
       ...feature,
       id: feature.id ?? slug(feature.name),
       executableActionId: adaptedAction?.action.id,
-      executablePassiveId: template.passive?.id,
+      executablePassiveId: adaptedPassive?.passive.id,
       executableTriggerId: adaptedTrigger?.trigger.id,
-      executableValueEvidence: [...(adaptedAction?.evidence ?? []), ...(adaptedTrigger?.evidence ?? [])].length ? [...(adaptedAction?.evidence ?? []), ...(adaptedTrigger?.evidence ?? [])] : undefined,
+      executableValueEvidence: valueEvidence.length ? valueEvidence : undefined,
       provenance: clone(template.sourceFeature.provenance!),
     };
   });
