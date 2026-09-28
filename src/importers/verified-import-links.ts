@@ -253,6 +253,38 @@ function adaptFeatureAction(feature: { name: string; description: string }, temp
     evidence.push("Printed temporary Hit Points equal to Proficiency Bonus.");
   }
 
+  if (action.resolution.type === "healing-pool") {
+    const namesTouch = /\btouch\b/i.test(description);
+    const namesHealingPool = /\b(?:pool|lay\s+on\s+hands\s+points?)\b/i.test(description)
+      && /\b(?:heal|healing|restore)\b/i.test(description)
+      && /\b(?:hit\s+points|hp)\b/i.test(description);
+    const rulesetId = action.provenance.rulesetId;
+    if (!namesTouch || !namesHealingPool) return null;
+
+    if (rulesetId === "dnd-2014") {
+      const namesAction = /\bas\s+an\s+action\b/i.test(description);
+      const namesExcludedTypes = /\b(?:no\s+effect\s+on|does(?:n't|\s+not)\s+affect)\b.{0,40}\bundead\b.{0,20}\bconstructs?\b/i.test(description);
+      const namesCleansing = /\b(?:spend|expend)\s+5\b.{0,40}\b(?:points?|hit\s+points|hp)\b/i.test(description)
+        && /\bcure\b.{0,30}\b(?:one\s+)?disease\b/i.test(description)
+        && /\bneutralize\b.{0,30}\b(?:one\s+)?poison\b/i.test(description);
+      if (!namesAction || !namesExcludedTypes || !namesCleansing) return null;
+      action.description = description;
+      evidence.push("Printed Action-cost touch healing from the Lay on Hands pool.");
+      evidence.push("Printed no-effect boundary for Undead and Constructs.");
+      evidence.push("Printed 5-point cure-one-disease or neutralize-one-poison option.");
+    }
+
+    if (rulesetId === "dnd-2024") {
+      const namesBonusAction = /\bas\s+a\s+bonus\s+action\b/i.test(description);
+      const namesPoisonedRemoval = /\b(?:spend|expend)\s+5\b.{0,40}\b(?:points?|hit\s+points|hp)\b/i.test(description)
+        && /\bremove\b.{0,30}\bpoisoned\b/i.test(description);
+      if (!namesBonusAction || !namesPoisonedRemoval) return null;
+      action.description = description;
+      evidence.push("Printed Bonus Action touch healing from the Lay On Hands pool.");
+      evidence.push("Printed 5-point Poisoned-condition removal.");
+    }
+  }
+
   return { action, evidence };
 }
 
