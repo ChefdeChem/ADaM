@@ -242,6 +242,17 @@ function adaptFeatureAction(feature: { name: string; description: string }, temp
     evidence.push(`Printed Speed bonus ${speedBonusFeet} feet.`);
   }
 
+  if (action.resolution.type === "dash-and-temporary-hit-points") {
+    const namesDash = /\bdash\b/i.test(description);
+    const namesBonusAction = /\bbonus\s+action\b/i.test(description);
+    const namesTemporaryHitPoints = /\btemporary\s+(?:hit\s+points|hp)\b/i.test(description);
+    const namesProficiencyBonus = /\bproficiency\s+bonus\b/i.test(description);
+    if (!namesDash || !namesBonusAction || !namesTemporaryHitPoints || !namesProficiencyBonus) return null;
+    action.description = description;
+    evidence.push("Printed Bonus Action Dash.");
+    evidence.push("Printed temporary Hit Points equal to Proficiency Bonus.");
+  }
+
   return { action, evidence };
 }
 
@@ -285,6 +296,16 @@ function adaptTriggeredFeature(character: Character, feature: { name: string; de
     evidence.push(`Imported Warlock level ${warlockLevel}.`);
     evidence.push(`Imported Charisma modifier ${charismaModifier >= 0 ? "+" : ""}${charismaModifier}.`);
     evidence.push(`Verified temporary Hit Points ${amount}.`);
+  }
+
+  if (trigger.resolution.type === "drop-to-one-hit-point") {
+    const reducedToZero = /\breduced\s+to\s+0\s+(?:hit\s+points|hp)\b/i.test(description);
+    const notKilledOutright = /\bnot\s+killed\s+outright\b/i.test(description);
+    const dropsToOne = /\b(?:drop|drops)\s+to\s+1\s+(?:hit\s+point|hit\s+points|hp)\s+instead\b/i.test(description);
+    if (!reducedToZero || !notKilledOutright || !dropsToOne) return null;
+    trigger.description = description;
+    evidence.push("Printed 0 Hit Point trigger without instant death.");
+    evidence.push("Printed replacement at 1 Hit Point.");
   }
 
   return { trigger, evidence };
@@ -345,6 +366,40 @@ function adaptPassiveFeature(character: Character, feature: { name: string; desc
     evidence.push(`Imported Dexterity modifier ${dexterityModifier >= 0 ? "+" : ""}${dexterityModifier}.`);
     evidence.push(`Imported Constitution modifier ${constitutionModifier >= 0 ? "+" : ""}${constitutionModifier}.`);
     evidence.push(`Verified unarmored base AC ${baseArmorClass} with Shield compatibility.`);
+  }
+
+  if (passive.resolution.type === "damage-resistance") {
+    const printedTypes = damageTypes.filter((type) => new RegExp(`\\b${type}\\s+damage\\b`, "i").test(description));
+    const expectedTypes = passive.resolution.damageTypes.map(normalize);
+    const namesResistance = /\bresistan(?:ce|t)\b/i.test(description);
+    if (!namesResistance || printedTypes.length !== expectedTypes.length || !expectedTypes.every((type) => printedTypes.includes(type as typeof damageTypes[number]))) return null;
+    passive.description = description;
+    evidence.push(`Printed resistance to ${passive.resolution.damageTypes.join(", ")} damage.`);
+  }
+
+  if (passive.resolution.type === "weapon-damage-reroll") {
+    const oncePerTurn = /\bonce\s+per\s+turn\b/i.test(description);
+    const weaponHit = /\bweapon\b/i.test(description) && /\bhit\b/i.test(description);
+    const damageDiceTwice = /\bdamage\s+dice\s+twice\b/i.test(description);
+    const eitherResult = /\b(?:choose|use)\s+either\s+(?:result|roll)\b/i.test(description);
+    if (!oncePerTurn || !weaponHit || !damageDiceTwice || !eitherResult) return null;
+    passive.description = description;
+    evidence.push("Printed once-per-turn weapon-hit limit.");
+    evidence.push("Printed two weapon-damage rolls with either result chosen.");
+  }
+
+  if (passive.resolution.type === "free-spell-cast") {
+    const spellId = passive.resolution.spellId;
+    const spell = character.spells?.find((candidate) => candidate.id === spellId);
+    const spellName = spell?.name ? normalize(spell.name) : "";
+    const namesSpell = spellName.length > 0 && normalizedDescription.includes(spellName);
+    const onceWithoutSlot = /\b(?:cast|use)\b.{0,40}\bonce\b.{0,40}\bwithout\s+(?:using\s+)?a\s+spell\s+slot\b/i.test(description)
+      || /\bonce\b.{0,40}\bwithout\s+(?:using\s+)?a\s+spell\s+slot\b/i.test(description);
+    const longRestRecovery = /\blong\s+rest\b/i.test(description);
+    if (!namesSpell || !onceWithoutSlot || !longRestRecovery) return null;
+    passive.description = description;
+    evidence.push(`Printed free cast of ${spell?.name}.`);
+    evidence.push("Printed once-per-Long-Rest recovery.");
   }
 
   return { passive, evidence };

@@ -98,7 +98,7 @@ test("explicit armor training plus printed AC uniquely activates imported armor 
 test("links only dependency-ready official features and exposes the boundary in import review", async () => {
   const linked = linkVerifiedImportedMechanics(importedCharacter({
     profile: { equipment: [], features: [
-      { name: "Fire Resistance", description: "Printed on the imported sheet." },
+      { name: "Fire Resistance", description: "Gold Dragon ancestry grants resistance to fire damage." },
       { name: "Unverified Gift", description: "User-provided descriptive feature." },
     ] },
   }));
