@@ -228,7 +228,66 @@ function adaptFeatureAction(feature: { name: string; description: string }, temp
     evidence.push(`Printed bonus die ${action.resolution.die}.`);
   }
 
+  if (action.resolution.type === "activate-large-form") {
+    const minimumLevel = description.match(/\b(?:starting\s+)?at\s+level\s+(\d{1,2})\b/i);
+    const duration = description.match(/\b(\d{1,3})\s+minutes?\b/i);
+    const speedBonus = description.match(/\b(?:increase|increases|gain|gains)\s+(?:your\s+)?speed\s+by\s+(\d{1,3})\s+feet\b/i);
+    const level = Number(minimumLevel?.[1]);
+    const durationRounds = Number(duration?.[1]) * 10;
+    const speedBonusFeet = speedBonus ? boundedFeet(speedBonus[1]) : null;
+    if (level !== action.resolution.minimumLevel || durationRounds !== action.resolution.durationRounds || speedBonusFeet !== action.resolution.speedBonusFeet) return null;
+    action.description = description;
+    evidence.push(`Printed level requirement ${level}.`);
+    evidence.push(`Printed duration ${duration?.[1]} minutes.`);
+    evidence.push(`Printed Speed bonus ${speedBonusFeet} feet.`);
+  }
+
   return { action, evidence };
+}
+
+function namedClassLevel(character: Character, className: string): number | null {
+  const classes = character.className.split("/").map((entry) => entry.trim());
+  for (const entry of classes) {
+    const match = entry.match(/^(.+?)(?:\s+(\d+))?$/);
+    if (normalize(match?.[1] ?? "") !== normalize(className)) continue;
+    if (match?.[2]) return Number(match[2]);
+    return classes.length === 1 ? character.level : null;
+  }
+  return null;
+}
+
+function adaptTriggeredFeature(character: Character, feature: { name: string; description: string }, template: CharacterTriggeredFeature): { trigger: CharacterTriggeredFeature; evidence: string[] } | null {
+  const trigger = clone(template);
+  const evidence: string[] = [];
+  const description = feature.description;
+
+  if (trigger.resolution.type === "reduce-damage-by-roll") {
+    const die = description.match(/\b(\d+d\d+)\b/i)?.[1].toLowerCase();
+    const printedModifier = description.match(/\b\d+d\d+\s*\+\s*(\d+)\b/i)?.[1];
+    const namesConstitution = /\bconstitution\s+modifier\b/i.test(description);
+    const constitutionModifier = Math.floor((character.abilities.constitution - 10) / 2);
+    if (die !== trigger.resolution.die || (!namesConstitution && printedModifier === undefined) || (printedModifier !== undefined && Number(printedModifier) !== constitutionModifier)) return null;
+    trigger.resolution.modifier = constitutionModifier;
+    trigger.description = description;
+    evidence.push(`Printed reduction die ${die}.`);
+    evidence.push(`Imported Constitution modifier ${constitutionModifier >= 0 ? "+" : ""}${constitutionModifier}.`);
+  }
+
+  if (trigger.resolution.type === "gain-temporary-hit-points") {
+    const warlockLevel = namedClassLevel(character, "Warlock");
+    const charismaModifier = Math.floor((character.abilities.charisma - 10) / 2);
+    const amount = warlockLevel === null ? null : Math.max(1, warlockLevel + charismaModifier);
+    const printedAmount = description.match(/\bgain\s+(\d+)\s+temporary\s+(?:hit\s+points|hp)\b/i)?.[1];
+    const namesFormula = /\bcharisma\s+modifier\b/i.test(description) && /\bwarlock\s+level\b/i.test(description);
+    if (amount === null || (!namesFormula && printedAmount === undefined) || (printedAmount !== undefined && Number(printedAmount) !== amount)) return null;
+    trigger.resolution.amount = amount;
+    trigger.description = description;
+    evidence.push(`Imported Warlock level ${warlockLevel}.`);
+    evidence.push(`Imported Charisma modifier ${charismaModifier >= 0 ? "+" : ""}${charismaModifier}.`);
+    evidence.push(`Verified temporary Hit Points ${amount}.`);
+  }
+
+  return { trigger, evidence };
 }
 
 function importedFeatureResources(character: Character): CharacterResource[] {
@@ -264,17 +323,19 @@ function importedFeatures(character: Character) {
     const template = featureTemplate(character, feature.name);
     if (!template || !dependenciesReady(character, template)) return feature;
     const adaptedAction = template.action ? adaptFeatureAction(feature, template.action) : null;
+    const adaptedTrigger = template.trigger ? adaptTriggeredFeature(character, feature, template.trigger) : null;
     if (template.action && !adaptedAction) return feature;
+    if (template.trigger && !adaptedTrigger) return feature;
     if (adaptedAction && !actions.some((candidate) => candidate.id === adaptedAction.action.id)) actions.push(adaptedAction.action);
     if (template.passive && !passives.some((candidate) => candidate.id === template.passive!.id)) passives.push(clone(template.passive));
-    if (template.trigger && !triggers.some((candidate) => candidate.id === template.trigger!.id)) triggers.push(clone(template.trigger));
+    if (adaptedTrigger && !triggers.some((candidate) => candidate.id === adaptedTrigger.trigger.id)) triggers.push(adaptedTrigger.trigger);
     return {
       ...feature,
       id: feature.id ?? slug(feature.name),
       executableActionId: adaptedAction?.action.id,
       executablePassiveId: template.passive?.id,
-      executableTriggerId: template.trigger?.id,
-      executableValueEvidence: adaptedAction?.evidence.length ? adaptedAction.evidence : undefined,
+      executableTriggerId: adaptedTrigger?.trigger.id,
+      executableValueEvidence: [...(adaptedAction?.evidence ?? []), ...(adaptedTrigger?.evidence ?? [])].length ? [...(adaptedAction?.evidence ?? []), ...(adaptedTrigger?.evidence ?? [])] : undefined,
       provenance: clone(template.sourceFeature.provenance!),
     };
   });

@@ -77,6 +77,6 @@ src/data/            Sample import data
 - Keep the complete initiative order and values visible throughout combat, including enemy initiative.
 - Give every non-initiative roll a prominent teaching display so new players can see which dice and modifiers are being used.
 
-Imported feature resources activate only when an exact officially verified feature match includes an explicit use count and matching rest cadence. Printed but ambiguous counters remain descriptive for player review.
+Imported feature resources activate only when an exact officially verified feature match includes an explicit use count and matching rest cadence. Character-variable action and trigger values must also be stated on the sheet or derivable from preserved imported statistics under the verified source rule. Printed but ambiguous counters or values remain descriptive for player review.
 
 Next: cover refinements, broader conditions, additional class-specific reaction triggers, and separate tested 2014/2024 encounter-resolution settings.
