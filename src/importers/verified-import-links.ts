@@ -254,6 +254,37 @@ function adaptFeatureAction(feature: { name: string; description: string }, temp
     evidence.push(`Printed bonus die ${action.resolution.die}.`);
   }
 
+  if (action.resolution.type === "activate-effect" && action.id === "rage") {
+    const namesBonusActionEntry = /\b(?:enter|start|activate)\b.{0,32}\bbonus\s+action\b/i.test(description);
+    const namesEntryArmorBoundary = /\b(?:aren't|are\s+not|not)\s+wearing\s+heavy\s+armor\b/i.test(description);
+    const namesPhysicalResistance = /\bresistan(?:ce|t)\b/i.test(description)
+      && ["bludgeoning", "piercing", "slashing"].every((type) => new RegExp(`\\b${type}\\b`, "i").test(description));
+    const namesRageDamage = /\bstrength\b/i.test(description)
+      && /\b(?:weapon|unarmed\s+strike)\b/i.test(description)
+      && /(?:\+\s*2\b|\bbonus\s+(?:of\s+)?2\b)/i.test(description)
+      && /\bdamage\b/i.test(description);
+    const namesStrengthAdvantage = /\badvantage\b/i.test(description)
+      && /\bstrength\s+checks?\b/i.test(description)
+      && /\bstrength\s+saving\s+throws?\b/i.test(description);
+    const namesSpellBoundary = /\b(?:can't|cannot|can\s+not)\s+maintain\s+concentration\b/i.test(description)
+      && /\b(?:can't|cannot|can\s+not)\s+cast\s+spells?\b/i.test(description);
+    const namesInitialDuration = /\buntil\s+the\s+end\s+of\s+your\s+next\s+turn\b/i.test(description);
+    const namesEarlyEnds = /\bends?\b.{0,48}\b(?:don|wear)\s+heavy\s+armor\b/i.test(description)
+      && /\bincapacitated\b/i.test(description);
+    const namesExtensions = /\battack\s+roll\b/i.test(description)
+      && /\bforc(?:e|es|ing)\b.{0,24}\bsaving\s+throw\b/i.test(description)
+      && /\bbonus\s+action\b.{0,24}\bextend\b/i.test(description);
+    const namesMaximumDuration = /\b(?:up\s+to\s+)?10\s+minutes?\b/i.test(description);
+    if (!namesBonusActionEntry || !namesEntryArmorBoundary || !namesPhysicalResistance || !namesRageDamage || !namesStrengthAdvantage
+      || !namesSpellBoundary || !namesInitialDuration || !namesEarlyEnds || !namesExtensions || !namesMaximumDuration) return null;
+    action.description = description;
+    evidence.push("Printed Resistance to Bludgeoning, Piercing, and Slashing damage.");
+    evidence.push("Printed +2 Rage Damage for Strength attacks with a weapon or Unarmed Strike.");
+    evidence.push("Printed Advantage on Strength checks and Strength saving throws.");
+    evidence.push("Printed no-Concentration and no-spellcasting boundaries.");
+    evidence.push("Printed Bonus Action entry, Heavy Armor and Incapacitated boundaries, end-of-next-turn duration, three extension options, and 10-minute maximum.");
+  }
+
   if (action.resolution.type === "activate-large-form") {
     const minimumLevel = description.match(/\b(?:starting\s+)?at\s+level\s+(\d{1,2})\b/i);
     const duration = description.match(/\b(\d{1,3})\s+minutes?\b/i);

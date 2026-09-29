@@ -174,7 +174,7 @@ export const goliathBarbarian: Character = {
     id: "rage",
     name: "Rage",
     cost: "bonus-action",
-    description: "As a Bonus Action, expend one Rage use to gain resistance to bludgeoning, piercing, and slashing damage until the end of your next turn.",
+    description: "Enter Rage as a Bonus Action if you aren't wearing Heavy Armor. While active, gain Resistance to Bludgeoning, Piercing, and Slashing damage, +2 damage on Strength attacks with a weapon or Unarmed Strike, and Advantage on Strength checks and Strength saving throws; you can't maintain Concentration, and you can't cast spells. Rage lasts until the end of your next turn, ends early if you don Heavy Armor or become Incapacitated, and extends after an attack roll against an enemy, forcing an enemy saving throw, or using a Bonus Action to extend, up to 10 minutes.",
     resourceName: "Rage",
     resourceCost: 1,
     resolution: {
@@ -225,7 +225,7 @@ export const goliathBarbarian: Character = {
     proficiencies: { armor: ["Light Armor", "Medium Armor", "Shields"], weapons: ["Martial Weapons", "Simple Weapons"], tools: ["Darts"], languages: ["Common", "Giant", "Orc"] },
     equipment: [{ name: "Spear", quantity: 5, weightPounds: 3 }, { name: "Maul", quantity: 1, weightPounds: 10 }, { name: "Hooded Lantern", quantity: 1, weightPounds: 2 }],
     features: [
-      { id: "rage", name: "Rage", description: "Enter Rage as a Bonus Action. Gain physical resistance, Strength damage and roll benefits, and extend it with qualifying actions.", executableActionId: "rage", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" } },
+      { id: "rage", name: "Rage", description: "Enter Rage as a Bonus Action if you aren't wearing Heavy Armor. While active, gain Resistance to Bludgeoning, Piercing, and Slashing damage, +2 damage on Strength attacks with a weapon or Unarmed Strike, and Advantage on Strength checks and Strength saving throws; you can't maintain Concentration, and you can't cast spells. Rage lasts until the end of your next turn, ends early if you don Heavy Armor or become Incapacitated, and extends after an attack roll against an enemy, forcing an enemy saving throw, or using a Bonus Action to extend, up to 10 minutes.", executableActionId: "rage", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Rage" } },
       { id: "unarmored-defense", name: "Unarmored Defense", description: "While not wearing armor, base AC is 13 plus any shield bonus.", executablePassiveId: "unarmored-defense", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Barbarian: Unarmored Defense" } },
       { id: "stones-endurance", name: "Stone's Endurance", description: "Twice per long rest, react after taking damage to reduce it by 1d12 + 2.", executableTriggerId: "stones-endurance", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Goliath: Giant Ancestry (Stone's Endurance)" } },
       { id: "savage-attacker", name: "Savage Attacker", description: "Once per turn on a weapon hit, roll the weapon damage dice twice and choose either result.", executablePassiveId: "savage-attacker", provenance: { rulesetId: "dnd-2024", sourceId: "srd-5.2.1", sourceReference: "SRD 5.2.1, Origin Feat: Savage Attacker" } },
