@@ -51,10 +51,11 @@ test("hands explicit area geometry to the verified feature and rejects a differe
 });
 
 test("hands an explicit printed sense range to Divine Sense and leaves a missing range descriptive", () => {
-  const linked = linkVerifiedImportedMechanics(importedCharacter([{ name: "Divine Sense", description: "Three uses per long rest. Sense certain creatures within 90 feet until the end of the next turn." }]));
+  const description = "Three uses per long rest. As an Action, until the end of your next turn, sense Celestials, Fiends, and Undead within 90 feet that are not behind Total Cover, plus any place or object that is consecrated or desecrated.";
+  const linked = linkVerifiedImportedMechanics(importedCharacter([{ name: "Divine Sense", description }]));
   assert.equal(linked.featureActions?.[0]?.resolution.type, "sense-creature-types");
   assert.equal(linked.featureActions?.[0]?.resolution.rangeFeet, 90);
-  const missing = linkVerifiedImportedMechanics(importedCharacter([{ name: "Divine Sense", description: "Three uses per long rest. Sense certain creatures until the end of the next turn." }]));
+  const missing = linkVerifiedImportedMechanics(importedCharacter([{ name: "Divine Sense", description: description.replace(" within 90 feet", "") }]));
   assert.equal(missing.featureActions?.length, 0);
 });
 

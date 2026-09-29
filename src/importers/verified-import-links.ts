@@ -210,9 +210,22 @@ function adaptFeatureAction(feature: { name: string; description: string }, temp
   if (action.resolution.type === "sense-creature-types") {
     const range = description.match(/\bwithin\s+(\d{1,4})\s+feet\b/i) ?? description.match(/\b(\d{1,4})[-\s]foot\s+range\b/i);
     const rangeFeet = range ? boundedFeet(range[1]) : null;
-    if (!rangeFeet) return null;
+    const namesAction = /\bas\s+an\s+action\b/i.test(description);
+    const namesDuration = /\buntil\s+the\s+end\s+of\s+your\s+next\s+turn\b/i.test(description);
+    const namesCreatureTypes = action.resolution.creatureTypes.every((creatureType) =>
+      new RegExp(`\\b${creatureType.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}s?\\b`, "i").test(description));
+    const namesTotalCoverBoundary = /\bnot\s+behind\s+total\s+cover\b/i.test(description);
+    const namesSacredPresence = /\b(?:place|object)\b/i.test(description)
+      && /\bconsecrated\b/i.test(description)
+      && /\bdesecrated\b/i.test(description);
+    if (!rangeFeet || !namesAction || !namesDuration || !namesCreatureTypes || !namesTotalCoverBoundary || !namesSacredPresence) return null;
     action.resolution.rangeFeet = rangeFeet;
     action.description = description;
+    evidence.push("Printed Action cost.");
+    evidence.push("Printed end-of-next-turn duration.");
+    evidence.push(`Printed sensed creature types: ${action.resolution.creatureTypes.join(", ")}.`);
+    evidence.push("Printed Total Cover boundary.");
+    evidence.push("Printed consecrated-or-desecrated place or object detection.");
     evidence.push(`Printed range ${rangeFeet} feet.`);
   }
 
