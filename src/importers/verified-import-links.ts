@@ -1,5 +1,5 @@
 import { BUILT_IN_CHARACTERS } from "../characters/built-ins";
-import type { Character, CharacterEquipmentRule, CharacterFeatureAction, CharacterPassiveFeature, CharacterResource, CharacterTriggeredFeature, MechanicProvenance } from "../domain/character";
+import type { Character, CharacterAttack, CharacterEquipmentRule, CharacterFeatureAction, CharacterPassiveFeature, CharacterResource, CharacterTriggeredFeature, MechanicProvenance } from "../domain/character";
 
 const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
 const slug = (value: string) => normalize(value).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -99,6 +99,7 @@ type FeatureTemplate = {
   action?: CharacterFeatureAction;
   passive?: CharacterPassiveFeature;
   trigger?: CharacterTriggeredFeature;
+  attackIds?: string[];
 };
 
 const featureTemplates: FeatureTemplate[] = BUILT_IN_CHARACTERS.flatMap((character) => (character.profile?.features ?? []).flatMap((sourceFeature) => {
@@ -106,8 +107,9 @@ const featureTemplates: FeatureTemplate[] = BUILT_IN_CHARACTERS.flatMap((charact
   const action = character.featureActions?.find((feature) => feature.id === sourceFeature.executableActionId);
   const passive = character.passiveFeatures?.find((feature) => feature.id === sourceFeature.executablePassiveId);
   const trigger = character.triggeredFeatures?.find((feature) => feature.id === sourceFeature.executableTriggerId);
-  if (!action && !passive && !trigger) return [];
-  return [{ sourceFeature, sourceCharacter: character, action, passive, trigger }];
+  const attackIds = sourceFeature.executableAttackIds?.length ? [...sourceFeature.executableAttackIds] : undefined;
+  if (!action && !passive && !trigger && !attackIds) return [];
+  return [{ sourceFeature, sourceCharacter: character, action, passive, trigger, attackIds }];
 }));
 
 function featureTemplate(character: Character, name: string): FeatureTemplate | undefined {
@@ -116,7 +118,7 @@ function featureTemplate(character: Character, name: string): FeatureTemplate | 
   if (edition === "dnd-2014" || edition === "dnd-2024") {
     return matches.find((candidate) => candidate.sourceFeature.provenance?.rulesetId === edition);
   }
-  const signatures = new Set(matches.map((candidate) => `${candidate.action?.id ?? ""}|${candidate.passive?.id ?? ""}|${candidate.trigger?.id ?? ""}`));
+  const signatures = new Set(matches.map((candidate) => `${candidate.action?.id ?? ""}|${candidate.passive?.id ?? ""}|${candidate.trigger?.id ?? ""}|${candidate.attackIds?.join(",") ?? ""}`));
   return signatures.size === 1 ? matches[0] : undefined;
 }
 
@@ -494,6 +496,57 @@ function adaptPassiveFeature(character: Character, feature: { name: string; desc
   return { passive, evidence };
 }
 
+function adaptWeaponMastery(
+  character: Character,
+  feature: { name: string; description: string },
+  template: FeatureTemplate,
+): { attacks: CharacterAttack[]; executableAttackIds: string[]; evidence: string[] } | null {
+  if (!template.attackIds?.length || template.sourceFeature.provenance?.rulesetId !== "dnd-2024") return null;
+  const sourceAttacks = template.attackIds.map((attackId) => template.sourceCharacter.attacks?.find((attack) => attack.id === attackId));
+  if (sourceAttacks.some((attack) => !attack?.mastery)) return null;
+  const masteries = new Set(sourceAttacks.map((attack) => attack!.mastery));
+  if (masteries.size !== 1) return null;
+  const mastery = sourceAttacks[0]!.mastery!;
+  const importedAttacks = (character.attacks ?? []).map(clone);
+  const matches = sourceAttacks.map((sourceAttack) => importedAttacks.find((attack) => normalize(attack.name) === normalize(sourceAttack!.name)));
+  if (matches.some((attack) => !attack)) return null;
+
+  const description = feature.description;
+  const namesHit = /\bhit(?:s|ting)?\b/i.test(description);
+  const namesStartOfNextTurn = /\b(?:before|until)\s+the\s+start\s+of\s+(?:your|the\s+attacker'?s)\s+next\s+turn\b/i.test(description);
+  const evidence: string[] = [];
+  if (mastery === "slow") {
+    const namesDamage = /\b(?:deal|deals|dealing)\b.{0,24}\bdamage\b|\bdamag(?:e|es|ed|ing)\b/i.test(description);
+    const namesChoice = /\b(?:can|may|choose|optionally)\b/i.test(description);
+    const namesReduction = /\breduc(?:e|es|ing)\b.{0,24}\bspeed\b.{0,24}\b10\s+feet\b/i.test(description);
+    const namesCap = /\b(?:does(?:n't|\s+not)|cannot|can'?t)\b.{0,48}\b(?:exceed|stack\s+beyond)\s+10\s+feet\b/i.test(description)
+      || /\bmaximum\s+(?:speed\s+)?reduction\s+(?:of\s+)?10\s+feet\b/i.test(description);
+    if (!namesHit || !namesDamage || !namesChoice || !namesReduction || !namesStartOfNextTurn || !namesCap) return null;
+    evidence.push("Printed damaging-hit trigger for the selected weapon.");
+    evidence.push("Printed optional 10-foot Speed reduction until the start of the attacker's next turn.");
+    evidence.push("Printed 10-foot maximum reduction across repeated Slow hits.");
+  } else if (mastery === "sap") {
+    const namesDisadvantage = /\bdisadvantage\b/i.test(description);
+    const namesNextAttack = /\bnext\s+attack\s+roll\b/i.test(description);
+    if (!namesHit || !namesDisadvantage || !namesNextAttack || !namesStartOfNextTurn) return null;
+    evidence.push("Printed weapon-hit trigger.");
+    evidence.push("Printed Disadvantage on the target's next attack roll before the start of the attacker's next turn.");
+  } else {
+    return null;
+  }
+
+  const executableAttackIds = matches.map((attack) => attack!.id);
+  const linkedIds = new Set(executableAttackIds);
+  const provenance = clone(template.sourceFeature.provenance!);
+  return {
+    attacks: importedAttacks.map((attack) => linkedIds.has(attack.id)
+      ? { ...attack, mastery, masteryOwnership: "granted", masteryProvenance: provenance }
+      : attack),
+    executableAttackIds,
+    evidence: [`Verified ${feature.name} ownership for ${matches.map((attack) => attack!.name).join(" and ")}.`, ...evidence],
+  };
+}
+
 function importedFeatureResources(character: Character): CharacterResource[] {
   const resources = character.resources.map(clone);
   const knownNames = new Set(resources.map((resource) => normalize(resource.name)));
@@ -523,30 +576,35 @@ function importedFeatures(character: Character) {
   const actions: CharacterFeatureAction[] = [];
   const passives: CharacterPassiveFeature[] = [];
   const triggers: CharacterTriggeredFeature[] = [];
+  let attacks = (character.attacks ?? []).map(clone);
   const features = (character.profile?.features ?? []).map((feature) => {
     const template = featureTemplate(character, feature.name);
     if (!template || !dependenciesReady(character, template)) return feature;
     const adaptedAction = template.action ? adaptFeatureAction(feature, template.action) : null;
     const adaptedTrigger = template.trigger ? adaptTriggeredFeature(character, feature, template.trigger) : null;
     const adaptedPassive = template.passive ? adaptPassiveFeature(character, feature, template.passive) : null;
+    const adaptedAttacks = template.attackIds ? adaptWeaponMastery({ ...character, attacks }, feature, template) : null;
     if (template.action && !adaptedAction) return feature;
     if (template.trigger && !adaptedTrigger) return feature;
     if (template.passive && !adaptedPassive) return feature;
+    if (template.attackIds && !adaptedAttacks) return feature;
     if (adaptedAction && !actions.some((candidate) => candidate.id === adaptedAction.action.id)) actions.push(adaptedAction.action);
     if (adaptedPassive && !passives.some((candidate) => candidate.id === adaptedPassive.passive.id)) passives.push(adaptedPassive.passive);
     if (adaptedTrigger && !triggers.some((candidate) => candidate.id === adaptedTrigger.trigger.id)) triggers.push(adaptedTrigger.trigger);
-    const valueEvidence = [...(adaptedAction?.evidence ?? []), ...(adaptedTrigger?.evidence ?? []), ...(adaptedPassive?.evidence ?? [])];
+    if (adaptedAttacks) attacks = adaptedAttacks.attacks;
+    const valueEvidence = [...(adaptedAction?.evidence ?? []), ...(adaptedTrigger?.evidence ?? []), ...(adaptedPassive?.evidence ?? []), ...(adaptedAttacks?.evidence ?? [])];
     return {
       ...feature,
       id: feature.id ?? slug(feature.name),
       executableActionId: adaptedAction?.action.id,
       executablePassiveId: adaptedPassive?.passive.id,
       executableTriggerId: adaptedTrigger?.trigger.id,
+      executableAttackIds: adaptedAttacks?.executableAttackIds,
       executableValueEvidence: valueEvidence.length ? valueEvidence : undefined,
       provenance: clone(template.sourceFeature.provenance!),
     };
   });
-  return { actions, passives, triggers, features };
+  return { actions, passives, triggers, attacks, features };
 }
 
 export function linkVerifiedImportedMechanics(character: Character): Character {
@@ -557,6 +615,7 @@ export function linkVerifiedImportedMechanics(character: Character): Character {
   return {
     ...resourceLinkedCharacter,
     equipmentRules,
+    attacks: linkedFeatures.attacks,
     featureActions: linkedFeatures.actions,
     passiveFeatures: linkedFeatures.passives,
     triggeredFeatures: linkedFeatures.triggers,
