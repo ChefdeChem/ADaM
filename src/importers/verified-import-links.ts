@@ -197,13 +197,31 @@ function adaptFeatureAction(feature: { name: string; description: string }, temp
     const damageType = damage?.[2].toLowerCase();
     const templateDamageType = action.resolution.damage.trim().split(/\s+/).at(-1)?.toLowerCase();
     const areaFeet = area ? boundedFeet(area[1]) : null;
+    const isBreathWeapon = action.id.startsWith("breath-weapon-");
+    const namesActionCost = /\b(?:use|using)\s+(?:your|an?)\s+action\b/i.test(description)
+      || /\bas\s+an\s+action\b/i.test(description);
+    const namesSelfOriginExhalation = /\byou(?:r)?\b.{0,32}\bexhal(?:e|es|ed|ing)\b/i.test(description);
+    const namesEveryCreature = /\beach\s+creature\b.{0,64}\b(?:area|cone|line)\b/i.test(description)
+      || /\b(?:area|cone|line)\b.{0,64}\beach\s+creature\b/i.test(description);
+    const namesFailedSaveDamage = /\bdamage\b.{0,48}\bon\s+(?:a\s+)?fail(?:ed|ure)\b/i.test(description)
+      || /\bon\s+(?:a\s+)?fail(?:ed|ure)\b.{0,48}\bdamage\b/i.test(description);
+    const namesHalfOnSuccess = /\bhalf\b.{0,32}\bdamage\b.{0,48}\bon\s+(?:a\s+)?success(?:ful(?:\s+one)?|)\b/i.test(description)
+      || /\bon\s+(?:a\s+)?success(?:ful(?:\s+one)?|)\b.{0,48}\bhalf\b.{0,32}\bdamage\b/i.test(description);
     if (!save || !saveAbility || saveAbility !== action.resolution.save.ability || !damage || damageType !== templateDamageType || !area || area[2].toLowerCase() !== action.resolution.area.shape || !areaFeet) return null;
+    if (isBreathWeapon && (!namesActionCost || !namesSelfOriginExhalation || !namesEveryCreature || !namesFailedSaveDamage || !namesHalfOnSuccess)) return null;
     const dc = Number(save[1]);
     if (!Number.isInteger(dc) || dc < 1 || dc > 30) return null;
     action.resolution.save.dc = dc;
     action.resolution.damage = `${damage[1].replace(/\s+/g, " ")} ${damageType}`;
     action.resolution.area.sizeFeet = areaFeet;
     action.description = description;
+    if (isBreathWeapon) {
+      evidence.push("Printed Action cost.");
+      evidence.push("Printed self-origin exhalation.");
+      evidence.push("Printed every-creature area targeting.");
+      evidence.push("Printed full damage on a failed save.");
+      evidence.push("Printed half damage on a successful save.");
+    }
     evidence.push(`Printed save DC ${dc} (${saveAbility}).`);
     evidence.push(`Printed damage ${action.resolution.damage}.`);
     evidence.push(`Printed area ${areaFeet}-foot ${action.resolution.area.shape}.`);

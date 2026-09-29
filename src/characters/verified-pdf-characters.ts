@@ -61,7 +61,7 @@ export const surinaDaardendrian: Character = {
     id: "breath-weapon-gold",
     name: "Breath Weapon (Gold)",
     cost: "action",
-    description: "Aim a 15-foot cone through a selected creature. Each creature in it makes a DC 11 Dexterity save against fire damage.",
+    description: "Use your Action to exhale fire in a 15-foot cone. Each creature in the area makes a DC 11 Dexterity save, taking 2d6 fire damage on a failed save and half as much damage on a successful one.",
     resourceName: "Breath Weapon (Gold)",
     resourceCost: 1,
     resolution: { type: "area-saving-throw", area: { origin: "self", shape: "cone", sizeFeet: 15, affects: "all-creatures" }, save: { ability: "dexterity", dc: 11, damageOnSuccess: "half" }, damage: "2d6 fire" },
@@ -110,7 +110,7 @@ export const surinaDaardendrian: Character = {
     ],
     features: [
       { id: "fire-resistance", name: "Fire Resistance", description: "Resistance to fire damage from Gold Dragon ancestry.", executablePassiveId: "fire-resistance", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Damage Resistance" } },
-      { id: "breath-weapon-gold", name: "Breath Weapon (Gold)", description: "Once per short rest, creatures in a 15-foot cone make a DC 11 Dexterity save; 2d6 fire damage on a failure and half on a success.", executableActionId: "breath-weapon-gold", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Breath Weapon (Gold)" } },
+      { id: "breath-weapon-gold", name: "Breath Weapon (Gold)", description: "Once per short rest, use your Action to exhale fire in a 15-foot cone. Each creature in the area makes a DC 11 Dexterity save, taking 2d6 fire damage on a failed save and half as much damage on a successful one.", executableActionId: "breath-weapon-gold", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Dragonborn: Breath Weapon (Gold)" } },
       { id: "divine-sense", name: "Divine Sense", description: "Three times per long rest, sense certain celestials, fiends, undead, and hallowed places within 60 feet until the end of the next turn.", executableActionId: "divine-sense", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Divine Sense" } },
       { id: "lay-on-hands", name: "Lay on Hands", description: "Spend points from a 5-point pool as an Action to heal by touch, or spend 5 points to cure one disease or neutralize one poison.", executableActionId: "lay-on-hands", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Paladin: Lay on Hands" } },
     ],

@@ -24,7 +24,7 @@ function importedCharacter(features, overrides = {}) {
   };
 }
 
-const breathDescription = "Once per short rest, creatures in a 20-foot cone make a DC 14 Dexterity save; 3d6 fire damage on a failure and half on a success.";
+const breathDescription = "Once per short rest, use your Action to exhale fire in a 20-foot cone. Each creature in the area makes a DC 14 Dexterity save, taking 3d6 fire damage on a failed save and half as much damage on a successful one.";
 
 test("hands an explicit printed save DC to the verified feature without accepting a mismatched save ability", () => {
   const linked = linkVerifiedImportedMechanics(importedCharacter([{ name: "Breath Weapon (Gold)", description: breathDescription }]));
@@ -38,7 +38,7 @@ test("hands an explicit printed damage formula to the verified feature without c
   const linked = linkVerifiedImportedMechanics(importedCharacter([{ name: "Breath Weapon (Gold)", description: breathDescription }]));
   assert.equal(linked.featureActions?.[0]?.resolution.type, "area-saving-throw");
   assert.equal(linked.featureActions?.[0]?.resolution.damage, "3d6 fire");
-  const mismatch = linkVerifiedImportedMechanics(importedCharacter([{ name: "Breath Weapon (Gold)", description: breathDescription.replace("fire", "cold") }]));
+  const mismatch = linkVerifiedImportedMechanics(importedCharacter([{ name: "Breath Weapon (Gold)", description: breathDescription.replace("3d6 fire damage", "3d6 cold damage") }]));
   assert.equal(mismatch.featureActions?.length, 0);
 });
 
