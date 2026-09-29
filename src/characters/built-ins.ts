@@ -124,7 +124,7 @@ export const cleiraOestwilde: Character = {
       { name: "Disguise Kit", quantity: 1, weightPounds: 3 },
     ],
     features: [
-      { id: "bardic-inspiration", name: "Bardic Inspiration", description: "Twice per long rest, grant another creature within 60 feet a d6 inspiration die as a bonus action.", executableActionId: "bardic-inspiration", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Bard: Bardic Inspiration" } },
+      { id: "bardic-inspiration", name: "Bardic Inspiration", description: "Twice per long rest. As a Bonus Action, choose one creature other than yourself within 60 feet who can hear you. That creature gains one d6 Bardic Inspiration die. Within the next 10 minutes, it can add the die to one ability check, attack roll, or saving throw.", executableActionId: "bardic-inspiration", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Bard: Bardic Inspiration" } },
       { id: "fey-ancestry", name: "Fey Ancestry", description: "Advantage on saving throws against being charmed; magic cannot put Cleira to sleep.", executablePassiveId: "fey-ancestry", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Fey Ancestry" } },
       { id: "trance", name: "Trance", description: "Does not need sleep and meditates semiconsciously for 4 hours each day.", executablePassiveId: "trance", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Trance" } },
       { id: "keen-senses", name: "Keen Senses", description: "Proficient in Perception.", executablePassiveId: "keen-senses", provenance: { rulesetId: "dnd-2014", sourceId: "srd-5.1", sourceReference: "SRD 5.1, Elf: Keen Senses" } },

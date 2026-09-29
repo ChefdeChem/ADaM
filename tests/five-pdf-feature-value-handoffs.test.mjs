@@ -61,11 +61,19 @@ test("hands an explicit printed sense range to Divine Sense and leaves a missing
 
 test("hands printed Bardic Inspiration range and die scaling to play and shows the evidence during review", async () => {
   const linked = linkVerifiedImportedMechanics(importedCharacter([
-    { name: "Bardic Inspiration", description: "Four uses per long rest. As a Bonus Action, grant another creature within 30 feet a d8 inspiration die." },
+    { name: "Bardic Inspiration", description: "Four uses per long rest. As a Bonus Action, choose one creature other than yourself within 30 feet who can hear you. That creature gains one d8 Bardic Inspiration die. Within the next 10 minutes, it can add the die to one ability check, attack roll, or saving throw." },
   ], { className: "Bard", level: 5, resources: [{ id: "bardic-inspiration", name: "Bardic Inspiration", kind: "generic", current: 4, maximum: 4, recovery: "long-rest" }] }));
   assert.equal(linked.featureActions?.[0]?.resolution.type, "grant-roll-bonus");
   assert.deepEqual({ rangeFeet: linked.featureActions?.[0]?.resolution.rangeFeet, die: linked.featureActions?.[0]?.resolution.die }, { rangeFeet: 30, die: "1d8" });
-  assert.deepEqual(linked.profile?.features?.[0]?.executableValueEvidence, ["Printed range 30 feet.", "Printed bonus die 1d8."]);
+  assert.deepEqual(linked.profile?.features?.[0]?.executableValueEvidence, [
+    "Printed Bonus Action cost.",
+    "Printed another-creature target that excludes the bard.",
+    "Printed requirement that the target can hear the bard.",
+    "Printed eligible rolls: ability check, attack roll, saving throw.",
+    "Printed duration 10 minutes (100 rounds).",
+    "Printed range 30 feet.",
+    "Printed bonus die 1d8.",
+  ]);
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(page, /Sheet-backed executable values/);
   assert.match(page, /Feature values and passive effects execute only when the sheet states them explicitly/);

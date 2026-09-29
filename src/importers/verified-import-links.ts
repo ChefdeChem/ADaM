@@ -233,10 +233,23 @@ function adaptFeatureAction(feature: { name: string; description: string }, temp
     const range = description.match(/\bwithin\s+(\d{1,4})\s+feet\b/i) ?? description.match(/\b(\d{1,4})[-\s]foot\s+range\b/i);
     const die = description.match(/\b(?:a|one)\s+d(4|6|8|10|12)\b/i) ?? description.match(/\bd(4|6|8|10|12)\s+inspiration\s+die\b/i);
     const rangeFeet = range ? boundedFeet(range[1]) : null;
-    if (!rangeFeet || !die) return null;
+    const namesBonusAction = /\b(?:as|using)\s+a\s+bonus\s+action\b/i.test(description);
+    const namesOtherCreature = /\b(?:one\s+creature\s+other\s+than\s+(?:you|yourself)|another\s+creature)\b/i.test(description);
+    const namesHearing = /\b(?:who|that)\s+can\s+hear\s+(?:you|the\s+bard)\b/i.test(description);
+    const namesSupportedRolls = /\bability\s+check\b/i.test(description)
+      && /\battack\s+roll\b/i.test(description)
+      && /\bsaving\s+throw\b/i.test(description);
+    const duration = description.match(/\b(?:within\s+)?(?:the\s+)?(?:next\s+)?(\d{1,3})\s+minutes?\b/i);
+    const durationRounds = duration ? Number(duration[1]) * 10 : null;
+    if (!rangeFeet || !die || !namesBonusAction || !namesOtherCreature || !namesHearing || !namesSupportedRolls || durationRounds !== action.resolution.durationRounds) return null;
     action.resolution.rangeFeet = rangeFeet;
     action.resolution.die = `1d${die[1]}` as typeof action.resolution.die;
     action.description = description;
+    evidence.push("Printed Bonus Action cost.");
+    evidence.push("Printed another-creature target that excludes the bard.");
+    evidence.push("Printed requirement that the target can hear the bard.");
+    evidence.push("Printed eligible rolls: ability check, attack roll, saving throw.");
+    evidence.push(`Printed duration ${duration?.[1]} minutes (${durationRounds} rounds).`);
     evidence.push(`Printed range ${rangeFeet} feet.`);
     evidence.push(`Printed bonus die ${action.resolution.die}.`);
   }
